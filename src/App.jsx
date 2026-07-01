@@ -107,7 +107,7 @@ const ROTATION = [
 const ROT = ROTATION.length;
 const PATTERN_FREQ = (() => {
   const f = {};
-  ROTATION.forEach((d) => d.items.forEach((k) => { const p = LIB[k].pattern; f[p] = (f[p] || 0) + 1; }));
+  ROTATION.forEach((d) => d.items.forEach((k) => { if (LIB[k].role === "main") return; const p = LIB[k].pattern; f[p] = (f[p] || 0) + 1; }));
   return f;
 })();
 
