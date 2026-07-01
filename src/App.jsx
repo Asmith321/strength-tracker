@@ -157,16 +157,11 @@ function weeklyTarget(pattern, blockType, cycleInBlock, landmarks) {
   return Math.round(lm.mev + (lm.mrv - lm.mev) * frac);
 }
 
-/* ---- readiness score (0–1) vs personal baseline ---- */
-function readinessScore(r, baseline) {
-  const bbBase = baseline.bb || 60, slpBase = baseline.sleep || 75;
-  const bb = Math.max(0, Math.min(1, 0.5 + (r.bodyBattery - bbBase) / (bbBase || 60)));
-  const slp = Math.max(0, Math.min(1, 0.5 + (r.sleep - slpBase) / (slpBase || 75)));
-  const hrv = r.hrv === "Balanced" ? 1 : r.hrv === "Unbalanced" ? 0.5 : 0;
-  const sore = (5 - r.soreness) / 4;
-  return 0.3 * bb + 0.2 * slp + 0.3 * hrv + 0.2 * sore;
+/* ---- readiness score (0–1) from Garmin Training Readiness Score ---- */
+function readinessScore(r) {
+  return Math.max(0, Math.min(1, r.trainingReadiness / 100));
 }
-const readinessBand = (s) => (s >= 0.62 ? "green" : s >= 0.42 ? "amber" : "red");
+const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red");
 
 /* ════════════ PRESCRIPTION ════════════ */
 function prescribe(program, readiness) {
@@ -175,7 +170,7 @@ function prescribe(program, readiness) {
   const cyc = program.block.cycle;
   const unit = program.unit;
 
-  const band = readiness ? readinessBand(readinessScore(readiness, program.baseline)) : "green";
+  const band = readiness ? readinessBand(readinessScore(readiness)) : "green";
   const rpeAdj = band === "green" ? 0 : band === "amber" ? -0.5 : -1.5;
   const setMult = band === "green" ? 1 : band === "amber" ? 0.85 : 0.6;
   const rpeTop = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
@@ -221,9 +216,7 @@ function ingest(program, logs, readiness) {
     lift.hist = [...(lift.hist || []), { e: Math.round(lift.e1rm), raw: Math.round(reading) }].slice(-60);
   });
 
-  next.baseline.bb = ewma(next.baseline.bb, readiness.bodyBattery, 0.2);
-  next.baseline.sleep = ewma(next.baseline.sleep, readiness.sleep, 0.2);
-  const rScore = readinessScore(readiness, next.baseline);
+  const rScore = readinessScore(readiness);
 
   const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
   const rpeMiss = mainLogs.length
@@ -319,7 +312,6 @@ function freshProgram({ seeds, landmarks, unit, goal }) {
   return {
     unit, goal, landmarks, lifts,
     cycleIndex: 0, sessionCount: 0,
-    baseline: { bb: 60, sleep: 75 },
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
@@ -479,7 +471,7 @@ function Gauge({ value, label, color }) {
 }
 
 function Today({ program, sessions, onLog }) {
-  const [readiness, setReadiness] = useState({ bodyBattery: 65, hrv: "Balanced", sleep: 78, soreness: 2 });
+  const [readiness, setReadiness] = useState({ trainingReadiness: 65 });
   const rx = useMemo(() => prescribe(program, readiness), [program, readiness]);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -514,14 +506,9 @@ function Today({ program, sessions, onLog }) {
 
       {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} />)}
 
-      <div className="eyebrow mt">READINESS — Garmin <span className="dim" style={{ letterSpacing: 0 }}>(secondary modifier)</span></div>
+      <div className="eyebrow mt">READINESS — Garmin Training Readiness Score</div>
       <div className="panel">
-        <label className="fieldrow sm"><span>Body Battery</span><Stepper value={readiness.bodyBattery} set={(v) => setReadiness({ ...readiness, bodyBattery: v })} step={5} max={100} /></label>
-        <label className="fieldrow sm"><span>Sleep Score</span><Stepper value={readiness.sleep} set={(v) => setReadiness({ ...readiness, sleep: v })} step={5} max={100} /></label>
-        <label className="fieldrow sm"><span>Soreness 1–5</span><Stepper value={readiness.soreness} set={(v) => setReadiness({ ...readiness, soreness: v })} min={1} max={5} /></label>
-        <div className="fieldrow sm"><span>HRV Status</span>
-          <div className="seg sm">{["Balanced", "Unbalanced", "Low"].map((s) => <button key={s} className={readiness.hrv === s ? "seg-on" : ""} onClick={() => setReadiness({ ...readiness, hrv: s })}>{s}</button>)}</div>
-        </div>
+        <label className="fieldrow sm"><span>Training Readiness Score</span><Stepper value={readiness.trainingReadiness} set={(v) => setReadiness({ ...readiness, trainingReadiness: v })} step={5} max={100} /></label>
       </div>
       <div className="readout mono" style={{ color: bandColor }}>
         readiness {rx.band.toUpperCase()} → {rx.band === "green" ? "session as prescribed" : rx.band === "amber" ? "load + volume trimmed slightly" : "auto mini-deload today"}
@@ -635,7 +622,7 @@ export default function App() {
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
         lifts: logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
-        bodyBattery: readiness.bodyBattery, hrv: readiness.hrv, sleep: readiness.sleep, soreness: readiness.soreness },
+        trainingReadiness: readiness.trainingReadiness },
       ...sessions.slice(-4).reverse().map((s) => ({ block: s.block, lifts: s.logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe })) })),
     ];
 
