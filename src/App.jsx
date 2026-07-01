@@ -216,7 +216,8 @@ function ingest(program, logs, readiness) {
     if (!lift || !g.topReps || !g.topWeight) return;
     const reading = e1rmFrom(g.topWeight, g.topReps, g.topRpe);
     lift.e1rmRaw = reading;
-    lift.e1rm = ewma(lift.e1rm, reading);
+    const alpha = LIB[g.key].role === "main" ? 0.34 : 0.20;
+    lift.e1rm = ewma(lift.e1rm, reading, alpha);
     lift.hist = [...(lift.hist || []), { e: Math.round(lift.e1rm), raw: Math.round(reading) }].slice(-60);
   });
 
