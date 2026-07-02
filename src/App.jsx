@@ -102,7 +102,6 @@ const LIB = {
   deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true },
   rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true },
   frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true },
-  legpress:     { label: "Leg Press",                     pattern: "squat",       role: "acc",  barbell: false },
   ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true },
   row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true },
   cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false },
@@ -114,11 +113,13 @@ const LIB = {
   lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3 },
   calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3 },
   inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false },
+  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3 },
+  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3 },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "legpress", "calfraise"] },
+  { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise"] },
   { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench"] },
   { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row"] },
   { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise"] },
@@ -345,13 +346,15 @@ function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
     } else if (seeds[k]) {
       e1rm = e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe);
     } else {
-      const ref = { rdl: "deadlift", frontsquat: "squat", legpress: "squat", ohp: "bench",
+      const ref = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
         row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
-        triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench" }[k];
+        triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
+        legcurl: "deadlift", legext: "squat" }[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
-      const mult = { rdl: 0.85, frontsquat: 0.8, legpress: 1.6, ohp: 0.62, row: 0.75,
+      const mult = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
         cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
-        triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55 }[k] || 0.6;
+        triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
+        legcurl: 0.4, legext: 0.65 }[k] || 0.6;
       e1rm = base * mult;
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
