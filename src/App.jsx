@@ -267,6 +267,17 @@ function ingest(program, logs, readiness) {
 
   const rScore = readinessScore(readiness);
 
+  const now = Date.now();
+  const daysSinceLast = next.lastSessionAt != null ? (now - next.lastSessionAt) / 86400000 : 0;
+  /* Session-specific fatigue is understood to mostly resolve within ~48-72h
+     (ACSM-cited resistance training recovery window); we use a 3-day cap as a
+     literature-grounded but not precisely-validated constant — gaps beyond it
+     don't earn extra "recovered" credit. */
+  const recoveryFactor = Math.min(1, daysSinceLast / 3);
+  next.fatigue.rpeCreep *= (1 - recoveryFactor);
+  next.fatigue.readSupp *= (1 - recoveryFactor);
+  next.lastSessionAt = now;
+
   const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
   const rpeMiss = mainLogs.length
     ? mainLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / mainLogs.length : 0;
@@ -367,7 +378,7 @@ function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
   });
   return {
     unit, goal, landmarks, lifts, bodyweight,
-    cycleIndex: 0, sessionCount: 0,
+    cycleIndex: 0, sessionCount: 0, lastSessionAt: null,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
