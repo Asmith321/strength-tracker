@@ -52,6 +52,15 @@ function e1rmFrom(weight, reps, rpe) {
   if (!weight || !reps) return 0;
   return weight / rpePct(reps, rpe);
 }
+/* ---- bodyweight lifts: e1rm tracked as SYSTEM load (bodyweight + added) ----
+   added may be 0 (bodyweight-only) or negative (band/machine assistance),
+   so unlike e1rmFrom() we can't gate on truthy weight — only reps + a
+   positive system load are required. */
+function e1rmFromBW(bodyweight, added, reps, rpe) {
+  const sys = (bodyweight || 0) + (added || 0);
+  if (!reps || sys <= 0) return 0;
+  return sys / rpePct(reps, rpe);
+}
 function loadFor(e1rm, reps, rpe, unit) {
   const raw = e1rm * rpePct(reps, rpe);
   const step = unit === "kg" ? 2.5 : 5;
@@ -81,35 +90,50 @@ const PATTERNS = {
   vert_pull:   { label: "Vertical Pull",       mev: 8,  mav: 14, mrv: 20 },
 };
 
-/* ---- exercise library ---- */
+/* ---- exercise library ----
+   fixedSets: accessory takes a flat set count (scaled by block volume tier
+   + readiness) instead of drawing from the landmark/weeklyTarget pool, and
+   is excluded from PATTERN_FREQ since it isn't sharing that pool.
+   bodyweight: e1rm is tracked as SYSTEM load (bodyweight + added load); see
+   e1rmFromBW() and the bodyweight branch in prescribe(). */
 const LIB = {
-  squat:      { label: "Back Squat",         pattern: "squat",       role: "main", barbell: true },
-  bench:      { label: "Bench Press",        pattern: "horiz_press", role: "main", barbell: true },
-  deadlift:   { label: "Deadlift",           pattern: "hinge",       role: "main", barbell: true },
-  rdl:        { label: "Romanian Deadlift",  pattern: "hinge",       role: "acc",  barbell: true },
-  frontsquat: { label: "Front Squat",        pattern: "squat",       role: "acc",  barbell: true },
-  legpress:   { label: "Leg Press",          pattern: "squat",       role: "acc",  barbell: false },
-  ohp:        { label: "Overhead Press",     pattern: "vert_press",  role: "acc",  barbell: true },
-  row:        { label: "Barbell Row",        pattern: "horiz_pull",  role: "acc",  barbell: true },
-  pulldown:   { label: "Lat Pulldown",       pattern: "vert_pull",   role: "acc",  barbell: false },
-  pushdown:   { label: "Triceps Pushdown",   pattern: "vert_press",  role: "acc",  barbell: false },
-  curl:       { label: "Barbell Curl",       pattern: "horiz_pull",  role: "acc",  barbell: true },
-  bsplit:     { label: "Bulgarian Split Sq", pattern: "squat",       role: "acc",  barbell: false },
+  squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true },
+  bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true },
+  deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true },
+  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true },
+  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true },
+  legpress:     { label: "Leg Press",                     pattern: "squat",       role: "acc",  barbell: false },
+  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true },
+  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true },
+  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false },
+  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false },
+  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true },
+  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3 },
+  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false },
+  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3 },
+  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3 },
+  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3 },
+  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "legpress"] },
-  { name: "Bench",            items: ["bench", "ohp", "row", "pushdown"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl"] },
-  { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl"] },
+  { name: "Squat",            items: ["squat", "rdl", "legpress", "calfraise"] },
+  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row"] },
+  { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise"] },
 ];
 const ROT = ROTATION.length;
 const PATTERN_FREQ = (() => {
   const f = {};
-  ROTATION.forEach((d) => d.items.forEach((k) => { if (LIB[k].role === "main") return; const p = LIB[k].pattern; f[p] = (f[p] || 0) + 1; }));
+  ROTATION.forEach((d) => d.items.forEach((k) => {
+    if (LIB[k].role === "main" || LIB[k].fixedSets) return;
+    const p = LIB[k].pattern; f[p] = (f[p] || 0) + 1;
+  }));
   return f;
 })();
+/* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
+const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
 /* ---- block configurations ---- */
 const BLOCKS = {
@@ -184,6 +208,7 @@ function prescribe(program, readiness) {
 
     let sets;
     if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
+    else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
       const wk = weeklyTarget(L.pattern, program.block.type, cyc, program.landmarks);
       const freq = PATTERN_FREQ[L.pattern] || 1;
@@ -191,11 +216,23 @@ function prescribe(program, readiness) {
       sets = Math.max(1, Math.min(4, rawSets));
     }
 
-    const topLoad = loadFor(lift.e1rm, reps, rpe, unit);
+    let topLoad, assistanceNeeded = false, repOnly = false;
+    if (L.bodyweight) {
+      const bw = program.bodyweight || 0;
+      const rawSys = lift.e1rm * rpePct(reps, rpe);
+      const step = unit === "kg" ? 2.5 : 5;
+      const addedRaw = rawSys - bw;
+      if (addedRaw >= 0) topLoad = Math.round(addedRaw / step) * step;
+      else if (rawSys >= bw * 0.85) { topLoad = 0; repOnly = true; }
+      else { topLoad = 0; assistanceNeeded = true; }
+    } else {
+      topLoad = loadFor(lift.e1rm, reps, rpe, unit);
+    }
     const boRaw = isMain ? lift.e1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
-    const backoffLoad = unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5;
+    const backoffLoad = isMain ? (unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5) : topLoad;
 
     return { key, label: L.label, barbell: L.barbell, isMain, pattern: L.pattern,
+      bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap };
   });
 
@@ -208,8 +245,13 @@ function ingest(program, logs, readiness) {
 
   logs.forEach((g) => {
     const lift = next.lifts[g.key];
-    if (!lift || !g.topReps || !g.topWeight) return;
-    const reading = e1rmFrom(g.topWeight, g.topReps, g.topRpe);
+    const L = LIB[g.key];
+    if (!lift || !L || !g.topReps) return;
+    if (!L.bodyweight && !g.topWeight) return;
+    const reading = L.bodyweight
+      ? e1rmFromBW(next.bodyweight, g.topWeight, g.topReps, g.topRpe)
+      : e1rmFrom(g.topWeight, g.topReps, g.topRpe);
+    if (!reading) return;
     lift.e1rmRaw = reading;
     const alpha = LIB[g.key].role === "main" ? 0.34 : 0.20;
     lift.e1rm = ewma(lift.e1rm, reading, alpha);
@@ -294,23 +336,28 @@ function applyTransition(program, transition) {
   return next;
 }
 
-function freshProgram({ seeds, landmarks, unit, goal }) {
+function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
   const lifts = {};
   Object.keys(LIB).forEach((k) => {
     let e1rm;
-    if (seeds[k]) e1rm = e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe);
-    else {
+    if (LIB[k].bodyweight) {
+      e1rm = seeds[k] ? e1rmFromBW(bodyweight, seeds[k].weight, seeds[k].reps, seeds[k].rpe) : bodyweight;
+    } else if (seeds[k]) {
+      e1rm = e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe);
+    } else {
       const ref = { rdl: "deadlift", frontsquat: "squat", legpress: "squat", ohp: "bench",
-        row: "bench", pulldown: "bench", pushdown: "bench", curl: "bench", bsplit: "squat" }[k];
+        row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
+        triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench" }[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
       const mult = { rdl: 0.85, frontsquat: 0.8, legpress: 1.6, ohp: 0.62, row: 0.75,
-        pulldown: 0.7, pushdown: 0.45, curl: 0.35, bsplit: 0.4 }[k] || 0.6;
+        cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
+        triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55 }[k] || 0.6;
       e1rm = base * mult;
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
   });
   return {
-    unit, goal, landmarks, lifts,
+    unit, goal, landmarks, lifts, bodyweight,
     cycleIndex: 0, sessionCount: 0,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
@@ -390,6 +437,7 @@ function Stepper({ value, set, min = 0, max = 9999, step = 1, suffix, w }) {
 
 function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
+  const [bodyweight, setBodyweight] = useState(180);
   const [seeds, setSeeds] = useState({
     squat: { weight: 225, reps: 5, rpe: 8 }, bench: { weight: 155, reps: 5, rpe: 8 }, deadlift: { weight: 275, reps: 5, rpe: 8 },
   });
@@ -401,7 +449,10 @@ function Onboarding({ onDone }) {
     <div className="screen">
       <div className="eyebrow">SETUP · 1 OF 2</div>
       <h1 className="display">Calibrate the lifts.</h1>
-      <p className="lede">Enter a recent honest top set for each main lift — weight, reps, and RPE (10 = no reps left, 8 = two left). The engine converts this to an estimated 1RM and prescribes every future load from it, re-reading your e1RM after each session.</p>
+      <p className="lede">Bodyweight drives system-load math for bodyweight lifts (Pull-Up / Chin-Up) — added weight or assistance is tracked relative to it. Enter a recent honest top set for each main lift — weight, reps, and RPE (10 = no reps left, 8 = two left). The engine converts this to an estimated 1RM and prescribes every future load from it, re-reading your e1RM after each session.</p>
+      <div className="panel">
+        <label className="fieldrow sm"><span>Bodyweight</span><Stepper value={bodyweight} set={setBodyweight} min={80} max={400} step={1} suffix=" lb" /></label>
+      </div>
       {["squat", "bench", "deadlift"].map((k) => (
         <div key={k} className="panel">
           <div className="exer-name" style={{ fontSize: 19, padding: "10px 0 4px" }}>{LIB[k].label}</div>
@@ -428,29 +479,32 @@ function Onboarding({ onDone }) {
           <label className="fieldrow sm"><span>MRV</span><Stepper value={lm.mrv} set={(v) => setLM(p, "mrv", v)} min={2} max={40} w={40} /></label>
         </div>
       ))}
-      <button className="cta" onClick={() => onDone(freshProgram({ seeds, landmarks, unit: "lb", goal: "hybrid" }))}>Start program</button>
+      <button className="cta" onClick={() => onDone(freshProgram({ seeds, landmarks, unit: "lb", goal: "hybrid", bodyweight }))}>Start program</button>
     </div>
   );
 }
 
 function ExerciseCard({ it, log, update }) {
   const [open, setOpen] = useState(it.isMain);
+  const bwScheme = it.assistanceNeeded ? "assistance needed" : it.repOnly ? "bodyweight only"
+    : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
   return (
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
         <div>
           <div className="exer-name">{it.label}{it.isMain && <span className="tag">MAIN</span>}</div>
-          <div className="exer-scheme mono">{it.sets} × {it.reps} @ RPE {it.rpe} · {it.topLoad} lb{it.isMain && it.sets > 1 ? `  ·  back-off ${it.backoffLoad}` : ""}</div>
+          <div className="exer-scheme mono">{it.sets} × {it.reps} @ RPE {it.rpe} · {it.bodyweight ? bwScheme : `${it.topLoad} lb`}{it.isMain && it.sets > 1 ? `  ·  back-off ${it.backoffLoad}` : ""}</div>
         </div>
         {open ? <ChevronDown size={17} color="#8A909C" /> : <ChevronRight size={17} color="#8A909C" />}
       </div>
       {it.barbell && <div className="bar-wrap"><Barbell weight={log.topWeight} /></div>}
       {open && (
         <div className="exer-body">
-          <label className="fieldrow sm"><span>Top-set weight</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} step={5} suffix=" lb" /></label>
+          <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
           <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
           <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
           <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
+          {it.bodyweight && <div className="est mono">negative = assistance used</div>}
           {Math.abs(log.topRpe - it.rpe) >= 1 && (
             <div className="warn mono">{log.topRpe > it.rpe ? "harder than target — engine notes fatigue" : "easier than target — e1RM will rise"}</div>
           )}
@@ -608,6 +662,7 @@ export default function App() {
   const [sessions, setSessions] = useState([]);
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("today");
+  const [showSettings, setShowSettings] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
 
   useEffect(() => { (async () => {
@@ -650,7 +705,13 @@ export default function App() {
 
   const reset = async () => {
     await saveKey(K_PROGRAM, null); await saveKey(K_SESSIONS, []);
-    setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false);
+    setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false); setShowSettings(false);
+  };
+
+  const setBodyweight = async (v) => {
+    const next = { ...program, bodyweight: v };
+    setProgram(next);
+    await saveKey(K_PROGRAM, next);
   };
 
   return (
@@ -661,19 +722,31 @@ export default function App() {
         : <>
           <div className="topbar">
             <div className="brand mono"><Dumbbell size={15} /> IRON&nbsp;LOG</div>
-            <button className="ghost" onClick={() => setConfirmingReset(true)}><Settings size={15} /></button>
+            <button className="ghost" onClick={() => setShowSettings(true)}><Settings size={15} /></button>
           </div>
-          {confirmingReset && (
+          {showSettings && (
             <div className="screen">
-              <div className="panel" style={{ padding: 16 }}>
-                <p style={{ margin: "4px 0 14px", fontSize: 13.5, lineHeight: 1.5, color: "var(--text)" }}>
-                  Reset the program and all logged history? This cannot be undone.
-                </p>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={reset}>Reset everything</button>
-                  <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)" }} onClick={() => setConfirmingReset(false)}>Cancel</button>
-                </div>
+              <div className="eyebrow">SETTINGS</div>
+              <div className="panel">
+                <label className="fieldrow sm"><span>Bodyweight</span><Stepper value={program.bodyweight || 180} set={setBodyweight} min={80} max={400} step={1} suffix=" lb" /></label>
               </div>
+              <div className="est mono" style={{ padding: "0 0 14px" }}>Drives system-load math for Pull-Up / Chin-Up.</div>
+              {!confirmingReset ? (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={() => setConfirmingReset(true)}>Reset everything</button>
+                  <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)" }} onClick={() => setShowSettings(false)}>Done</button>
+                </div>
+              ) : (
+                <div className="panel" style={{ padding: 16 }}>
+                  <p style={{ margin: "4px 0 14px", fontSize: 13.5, lineHeight: 1.5, color: "var(--text)" }}>
+                    Reset the program and all logged history? This cannot be undone.
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={reset}>Confirm reset</button>
+                    <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)" }} onClick={() => setConfirmingReset(false)}>Cancel</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {tab === "today" && <Today program={program} sessions={sessions} onLog={handleLog} />}
