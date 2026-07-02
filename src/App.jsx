@@ -5,6 +5,7 @@ import {
 import {
   Dumbbell, TrendingUp, History as HistoryIcon, Activity, Layers,
   Minus, Plus, AlertTriangle, ChevronDown, ChevronRight, Settings, Check,
+  Timer, X, Award,
 } from "lucide-react";
 import cloudStorage from "./storage.js";
 
@@ -243,6 +244,8 @@ function prescribe(program, readiness) {
 /* ════════════ INGEST + STATE MACHINE ════════════ */
 function ingest(program, logs, readiness) {
   const next = structuredClone(program);
+  const prs = [];
+  const prEps = next.unit === "kg" ? 1 : 2; // ignore load-rounding jitter
 
   logs.forEach((g) => {
     const lift = next.lifts[g.key];
@@ -257,6 +260,9 @@ function ingest(program, logs, readiness) {
     const alpha = LIB[g.key].role === "main" ? 0.34 : 0.20;
     lift.e1rm = ewma(lift.e1rm, reading, alpha);
     lift.hist = [...(lift.hist || []), { e: Math.round(lift.e1rm), raw: Math.round(reading) }].slice(-60);
+    /* raw-reading PR ratchet; first ingest sets the baseline silently */
+    if (lift.best == null) lift.best = reading;
+    else if (reading > lift.best + prEps) { prs.push(g.key); lift.best = reading; }
   });
 
   const rScore = readinessScore(readiness);
@@ -322,7 +328,7 @@ function ingest(program, logs, readiness) {
     }
   }
 
-  return { next, transition, fatigueIndex, rScore, e1rmSlope };
+  return { next, transition, fatigueIndex, rScore, e1rmSlope, prs };
 }
 
 function applyTransition(program, transition) {
@@ -369,6 +375,7 @@ function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
 }
 
 /* ════════════ COACH (Sonnet): narration + borderline tie-break only ════════════ */
+const COACH_OFFLINE_NOTE = "Coach offline — deterministic engine applied.";
 async function runCoach({ rx, fatigueIndex, e1rmSlope, rScore, transition, recent }) {
   const prompt = `You are a strength coach reviewing one session of an autoregulated block-periodization program. The math is already done by deterministic code — do NOT recompute loads or e1RMs. Your job: (1) write a 1-2 sentence plain-language read of how things are trending, and (2) if a block transition is flagged BORDERLINE, decide whether to confirm it.
 
@@ -394,7 +401,7 @@ override: only set to a block name (accumulation|intensification|deload|realizat
     const text = (data.content || []).map((c) => (c.type === "text" ? c.text : "")).join("").replace(/```json|```/g, "").trim();
     return { ok: true, ...JSON.parse(text) };
   } catch {
-    return { ok: false, note: "Coach offline — deterministic engine applied.", confirmTransition: true, override: null };
+    return { ok: false, note: COACH_OFFLINE_NOTE, confirmTransition: true, override: null };
   }
 }
 
@@ -415,8 +422,14 @@ function platesForSide(weight, bar = 45) {
   for (const p of PLATES) while (per >= p.w) { out.push(p); per = +(per - p.w).toFixed(2); }
   return out;
 }
-function Barbell({ weight }) {
-  const side = platesForSide(weight);
+function plateText(weight, bar = 45) {
+  if (weight <= bar) return "empty bar";
+  const side = platesForSide(weight, bar);
+  if (!side.length) return "empty bar";
+  return side.map((p) => p.w).join("+") + "/side";
+}
+function Barbell({ weight, bar = 45 }) {
+  const side = platesForSide(weight, bar);
   return (
     <svg viewBox="0 0 320 70" width="100%" height="52" style={{ display: "block" }}>
       <rect x="40" y="32" width="240" height="6" rx="3" fill="#6B7280" />
@@ -487,20 +500,28 @@ function Onboarding({ onDone }) {
   );
 }
 
-function ExerciseCard({ it, log, update }) {
+function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const [open, setOpen] = useState(it.isMain);
   const bwScheme = it.assistanceNeeded ? "assistance needed" : it.repOnly ? "bodyweight only"
     : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
+  const loadScheme = it.bodyweight ? bwScheme
+    : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`
+    : `${it.topLoad} lb`;
   return (
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
         <div>
           <div className="exer-name">{it.label}{it.isMain && <span className="tag">MAIN</span>}</div>
-          <div className="exer-scheme mono">{it.sets} × {it.reps} @ RPE {it.rpe} · {it.bodyweight ? bwScheme : `${it.topLoad} lb`}{it.isMain && it.sets > 1 ? `  ·  back-off ${it.backoffLoad}` : ""}</div>
+          <div className="exer-scheme mono">{it.sets} × {it.reps} @ RPE {it.rpe} · {loadScheme}{it.isMain && it.sets > 1 ? `  ·  back-off ${it.backoffLoad}` : ""}</div>
         </div>
         {open ? <ChevronDown size={17} color="#8A909C" /> : <ChevronRight size={17} color="#8A909C" />}
       </div>
-      {it.barbell && <div className="bar-wrap"><Barbell weight={log.topWeight} /></div>}
+      {it.barbell && (
+        <div className="bar-wrap">
+          <Barbell weight={log.topWeight} bar={barWeight} />
+          {log.topWeight !== it.topLoad && <div className="plates mono">now {log.topWeight} lb — {plateText(log.topWeight, barWeight)}</div>}
+        </div>
+      )}
       {open && (
         <div className="exer-body">
           <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
@@ -511,6 +532,7 @@ function ExerciseCard({ it, log, update }) {
           {Math.abs(log.topRpe - it.rpe) >= 1 && (
             <div className="warn mono">{log.topRpe > it.rpe ? "harder than target — engine notes fatigue" : "easier than target — e1RM will rise"}</div>
           )}
+          <button className="restbtn mono" onClick={() => onRest(it)}><Timer size={13} /> REST {it.isMain ? "3:00" : "1:30"}</button>
         </div>
       )}
     </div>
@@ -527,11 +549,23 @@ function Gauge({ value, label, color }) {
   );
 }
 
+const fmtSecs = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
 function Today({ program, sessions, onLog }) {
   const [readiness, setReadiness] = useState({ trainingReadiness: 65 });
   const rx = useMemo(() => prescribe(program, readiness), [program, readiness]);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [rest, setRest] = useState(null); // { label, left }
+
+  useEffect(() => {
+    if (!rest || rest.left <= 0) return;
+    const id = setInterval(() => setRest((r) => (r ? { ...r, left: Math.max(0, r.left - 1) } : r)), 1000);
+    return () => clearInterval(id);
+  }, [rest !== null && rest.left > 0]);
+
+  const startRest = (it) => setRest({ label: it.label, left: it.isMain ? 180 : 90 });
+  const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
 
   useEffect(() => {
     setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets })));
@@ -555,13 +589,17 @@ function Today({ program, sessions, onLog }) {
       </div>
 
       {program.lastCoach && (
-        <div className={"coach " + (program.block.type === "deload" ? "coach-alert" : "")}>
+        <div className={"coach " + (program.lastCoach === COACH_OFFLINE_NOTE ? "coach-off " : "") + (program.block.type === "deload" ? "coach-alert" : "")}>
           <div className="coach-top mono">{program.block.type === "deload" ? <AlertTriangle size={12} /> : <Check size={12} />} COACH</div>
           <p>{program.lastCoach}</p>
         </div>
       )}
 
-      {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} />)}
+      {program.lastPRs?.length > 0 && (
+        <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || k).join(", ")}</div>
+      )}
+
+      {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} barWeight={program.barWeight || 45} onRest={startRest} />)}
 
       <div className="eyebrow mt">READINESS — Garmin Training Readiness Score</div>
       <div className="panel">
@@ -574,6 +612,17 @@ function Today({ program, sessions, onLog }) {
       <button className="cta" disabled={busy} onClick={async () => { setBusy(true); await onLog(logs, readiness, rx); setBusy(false); }}>
         {busy ? "Coach reviewing…" : "Log session"}
       </button>
+
+      {rest && (
+        <div className={"resttimer mono" + (rest.left === 0 ? " done" : "")}>
+          <Timer size={14} color={rest.left === 0 ? "#3FA85F" : "#8A909C"} />
+          <span className="rt-label">{rest.left === 0 ? "REST DONE" : rest.label}</span>
+          <span className="rt-time">{fmtSecs(rest.left)}</span>
+          <button onClick={() => nudgeRest(-15)}>−15</button>
+          <button onClick={() => nudgeRest(15)}>+15</button>
+          <button onClick={() => setRest(null)}><X size={14} /></button>
+        </div>
+      )}
     </div>
   );
 }
@@ -652,8 +701,9 @@ function History({ sessions }) {
         <div key={i} className="hist">
           <div className="hist-top"><span className="mono">{s.block} · {s.dayName}</span><span className="mono dim">{new Date(s.date).toLocaleDateString()}</span></div>
           <div className="hist-lifts mono">{s.logs.map((l) => `${LIB[l.key]?.label.split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}`).join("  ·  ")}</div>
+          {s.prs?.length > 0 && <div className="hist-pr mono">★ e1RM PR — {s.prs.map((k) => LIB[k]?.label || k).join(", ")}</div>}
           {s.transition && <div className="hist-trans mono">→ {BLOCKS[s.transition]?.label || s.transition}</div>}
-          {s.coach && <div className="hist-coach">{s.coach}</div>}
+          {s.coach && s.coach !== COACH_OFFLINE_NOTE && <div className="hist-coach">{s.coach}</div>}
         </div>
       ))}
     </div>
@@ -676,7 +726,7 @@ export default function App() {
   const start = async (p) => { setProgram(p); await saveKey(K_PROGRAM, p); };
 
   const handleLog = async (logs, readiness, rx) => {
-    const { next, transition, fatigueIndex, e1rmSlope, rScore } = ingest(program, logs, readiness);
+    const { next, transition, fatigueIndex, e1rmSlope, rScore, prs } = ingest(program, logs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
         lifts: logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
@@ -694,11 +744,12 @@ export default function App() {
       if (t) { finalProgram = applyTransition(next, t); appliedTransition = t.to; }
     }
     finalProgram.lastCoach = coach.note;
+    finalProgram.lastPRs = prs.length ? prs : null;
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
       logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets })),
-      readiness, coach: coach.note, transition: appliedTransition,
+      readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
     };
     const newSessions = [...sessions, record];
     setProgram(finalProgram); setSessions(newSessions);
@@ -711,8 +762,8 @@ export default function App() {
     setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false); setShowSettings(false);
   };
 
-  const setBodyweight = async (v) => {
-    const next = { ...program, bodyweight: v };
+  const setProgramField = async (field, v) => {
+    const next = { ...program, [field]: v };
     setProgram(next);
     await saveKey(K_PROGRAM, next);
   };
@@ -731,9 +782,10 @@ export default function App() {
             <div className="screen">
               <div className="eyebrow">SETTINGS</div>
               <div className="panel">
-                <label className="fieldrow sm"><span>Bodyweight</span><Stepper value={program.bodyweight || 180} set={setBodyweight} min={80} max={400} step={1} suffix=" lb" /></label>
+                <label className="fieldrow sm"><span>Bodyweight</span><Stepper value={program.bodyweight || 180} set={(v) => setProgramField("bodyweight", v)} min={80} max={400} step={1} suffix=" lb" /></label>
+                <label className="fieldrow sm"><span>Bar weight</span><Stepper value={program.barWeight || 45} set={(v) => setProgramField("barWeight", v)} min={15} max={100} step={5} suffix=" lb" /></label>
               </div>
-              <div className="est mono" style={{ padding: "0 0 14px" }}>Drives system-load math for Pull-Up / Chin-Up.</div>
+              <div className="est mono" style={{ padding: "0 0 14px" }}>Bodyweight drives Pull-Up / Chin-Up system-load math. Bar weight drives the plate-loading breakdown.</div>
               {!confirmingReset ? (
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={() => setConfirmingReset(true)}>Reset everything</button>
@@ -777,7 +829,7 @@ const CSS = `
 .topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);
   position:sticky;top:0;background:rgba(18,20,25,.92);backdrop-filter:blur(8px);z-index:5;}
 .brand{display:flex;align-items:center;gap:7px;font-weight:500;letter-spacing:.14em;font-size:13px;}
-.ghost{background:none;border:none;color:var(--dim);cursor:pointer;padding:4px;}
+.ghost{background:none;border:none;color:var(--dim);cursor:pointer;width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin:-10px 0;}
 .screen{padding:18px 18px 8px;}
 .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;color:var(--dim);margin-bottom:8px;}
 .eyebrow.mt{margin-top:24px;}
@@ -787,16 +839,12 @@ const CSS = `
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:4px 14px;margin-bottom:8px;}
 .fieldrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px;}
 .panel .fieldrow:last-child{border-bottom:none;}
-.fieldrow.sm{padding:10px 0;font-size:13px;}
+.fieldrow.sm{padding:6px 0;font-size:13px;}
 .est{font-size:11.5px;color:var(--dim);padding:2px 0 10px;}
-.stepper{display:flex;align-items:center;gap:9px;}
-.stepper button{width:29px;height:29px;border-radius:8px;border:1px solid var(--line);background:var(--surface2);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.stepper{display:flex;align-items:center;gap:6px;}
+.stepper button{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .stepper button:active{background:var(--line);}
 .stepper .mono{text-align:center;font-size:14.5px;font-weight:500;}
-.seg{display:flex;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:4px;margin-bottom:6px;}
-.seg.sm{margin:0;padding:3px;}
-.seg button{flex:1;padding:8px 4px;border:none;border-radius:8px;background:none;color:var(--dim);font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit;}
-.seg-on{background:var(--surface2)!important;color:var(--text)!important;}
 .cta{width:100%;margin:20px 0 6px;padding:15px;border:none;border-radius:12px;background:#3FA85F;color:#06210F;
   font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:19px;letter-spacing:.03em;cursor:pointer;text-transform:uppercase;}
 .cta:disabled{opacity:.6;cursor:wait;}
@@ -814,6 +862,18 @@ const CSS = `
 .coach-alert{border-left-color:#D7443E;}
 .coach-top{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.12em;color:var(--dim);margin-bottom:6px;}
 .coach p{margin:0;font-size:13px;line-height:1.45;}
+.coach-off{border-left-color:var(--line);}
+.coach-off .coach-top{opacity:.65;}
+.coach-off p{color:var(--dim);font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+.prnote{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-left:3px solid #E8C547;border-radius:11px;padding:11px 13px;margin-bottom:16px;font-size:11.5px;letter-spacing:.05em;color:#E8C547;}
+.plates{font-size:10.5px;color:var(--dim);letter-spacing:.04em;padding:2px 4px 6px;}
+.restbtn{width:100%;height:44px;margin-top:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--dim);font-size:11.5px;letter-spacing:.1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+.restbtn:active{background:var(--line);}
+.resttimer{position:fixed;bottom:72px;left:50%;transform:translateX(-50%);width:calc(100% - 28px);max-width:432px;display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:6px 10px;z-index:6;font-size:12px;box-shadow:0 8px 22px rgba(0,0,0,.45);}
+.rt-label{flex:1;color:var(--dim);font-size:10.5px;letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase;}
+.rt-time{font-size:17px;font-weight:500;min-width:48px;text-align:center;}
+.resttimer.done .rt-time{color:#3FA85F;}
+.resttimer button{min-width:44px;height:44px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;display:flex;align-items:center;justify-content:center;}
 .readout{font-size:11.5px;text-align:center;padding:6px 0 0;}
 .gauge{margin:10px 0;}
 .gauge-label{font-size:10.5px;letter-spacing:.08em;color:var(--dim);margin-bottom:5px;}
@@ -831,6 +891,7 @@ const CSS = `
 .hist-top{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:7px;}
 .hist-lifts{font-size:11.5px;line-height:1.5;}
 .hist-trans{font-size:11px;color:#E8C547;margin-top:7px;}
+.hist-pr{font-size:11px;color:#E8C547;margin-top:7px;letter-spacing:.04em;}
 .hist-coach{font-size:11.5px;color:var(--dim);margin-top:7px;line-height:1.4;font-style:italic;}
 .empty{color:var(--dim);font-size:14px;line-height:1.6;padding:40px 6px;text-align:center;}
 .tabs{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:460px;display:flex;
