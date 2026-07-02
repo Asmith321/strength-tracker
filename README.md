@@ -66,3 +66,16 @@ logging a session on your phone updates the same data everywhere.
 - If you skip Vercel and just want local-network use, `npm run build` +
   `npm run preview`, or host `dist/` on Netlify/any static host — you'd just
   lose the coach feature unless that host also supports serverless functions.
+
+## Known limitations
+- **No backup/recovery on Supabase's free tier.** Point-in-time recovery
+  (PITR) and automated daily backups are paid add-ons/plan features on
+  Supabase, not included on the free tier this app is set up to use. If the
+  `kv_store` table is dropped, the project is deleted, or a bad write
+  overwrites your data outside the app's own reset flow, there is no vendor
+  backup to restore from. (Verify current terms on Supabase's pricing page —
+  this can change.) The in-app "Reset everything" action in Settings is
+  gated behind a typed `DELETE` confirmation specifically because of this —
+  there's no safety net underneath it. If this matters to you, consider
+  periodically exporting `kv_store` (Supabase Table Editor → export) or
+  upgrading to a plan with backups.

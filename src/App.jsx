@@ -717,6 +717,7 @@ export default function App() {
   const [tab, setTab] = useState("today");
   const [showSettings, setShowSettings] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetPhrase, setResetPhrase] = useState("");
 
   useEffect(() => { (async () => {
     const p = await loadKey(K_PROGRAM); const s = await loadKey(K_SESSIONS);
@@ -758,8 +759,9 @@ export default function App() {
   };
 
   const reset = async () => {
+    if (resetPhrase !== "DELETE") return;
     await saveKey(K_PROGRAM, null); await saveKey(K_SESSIONS, []);
-    setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false); setShowSettings(false);
+    setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false); setShowSettings(false); setResetPhrase("");
   };
 
   const setProgramField = async (field, v) => {
@@ -793,12 +795,20 @@ export default function App() {
                 </div>
               ) : (
                 <div className="panel" style={{ padding: 16 }}>
-                  <p style={{ margin: "4px 0 14px", fontSize: 13.5, lineHeight: 1.5, color: "var(--text)" }}>
-                    Reset the program and all logged history? This cannot be undone.
+                  <p style={{ margin: "4px 0 10px", fontSize: 13.5, lineHeight: 1.5, color: "var(--text)" }}>
+                    This will permanently delete your program and all session history. There is no backup — this cannot be undone.
                   </p>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={reset}>Confirm reset</button>
-                    <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)" }} onClick={() => setConfirmingReset(false)}>Cancel</button>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--dim)" }}>Type <b style={{ color: "var(--text)" }}>DELETE</b> to confirm.</p>
+                  <input
+                    className="textinput mono"
+                    value={resetPhrase}
+                    onChange={(e) => setResetPhrase(e.target.value)}
+                    placeholder="DELETE"
+                    autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  />
+                  <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                    <button className="cta" disabled={resetPhrase !== "DELETE"} style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={reset}>Confirm reset</button>
+                    <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)" }} onClick={() => { setConfirmingReset(false); setResetPhrase(""); }}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -841,6 +851,9 @@ const CSS = `
 .panel .fieldrow:last-child{border-bottom:none;}
 .fieldrow.sm{padding:6px 0;font-size:13px;}
 .est{font-size:11.5px;color:var(--dim);padding:2px 0 10px;}
+.textinput{width:100%;padding:12px 13px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);color:var(--text);font-size:14.5px;height:44px;}
+.textinput:focus{outline:none;border-color:#D7443E;}
+.textinput::placeholder{color:var(--dim);opacity:.5;}
 .stepper{display:flex;align-items:center;gap:6px;}
 .stepper button{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .stepper button:active{background:var(--line);}
