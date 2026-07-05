@@ -331,15 +331,19 @@ const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red")
    barbell compound accessories get at most a single light feeler set, not a
    percentage sequence; isolation/unilateral accessories get no warmup — the
    working sets themselves are already light enough to serve as warmup.
-   Ramp length: during deload/realization the top-set weight is already
-   submaximal (lower RPE target by design — see BLOCKS), so those phases
-   always get a single-step ramp regardless of pattern overlap; there's
-   nothing to ramp up to. Otherwise, if an earlier exercise this session
-   already worked the same movement pattern (main or accessory, barbell or
-   not — the pattern is already primed either way), a barbell exercise gets
-   the short 2-step ramp instead of the full 4-step one. Main lifts are
-   always first in the day's rotation, so in practice they always get the
-   full ramp outside deload/realization. */
+   Ramp tier is driven directly by the top set's %1RM (the same RPE-table
+   lookup, rpePct(reps, rpe), prescribe() already uses for load math) rather
+   than the block-phase label: >=85% full 4-step, 70-85% short 2-step, <70%
+   minimal 1-step. This naturally reflects readiness-adjusted RPE shifts that
+   a phase-name check couldn't see, and correctly handles realization (a
+   near-max single/double at high RPE — genuinely needs the full ramp despite
+   being a short "test" phase) as well as deload (RPE floors at 6, but at only
+   3-4 reps that's still ~79-81%1RM, landing short rather than minimal).
+   On top of the %1RM tier, if an earlier exercise this session already worked
+   the same movement pattern (main or accessory, barbell or not — the pattern
+   is already primed either way), the tier drops one step further (full->short,
+   short->minimal). Main lifts are always first in the day's rotation, so this
+   reduction never applies to them. */
 const FULL_RAMP = [{ pct: 0.40, reps: 5 }, { pct: 0.60, reps: 3 }, { pct: 0.75, reps: 2 }, { pct: 0.90, reps: 1 }];
 const SHORT_RAMP = [{ pct: 0.60, reps: 3 }, { pct: 0.90, reps: 1 }];
 const MINIMAL_RAMP = [{ pct: 0.60, reps: 3 }];
@@ -410,22 +414,22 @@ function prescribe(program, readiness) {
 
     let warmup = null;
     if (L.barbell) {
-      const lightPhase = program.block.type === "deload" || program.block.type === "realization";
+      const topPct1RM = rpePct(reps, rpe);
+      const baseTier = topPct1RM >= 0.85 ? "full" : topPct1RM >= 0.70 ? "short" : "minimal";
       /* An earlier barbell exercise counts if it shares this one's landmark
          pattern (two compound lifts under the same pattern always share the
          main muscle, e.g. squat/front squat -> quads). An earlier non-barbell
          exercise only counts if it actually worked this exercise's main
          muscle — sharing the loose `pattern` tag isn't enough (curl shares
-         Barbell Row's horiz_pull pattern but works biceps, not back). Skipped
-         entirely in deload/realization since the phase check already caps
-         the ramp regardless of what primed what. */
-      const earlierPrimed = !lightPhase && day.items.slice(0, idx).some((k) => {
+         Barbell Row's horiz_pull pattern but works biceps, not back). */
+      const earlierPrimed = day.items.slice(0, idx).some((k) => {
         const E = LIB[k];
         return E.barbell ? E.pattern === L.pattern : (E.muscles || []).includes(L.mainMuscle);
       });
-      const ramp = lightPhase ? MINIMAL_RAMP : earlierPrimed ? SHORT_RAMP : FULL_RAMP;
+      const type = earlierPrimed ? (baseTier === "full" ? "short" : "minimal") : baseTier;
+      const ramp = type === "full" ? FULL_RAMP : type === "short" ? SHORT_RAMP : MINIMAL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
-      if (rampSets) warmup = { type: lightPhase ? "minimal" : earlierPrimed ? "short" : "full", sets: rampSets };
+      if (rampSets) warmup = { type, sets: rampSets };
     } else if (!isMain && L.repTier === "compound") {
       warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit);
     }

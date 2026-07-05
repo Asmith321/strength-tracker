@@ -23,7 +23,7 @@ function ensureBundle() {
   if (fresh) return;
   const shim = join(ROOT, "src", ".App_stress_shim.jsx");
   const body = readFileSync(SRC, "utf8").replace(/^import cloudStorage from "\.\/storage\.js";\s*$/m, "")
-    + `\nexport { freshProgram, ingest, prescribe, applyTransition, landmarksForExperience, platesForSide, plateText, LIB, ROTATION, BLOCKS, PATTERNS, ACC_REP_TIERS, FATIGUE_SPIKE, FATIGUE_AMBER };\n`;
+    + `\nexport { freshProgram, ingest, prescribe, applyTransition, landmarksForExperience, platesForSide, plateText, rpePct, LIB, ROTATION, BLOCKS, PATTERNS, ACC_REP_TIERS, FATIGUE_SPIKE, FATIGUE_AMBER };\n`;
   writeFileSync(shim, body);
   try {
     execFileSync(join(ROOT, "node_modules", ".bin", "esbuild"),
@@ -36,7 +36,7 @@ ensureBundle();
 
 const {
   freshProgram, ingest, prescribe, applyTransition,
-  platesForSide, LIB, ROTATION, BLOCKS,
+  platesForSide, rpePct, LIB, ROTATION, BLOCKS,
 } = await import("./stress_engine.mjs");
 
 const ROT = ROTATION.length;
@@ -96,11 +96,20 @@ function scanNonFinite(obj, path, out) {
   if (typeof obj === "object") { for (const k of Object.keys(obj)) scanNonFinite(obj[k], `${path}.${k}`, out); }
 }
 
+/* ---- expected warmup tier from %1RM (mirrors prescribe()'s own rule), used
+   as an independent black-box check rather than trusting the engine's label.
+   The "earlier exercise already primed this muscle" reduction can only ever
+   drop the tier ONE step below the %1RM-driven base tier, never more — so
+   the valid set for a given %1RM is {baseTier, oneStepDown(baseTier)}. ---- */
+const TIER_ORDER = ["full", "short", "minimal"];
+const RAMP_LEN = { full: 4, short: 2, minimal: 1 };
+function tierFromPct(pct1rm) { return pct1rm >= 0.85 ? "full" : pct1rm >= 0.70 ? "short" : "minimal"; }
+function oneStepDown(tier) { return TIER_ORDER[Math.min(TIER_ORDER.indexOf(tier) + 1, TIER_ORDER.length - 1)]; }
+
 /* ============================ INVARIANT CHECKS ============================ */
 function checkPrescribe(rep, session, program, rx) {
   const bar = program.barWeight || 45;
   const phase = program.block.type;
-  const lightPhase = phase === "deload" || phase === "realization";
 
   for (const it of rx.items) {
     const tag = `${it.key}@${phase}`;
@@ -137,15 +146,17 @@ function checkPrescribe(rep, session, program, rx) {
       const w = it.warmup;
       const wsets = w.sets || [];
       if (w.type !== "feeler") {
-        // ramp length must match block phase
-        const len = wsets.length;
-        if (lightPhase) {
-          if (w.type !== "minimal" || len !== 1)
-            rep.add("ramp-length-lightphase", session, `${tag} phase=${phase} type=${w.type} len=${len}`);
-        } else {
-          const okLen = (w.type === "full" && len === 4) || (w.type === "short" && len === 2);
-          if (!okLen) rep.add("ramp-length-workphase", session, `${tag} phase=${phase} type=${w.type} len=${len}`);
-        }
+        // ramp array length must always match its own type label
+        if (wsets.length !== RAMP_LEN[w.type])
+          rep.add("ramp-length-mismatch", session, `${tag} type=${w.type} len=${wsets.length} expected=${RAMP_LEN[w.type]}`);
+        // tier must be driven by %1RM (not block phase): either the base tier
+        // for this top set's %1RM, or exactly one step down from it (the
+        // earlier-primed reduction) — never higher, never more than one step lower
+        const pct1rm = rpePct(it.reps, it.rpe);
+        const baseTier = tierFromPct(pct1rm);
+        const allowed = new Set([baseTier, oneStepDown(baseTier)]);
+        if (!allowed.has(w.type))
+          rep.add("ramp-tier-mismatch", session, `${tag} pct1rm=${(pct1rm * 100).toFixed(1)}% baseTier=${baseTier} actualType=${w.type}`);
       }
       let prev = -Infinity;
       for (const s of wsets) {
