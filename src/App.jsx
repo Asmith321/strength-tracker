@@ -80,8 +80,19 @@ function slope(ys) {
   for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
   return den === 0 ? 0 : num / den;
 }
+/* Per-lift e1RM trend, normalized by current e1RM so patterns are comparable
+   regardless of absolute load. Generalizes the block-level slope in ingest()
+   so the same computation feeds both the fatigue index and the per-pattern
+   growth signal used for landmark auto-tuning. */
+function liftNormSlope(lift) {
+  const h = (lift?.hist || []).map((p) => p.e);
+  const base = lift?.e1rm || 1;
+  return slope(h.slice(-8)) / base;
+}
 
-/* ---- movement patterns & landmark defaults (weekly hard sets) ---- */
+/* ---- movement patterns & landmark defaults (weekly hard sets) ----
+   These baseline MEV/MAV/MRV are the INTERMEDIATE tier; beginner/advanced
+   programs are seeded by scaling this table (see landmarksForExperience). */
 const PATTERNS = {
   squat:       { label: "Squat / Quads",       mev: 8,  mav: 14, mrv: 20 },
   hinge:       { label: "Hinge / Post. chain", mev: 6,  mav: 12, mrv: 16 },
@@ -90,6 +101,31 @@ const PATTERNS = {
   horiz_pull:  { label: "Horizontal Pull",     mev: 10, mav: 16, mrv: 22 },
   vert_pull:   { label: "Vertical Pull",       mev: 8,  mav: 14, mrv: 20 },
 };
+
+/* ---- experience-based landmark seeding ----
+   Replaces manual per-pattern number entry: the athlete picks a tier and we
+   scale the Intermediate baseline table above. Only MEV/MRV scale factors are
+   research-anchored (less-trained lifters need less volume and recover from
+   less; advanced lifters tolerate more); MAV has no separate spec, so it's
+   scaled by the average of the two factors and clamped to stay strictly inside
+   the [MEV, MRV] range. */
+const EXPERIENCE_TIERS = {
+  beginner:     { label: "Beginner",     blurb: "< ~1 yr consistent training",  mev: 0.7, mrv: 0.75 },
+  intermediate: { label: "Intermediate", blurb: "~1–3 yrs, steady progression", mev: 1.0, mrv: 1.0 },
+  advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mrv: 1.3 },
+};
+function landmarksForExperience(tier) {
+  const s = EXPERIENCE_TIERS[tier] || EXPERIENCE_TIERS.intermediate;
+  const mavFactor = (s.mev + s.mrv) / 2;
+  const out = {};
+  Object.entries(PATTERNS).forEach(([p, base]) => {
+    const mev = Math.max(2, Math.round(base.mev * s.mev)); // floor MEV at 2
+    const mrv = Math.max(4, Math.round(base.mrv * s.mrv));
+    const mav = Math.min(mrv - 1, Math.max(mev + 1, Math.round(base.mav * mavFactor)));
+    out[p] = { label: base.label, mev, mav, mrv };
+  });
+  return out;
+}
 
 /* ---- exercise library ----
    fixedSets: accessory takes a flat set count (scaled by block volume tier
@@ -181,6 +217,79 @@ function weeklyTarget(pattern, blockType, cycleInBlock, landmarks) {
   const span = Math.max(1, cfg.maxCycles - 1);
   const frac = Math.min(1, cycleInBlock / span);
   return Math.round(lm.mev + (lm.mrv - lm.mev) * frac);
+}
+
+/* ---- automatic volume-landmark adjustment (runs at accumulation→deload) ----
+   Two signals per pattern drive a gradual ±1-set drift over many blocks:
+     • growth  — normalized e1RM slope of the pattern's driver: the main lift
+                 for squat/hinge/horiz_press, else the average slope of that
+                 pattern's landmark-ramped (non-fixedSets) accessories.
+     • fatigue — the block-level fatigue index at the transition.
+   Rules: strong growth + comfortable fatigue → MEV+1, MRV+1; growth stalled
+   early (before the pattern's volume reached MRV) + fatigue spiked early
+   → MRV−1. Change is capped at ±1/pattern/cycle so landmarks drift rather
+   than swing on one noisy block, and MEV is kept ≥2 sets below MRV so the
+   working range can't collapse. The 0.7 fatigue-spike bound reuses the same
+   high-fatigue threshold the deload trigger already uses; both are
+   literature-informed but not precisely-validated engine constants. */
+const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked"
+const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
+/* pattern → main lift that carries its growth signal */
+const PATTERN_MAIN = { squat: "squat", hinge: "deadlift", horiz_press: "bench" };
+/* pattern → its landmark-ramped accessories (role=acc, not fixedSets), for the
+   accessory-only patterns that have no main lift to read a slope from */
+const PATTERN_RAMPED_ACC = (() => {
+  const m = {};
+  Object.entries(LIB).forEach(([k, L]) => {
+    if (L.role !== "acc" || L.fixedSets) return;
+    (m[L.pattern] = m[L.pattern] || []).push(k);
+  });
+  return m;
+})();
+function patternGrowth(program, pattern) {
+  const mainKey = PATTERN_MAIN[pattern];
+  if (mainKey) {
+    const lift = program.lifts[mainKey];
+    return { g: liftNormSlope(lift), n: (lift?.hist || []).length };
+  }
+  const accs = PATTERN_RAMPED_ACC[pattern] || [];
+  if (!accs.length) return { g: 0, n: 0 };
+  const gs = accs.map((k) => liftNormSlope(program.lifts[k]));
+  const ns = accs.map((k) => (program.lifts[k]?.hist || []).length);
+  return { g: gs.reduce((a, b) => a + b, 0) / gs.length, n: Math.max(...ns) };
+}
+function adjustLandmarks(program) {
+  const cyc = program.block.cycle;
+  const maxCycles = BLOCKS.accumulation.maxCycles;
+  const fatigueIndex = program.fatigue?.index ?? 0;
+  const fatigueComfortable = fatigueIndex < FATIGUE_SPIKE;
+  const fatigueSpikedEarly = fatigueIndex >= FATIGUE_SPIKE && cyc < maxCycles;
+  const landmarks = structuredClone(program.landmarks);
+  const adjustments = {};
+  Object.keys(landmarks).forEach((p) => {
+    const lm = landmarks[p];
+    const { g, n } = patternGrowth(program, p);
+    if (n < 3) return; // not enough e1RM history to act on — leave it alone
+    // did this pattern's ramped volume already reach MRV this block?
+    const reachedCeiling = weeklyTarget(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) >= lm.mrv;
+    const grew = g > GROWTH_POS;
+    const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
+
+    let dMev = 0, dMrv = 0, signal = null;
+    if (grew && fatigueComfortable) { dMev = 1; dMrv = 1; signal = "growth strong, fatigue in check"; }
+    else if (stalledEarly && fatigueSpikedEarly) { dMrv = -1; signal = "stalled early with fatigue spike"; }
+    if (!dMev && !dMrv) return;
+
+    const before = { mev: lm.mev, mav: lm.mav, mrv: lm.mrv };
+    lm.mev = Math.max(2, lm.mev + dMev);           // floor MEV at 2
+    lm.mrv = Math.max(lm.mev + 2, lm.mrv + dMrv);  // keep MRV ≥2 above MEV (range can't collapse)
+    lm.mav = Math.min(lm.mrv - 1, Math.max(lm.mev + 1, lm.mav));
+    // report the deltas actually realized after the safety clamps
+    const rMev = lm.mev - before.mev, rMrv = lm.mrv - before.mrv;
+    if (!rMev && !rMrv) return;
+    adjustments[p] = { before, after: { mev: lm.mev, mav: lm.mav, mrv: lm.mrv }, dMev: rMev, dMrv: rMrv, signal, at: Date.now() };
+  });
+  return { landmarks, adjustments };
 }
 
 /* ---- readiness score (0–1) from Garmin Training Readiness Score ---- */
@@ -290,11 +399,7 @@ function ingest(program, logs, readiness) {
     0.5 * Math.min(1, next.fatigue.rpeCreep / 1.5) + 0.3 * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
-  const slopes = ["squat", "bench", "deadlift"].map((k) => {
-    const h = (next.lifts[k].hist || []).map((p) => p.e);
-    const base = next.lifts[k].e1rm || 1;
-    return slope(h.slice(-8)) / base;
-  });
+  const slopes = ["squat", "bench", "deadlift"].map((k) => liftNormSlope(next.lifts[k]));
   const e1rmSlope = slopes.reduce((a, b) => a + b, 0) / slopes.length;
   next.fatigue.slope = e1rmSlope;
 
@@ -344,6 +449,17 @@ function ingest(program, logs, readiness) {
 
 function applyTransition(program, transition) {
   const next = structuredClone(program);
+  /* Auto-tune volume landmarks for the next cycle as an accumulation block
+     closes into a deload — the point where a full block's worth of growth +
+     fatigue evidence is available. */
+  if (program.block.type === "accumulation" && transition.to === "deload") {
+    const { landmarks, adjustments } = adjustLandmarks(program);
+    if (Object.keys(adjustments).length) {
+      next.landmarks = landmarks;
+      next.landmarkAdjustments = { ...(program.landmarkAdjustments || {}), ...adjustments };
+      next.landmarkLog = [...(program.landmarkLog || []), { at: Date.now(), cycle: program.block.cycle, changes: adjustments }].slice(-24);
+    }
+  }
   next.block = {
     type: transition.to, cycle: 0, sessionsInBlock: 0,
     nextAfter: transition.nextAfter || (transition.to === "deload" ? next.block.nextAfter : null),
@@ -354,7 +470,8 @@ function applyTransition(program, transition) {
   return next;
 }
 
-function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
+function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
+  const landmarks = landmarksForExperience(experience);
   const lifts = {};
   Object.keys(LIB).forEach((k) => {
     let e1rm;
@@ -377,11 +494,12 @@ function freshProgram({ seeds, landmarks, unit, goal, bodyweight }) {
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
   });
   return {
-    unit, goal, landmarks, lifts, bodyweight,
+    unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
     cycleIndex: 0, sessionCount: 0, lastSessionAt: null,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
+    landmarkAdjustments: {}, landmarkLog: [],
   };
 }
 
@@ -462,15 +580,40 @@ function Stepper({ value, set, min = 0, max = 9999, step = 1, suffix, w }) {
   );
 }
 
+/* Read-only landmarks view, shared by the onboarding preview and Settings.
+   When `adjustments` is passed, the most-recent auto-tune delta per pattern is
+   surfaced inline (e.g. "18 ▲1") so the automation is visible, not silent. */
+function LandmarkTable({ landmarks, adjustments }) {
+  const fmtDelta = (d) => (d > 0 ? `▲${d}` : `▼${Math.abs(d)}`);
+  return (
+    <div className="lmtable">
+      <div className="lmtable-head mono"><span>PATTERN</span><span>MEV</span><span>MAV</span><span>MRV</span></div>
+      {Object.entries(landmarks).map(([p, lm]) => {
+        const adj = adjustments?.[p];
+        return (
+          <div key={p} className="lmrow">
+            <div className="lmrow-main">
+              <span className="lmrow-name">{lm.label}</span>
+              <span className="mono">{lm.mev}{adj?.dMev ? <em className={"lmdelta" + (adj.dMev < 0 ? " dn" : "")}>{fmtDelta(adj.dMev)}</em> : null}</span>
+              <span className="mono">{lm.mav}</span>
+              <span className="mono">{lm.mrv}{adj?.dMrv ? <em className={"lmdelta" + (adj.dMrv < 0 ? " dn" : "")}>{fmtDelta(adj.dMrv)}</em> : null}</span>
+            </div>
+            {adj?.signal && <div className="lmsig mono">↳ last auto-tune: {adj.signal}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
+  const [experience, setExperience] = useState("intermediate");
   const [bodyweight, setBodyweight] = useState(180);
   const [seeds, setSeeds] = useState({
     squat: { weight: 225, reps: 5, rpe: 8 }, bench: { weight: 155, reps: 5, rpe: 8 }, deadlift: { weight: 275, reps: 5, rpe: 8 },
   });
-  const [landmarks, setLandmarks] = useState(() => structuredClone(PATTERNS));
   const setSeed = (k, f, v) => setSeeds((s) => ({ ...s, [k]: { ...s[k], [f]: v } }));
-  const setLM = (p, f, v) => setLandmarks((l) => ({ ...l, [p]: { ...l[p], [f]: v } }));
 
   if (step === 0) return (
     <div className="screen">
@@ -489,24 +632,28 @@ function Onboarding({ onDone }) {
           <div className="est mono">≈ e1RM {Math.round(e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe))} lb</div>
         </div>
       ))}
-      <button className="cta" onClick={() => setStep(1)}>Next — volume landmarks</button>
+      <button className="cta" onClick={() => setStep(1)}>Next — training experience</button>
     </div>
   );
 
+  const preview = landmarksForExperience(experience);
   return (
     <div className="screen">
       <div className="eyebrow">SETUP · 2 OF 2</div>
-      <h1 className="display sm">Volume landmarks.</h1>
-      <p className="lede">Weekly hard sets per movement pattern: MEV (minimum effective), MAV (where most growth happens), MRV (most you can recover from). Defaults are research-based starting points — edit to your experience. Accessory volume ramps MEV→MRV across each accumulation block.</p>
-      {Object.entries(landmarks).map(([p, lm]) => (
-        <div key={p} className="panel">
-          <div className="exer-name" style={{ fontSize: 17, padding: "10px 0 6px" }}>{lm.label}</div>
-          <label className="fieldrow sm"><span>MEV</span><Stepper value={lm.mev} set={(v) => setLM(p, "mev", v)} min={2} max={40} w={40} /></label>
-          <label className="fieldrow sm"><span>MAV</span><Stepper value={lm.mav} set={(v) => setLM(p, "mav", v)} min={2} max={40} w={40} /></label>
-          <label className="fieldrow sm"><span>MRV</span><Stepper value={lm.mrv} set={(v) => setLM(p, "mrv", v)} min={2} max={40} w={40} /></label>
-        </div>
+      <h1 className="display sm">Training experience.</h1>
+      <p className="lede">This seeds your starting weekly-volume landmarks — MEV (minimum effective), MAV (most growth), MRV (most you can recover from) hard sets per pattern. From here the engine auto-tunes them each block from your strength trend and fatigue; you won't set these by hand.</p>
+      {Object.entries(EXPERIENCE_TIERS).map(([key, t]) => (
+        <button key={key} type="button" className={"optcard" + (experience === key ? " on" : "")} onClick={() => setExperience(key)}>
+          <div className="optcard-top">
+            <span className="optcard-name">{t.label}</span>
+            {experience === key && <Check size={16} />}
+          </div>
+          <span className="optcard-sub mono">{t.blurb}</span>
+        </button>
       ))}
-      <button className="cta" onClick={() => onDone(freshProgram({ seeds, landmarks, unit: "lb", goal: "hybrid", bodyweight }))}>Start program</button>
+      <div className="eyebrow mt">SEEDED LANDMARKS</div>
+      <LandmarkTable landmarks={preview} />
+      <button className="cta" onClick={() => onDone(freshProgram({ seeds, experience, unit: "lb", goal: "hybrid", bodyweight }))}>Start program</button>
     </div>
   );
 }
@@ -799,6 +946,10 @@ export default function App() {
                 <label className="fieldrow sm"><span>Bar weight</span><Stepper value={program.barWeight || 45} set={(v) => setProgramField("barWeight", v)} min={15} max={100} step={5} suffix=" lb" /></label>
               </div>
               <div className="est mono" style={{ padding: "0 0 14px" }}>Bodyweight drives Pull-Up / Chin-Up system-load math. Bar weight drives the plate-loading breakdown.</div>
+              <div className="eyebrow">VOLUME LANDMARKS · {(EXPERIENCE_TIERS[program.experience] || EXPERIENCE_TIERS.intermediate).label.toUpperCase()} SEED</div>
+              <p className="est mono" style={{ padding: "0 0 8px" }}>Weekly hard sets per pattern. Auto-tuned each block from your strength trend + fatigue — ▲/▼ marks the most recent change.</p>
+              <LandmarkTable landmarks={program.landmarks} adjustments={program.landmarkAdjustments} />
+              <div style={{ height: 16 }} />
               {!confirmingReset ? (
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={() => setConfirmingReset(true)}>Reset everything</button>
@@ -903,6 +1054,23 @@ const CSS = `
 .gauge-label{font-size:10.5px;letter-spacing:.08em;color:var(--dim);margin-bottom:5px;}
 .gauge-bar{height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;}
 .gauge-fill{height:100%;border-radius:4px;transition:width .3s;}
+.optcard{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px 15px;margin-bottom:9px;cursor:pointer;color:var(--text);font-family:inherit;}
+.optcard.on{border-color:#E8C547;box-shadow:inset 0 0 0 1px #E8C547;}
+.optcard-top{display:flex;justify-content:space-between;align-items:center;color:#E8C547;}
+.optcard-name{font-family:'Saira Condensed',sans-serif;font-weight:600;font-size:21px;line-height:1;color:var(--text);}
+.optcard.on .optcard-name{color:#E8C547;}
+.optcard-sub{display:block;font-size:11px;color:var(--dim);margin-top:5px;letter-spacing:.02em;}
+.lmtable{background:var(--surface);border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-bottom:8px;}
+.lmtable-head{display:grid;grid-template-columns:1fr 52px 52px 52px;padding:10px 14px;font-size:10px;letter-spacing:.12em;color:var(--dim);border-bottom:1px solid var(--line);}
+.lmtable-head span:not(:first-child){text-align:right;}
+.lmrow{padding:9px 14px;border-bottom:1px solid var(--line);}
+.lmtable .lmrow:last-child{border-bottom:none;}
+.lmrow-main{display:grid;grid-template-columns:1fr 52px 52px 52px;align-items:center;font-size:13.5px;}
+.lmrow-main span:not(:first-child){text-align:right;}
+.lmrow-name{font-size:12.5px;}
+.lmdelta{font-style:normal;font-size:9.5px;margin-left:3px;color:#3FA85F;letter-spacing:.02em;}
+.lmdelta.dn{color:#D7443E;}
+.lmsig{font-size:10px;color:var(--dim);margin-top:5px;letter-spacing:.02em;}
 .volrow{margin-bottom:13px;}
 .volrow-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;}
 .vol-track{position:relative;height:8px;background:var(--surface2);border-radius:4px;}
