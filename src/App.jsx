@@ -331,13 +331,18 @@ const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red")
    barbell compound accessories get at most a single light feeler set, not a
    percentage sequence; isolation/unilateral accessories get no warmup — the
    working sets themselves are already light enough to serve as warmup.
-   Ramp length: if an earlier exercise this session already worked the same
-   movement pattern (main or accessory, barbell or not — the pattern is
-   already primed either way), a barbell exercise gets the short 2-step ramp
-   instead of the full 4-step one. Main lifts are always first in the day's
-   rotation, so in practice they always get the full ramp. */
+   Ramp length: during deload/realization the top-set weight is already
+   submaximal (lower RPE target by design — see BLOCKS), so those phases
+   always get a single-step ramp regardless of pattern overlap; there's
+   nothing to ramp up to. Otherwise, if an earlier exercise this session
+   already worked the same movement pattern (main or accessory, barbell or
+   not — the pattern is already primed either way), a barbell exercise gets
+   the short 2-step ramp instead of the full 4-step one. Main lifts are
+   always first in the day's rotation, so in practice they always get the
+   full ramp outside deload/realization. */
 const FULL_RAMP = [{ pct: 0.40, reps: 5 }, { pct: 0.60, reps: 3 }, { pct: 0.75, reps: 2 }, { pct: 0.90, reps: 1 }];
 const SHORT_RAMP = [{ pct: 0.60, reps: 3 }, { pct: 0.90, reps: 1 }];
+const MINIMAL_RAMP = [{ pct: 0.60, reps: 3 }];
 function buildRamp(topLoad, ramp, unit, barWeight) {
   // top-set weight itself too light for a ramp to make sense (e.g. deload-week loads near an empty bar)
   if (topLoad <= barWeight) return null;
@@ -405,19 +410,22 @@ function prescribe(program, readiness) {
 
     let warmup = null;
     if (L.barbell) {
+      const lightPhase = program.block.type === "deload" || program.block.type === "realization";
       /* An earlier barbell exercise counts if it shares this one's landmark
          pattern (two compound lifts under the same pattern always share the
          main muscle, e.g. squat/front squat -> quads). An earlier non-barbell
          exercise only counts if it actually worked this exercise's main
          muscle — sharing the loose `pattern` tag isn't enough (curl shares
-         Barbell Row's horiz_pull pattern but works biceps, not back). */
-      const earlierPrimed = day.items.slice(0, idx).some((k) => {
+         Barbell Row's horiz_pull pattern but works biceps, not back). Skipped
+         entirely in deload/realization since the phase check already caps
+         the ramp regardless of what primed what. */
+      const earlierPrimed = !lightPhase && day.items.slice(0, idx).some((k) => {
         const E = LIB[k];
         return E.barbell ? E.pattern === L.pattern : (E.muscles || []).includes(L.mainMuscle);
       });
-      const ramp = earlierPrimed ? SHORT_RAMP : FULL_RAMP;
+      const ramp = lightPhase ? MINIMAL_RAMP : earlierPrimed ? SHORT_RAMP : FULL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
-      if (rampSets) warmup = { type: earlierPrimed ? "short" : "full", sets: rampSets };
+      if (rampSets) warmup = { type: lightPhase ? "minimal" : earlierPrimed ? "short" : "full", sets: rampSets };
     } else if (!isMain && L.repTier === "compound") {
       warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit);
     }
@@ -790,7 +798,8 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
             <div className="warmup">
               <button type="button" className="warmup-head mono" onClick={() => setWarmupOpen(!warmupOpen)}>
                 <span className="warmup-label">
-                  WARM-UP · {it.warmup.type === "full" ? "4-step ramp" : it.warmup.type === "short" ? "2-step ramp" : "feeler set"}
+                  WARM-UP · {it.warmup.type === "full" ? "4-step ramp" : it.warmup.type === "short" ? "2-step ramp"
+                    : it.warmup.type === "minimal" ? "1-step ramp" : "feeler set"}
                 </span>
                 {warmupOpen ? <ChevronDown size={14} color="#E8C547" /> : <ChevronRight size={14} color="#E8C547" />}
               </button>
