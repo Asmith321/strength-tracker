@@ -132,26 +132,30 @@ function landmarksForExperience(tier) {
    + readiness) instead of drawing from the landmark/weeklyTarget pool, and
    is excluded from PATTERN_FREQ since it isn't sharing that pool.
    bodyweight: e1rm is tracked as SYSTEM load (bodyweight + added load); see
-   e1rmFromBW() and the bodyweight branch in prescribe(). */
+   e1rmFromBW() and the bodyweight branch in prescribe().
+   repTier (accessories only): drives the per-tier rep target in ACC_REP_TIERS
+   — 'compound' (multi-joint, barbell/machine, biggest loads), 'unilateral'
+   (single-leg/arm, stability-limited), 'isolation' (single-joint, highest
+   safe rep range). */
 const LIB = {
   squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true },
   bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true },
   deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true },
-  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true },
-  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true },
-  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true },
-  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true },
-  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false },
-  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false },
-  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true },
-  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3 },
-  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false },
-  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3 },
-  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3 },
-  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3 },
-  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false },
-  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3 },
-  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3 },
+  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound" },
+  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true,  repTier: "compound" },
+  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true,  repTier: "compound" },
+  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound" },
+  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound" },
+  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound" },
+  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound" },
+  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
+  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral" },
+  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation" },
+  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
+  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
+  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound" },
+  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
+  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
@@ -173,6 +177,20 @@ const PATTERN_FREQ = (() => {
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
+/* ---- per-tier accessory rep targets (weekly hard sets aside, this is the
+   rep count within each set) ----
+   Replaces a single shared accReps range with a direct per-tier lookup:
+   compound accessories (multi-joint, heaviest relative load) stay lowest-rep,
+   isolation (single-joint, safest to push near failure) goes highest-rep,
+   unilateral sits in between. RPE targeting (accRpe, below) stays shared
+   across tiers — only the rep count differentiates by tier. */
+const ACC_REP_TIERS = {
+  accumulation:    { compound: 8, unilateral: 9,  isolation: 10 },
+  intensification: { compound: 6, unilateral: 7,  isolation: 8 },
+  deload:          { compound: 7, unilateral: 8,  isolation: 9 },
+  realization:     { compound: 7, unilateral: 8,  isolation: 9 },
+};
+
 /* ---- block configurations ---- */
 const BLOCKS = {
   accumulation: {
@@ -180,7 +198,7 @@ const BLOCKS = {
     mainReps: { squat: 5, bench: 5, deadlift: 4 }, mainSets: 4,
     rpeBase: 7.0, rpeStep: 0.4, rpeCap: 8.5,
     backoffDrop: 0.06, backoffRpeCap: 8,
-    accReps: [8, 12], accRpe: 8, volLevel: "ramp",
+    accRpe: 8, volLevel: "ramp",
     minCycles: 3, maxCycles: 6,
   },
   intensification: {
@@ -188,7 +206,7 @@ const BLOCKS = {
     mainReps: { squat: 3, bench: 3, deadlift: 2 }, mainSets: 4,
     rpeBase: 8.5, rpeStep: 0.3, rpeCap: 9.5,
     backoffDrop: 0.08, backoffRpeCap: 8.5,
-    accReps: [6, 10], accRpe: 8, volLevel: "mev",
+    accRpe: 8, volLevel: "mev",
     minCycles: 2, maxCycles: 4,
   },
   deload: {
@@ -196,7 +214,7 @@ const BLOCKS = {
     mainReps: { squat: 4, bench: 4, deadlift: 3 }, mainSets: 2,
     rpeBase: 6, rpeStep: 0, rpeCap: 6,
     backoffDrop: 0.1, backoffRpeCap: 6,
-    accReps: [8, 10], accRpe: 6, volLevel: "half",
+    accRpe: 6, volLevel: "half",
     minCycles: 1, maxCycles: 1,
   },
   realization: {
@@ -204,7 +222,7 @@ const BLOCKS = {
     mainReps: { squat: 2, bench: 2, deadlift: 1 }, mainSets: 1,
     rpeBase: 9, rpeStep: 0.5, rpeCap: 9.5,
     backoffDrop: 0, backoffRpeCap: 9,
-    accReps: [8, 10], accRpe: 6, volLevel: "half",
+    accRpe: 6, volLevel: "half",
     minCycles: 1, maxCycles: 1,
   },
 };
@@ -314,7 +332,7 @@ function prescribe(program, readiness) {
     const L = LIB[key];
     const lift = program.lifts[key];
     const isMain = L.role === "main";
-    const reps = isMain ? (cfg.mainReps[key] || 4) : Math.round((cfg.accReps[0] + cfg.accReps[1]) / 2);
+    const reps = isMain ? (cfg.mainReps[key] || 4) : ACC_REP_TIERS[program.block.type][L.repTier];
     const rpe = isMain ? rpeTop : clampRpe(cfg.accRpe + rpeAdj);
 
     let sets;
@@ -326,6 +344,12 @@ function prescribe(program, readiness) {
       const rawSets = Math.round((wk / freq) * setMult);
       sets = Math.max(1, Math.min(4, rawSets));
     }
+    /* Top single + backoff sets are the same prescribed `sets` total, split
+       explicitly rather than left as an ambiguous "sets × reps · back-off
+       weight" label (see ExerciseCard). Only meaningful for mains, which are
+       the only lifts with a distinct backoff weight at all. */
+    const topSetCount = isMain ? 1 : sets;
+    const backoffSetCount = isMain ? Math.max(0, sets - 1) : 0;
 
     let topLoad, assistanceNeeded = false, repOnly = false;
     if (L.bodyweight) {
@@ -344,7 +368,8 @@ function prescribe(program, readiness) {
 
     return { key, label: L.label, barbell: L.barbell, isMain, pattern: L.pattern,
       bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
-      reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap };
+      reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
+      topSetCount, backoffSetCount };
   });
 
   return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, items };
@@ -665,12 +690,21 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const loadScheme = it.bodyweight ? bwScheme
     : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`
     : `${it.topLoad} lb`;
+  const setWord = (n) => (n === 1 ? "set" : "sets");
+  /* Unambiguous total-set breakdown for mains: `sets` is the FULL working-set
+     count, never top-sets-plus-extra-backoff — see prescribe(). Only the
+     first set is at topLoad; the rest (if any) are at the lower backoffLoad. */
+  const scheme = it.isMain
+    ? (it.backoffSetCount > 0
+        ? `${it.topSetCount} ${setWord(it.topSetCount)} @ ${it.topLoad} lb, then ${it.backoffSetCount} ${setWord(it.backoffSetCount)} @ ${it.backoffLoad} lb (${it.reps} reps · RPE ${it.rpe})`
+        : `${it.sets} ${setWord(it.sets)} of ${it.reps} @ ${it.topLoad} lb (RPE ${it.rpe})`)
+    : `${it.sets} × ${it.reps} @ RPE ${it.rpe} · ${loadScheme}`;
   return (
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
         <div>
           <div className="exer-name">{it.label}{it.isMain && <span className="tag">MAIN</span>}</div>
-          <div className="exer-scheme mono">{it.sets} × {it.reps} @ RPE {it.rpe} · {loadScheme}{it.isMain && it.sets > 1 ? `  ·  back-off ${it.backoffLoad}` : ""}</div>
+          <div className="exer-scheme mono">{scheme}</div>
         </div>
         {open ? <ChevronDown size={17} color="#8A909C" /> : <ChevronRight size={17} color="#8A909C" />}
       </div>
@@ -686,6 +720,12 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
           <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
           <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
           <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
+          {it.isMain && it.backoffSetCount > 0 && (
+            <>
+              <label className="fieldrow sm"><span>Backoff sets — reps (avg)</span><Stepper value={log.backoffReps} set={(v) => update({ backoffReps: v })} min={1} max={20} /></label>
+              <label className="fieldrow sm"><span>Backoff sets — RPE (avg)</span><Stepper value={log.backoffRpe} set={(v) => update({ backoffRpe: v })} min={5} max={10} step={0.5} /></label>
+            </>
+          )}
           {it.bodyweight && <div className="est mono">negative = assistance used</div>}
           {Math.abs(log.topRpe - it.rpe) >= 1 && (
             <div className="warn mono">{log.topRpe > it.rpe ? "harder than target — engine notes fatigue" : "easier than target — e1RM will rise"}</div>
@@ -726,12 +766,12 @@ function Today({ program, sessions, onLog }) {
   const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
 
   useEffect(() => {
-    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets })));
+    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe })));
     // eslint-disable-next-line
   }, [program.sessionCount]);
 
   useEffect(() => {
-    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, missedSets: 0, sets: rx.items[i].sets } : l)));
+    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, missedSets: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe } : l)));
     // eslint-disable-next-line
   }, [rx.band]);
 
@@ -858,7 +898,7 @@ function History({ sessions }) {
       {[...sessions].reverse().map((s, i) => (
         <div key={i} className="hist">
           <div className="hist-top"><span className="mono">{s.block} · {s.dayName}</span><span className="mono dim">{new Date(s.date).toLocaleDateString()}</span></div>
-          <div className="hist-lifts mono">{s.logs.map((l) => `${LIB[l.key]?.label.split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}`).join("  ·  ")}</div>
+          <div className="hist-lifts mono">{s.logs.map((l) => `${LIB[l.key]?.label.split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}` + (l.backoffSetCount > 0 ? ` (+${l.backoffSetCount} backoff×${l.backoffReps}@${l.backoffRpe})` : "")).join("  ·  ")}</div>
           {s.prs?.length > 0 && <div className="hist-pr mono">★ e1RM PR — {s.prs.map((k) => LIB[k]?.label || k).join(", ")}</div>}
           {s.transition && <div className="hist-trans mono">→ {BLOCKS[s.transition]?.label || s.transition}</div>}
           {s.coach && s.coach !== COACH_OFFLINE_NOTE && <div className="hist-coach">{s.coach}</div>}
@@ -907,7 +947,8 @@ export default function App() {
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
-      logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets })),
+      logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets,
+        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
     };
     const newSessions = [...sessions, record];
