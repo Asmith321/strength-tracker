@@ -136,26 +136,33 @@ function landmarksForExperience(tier) {
    repTier (accessories only): drives the per-tier rep target in ACC_REP_TIERS
    — 'compound' (multi-joint, barbell/machine, biggest loads), 'unilateral'
    (single-leg/arm, stability-limited), 'isolation' (single-joint, highest
-   safe rep range). */
+   safe rep range).
+   mainMuscle (barbell exercises only) / muscles (non-barbell exercises):
+   used by the warmup-ramp logic to decide whether an earlier non-barbell
+   exercise actually primed a later barbell exercise's target muscle, rather
+   than just sharing its loose landmark `pattern` tag — e.g. Incline Dumbbell
+   Curl shares Barbell Row's `horiz_pull` pattern (both feed the same volume
+   landmark) but works biceps, not back, so it should NOT shorten Row's
+   warmup; Lat Pulldown (back) should. See buildRamp's caller in prescribe(). */
 const LIB = {
-  squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true },
-  bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true },
-  deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true },
-  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound" },
-  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true,  repTier: "compound" },
-  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true,  repTier: "compound" },
-  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound" },
-  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound" },
-  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound" },
-  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound" },
-  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
-  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral" },
-  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation" },
-  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
-  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
-  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound" },
-  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
-  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation" },
+  squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true, mainMuscle: "quads" },
+  bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true, mainMuscle: "chest" },
+  deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true, mainMuscle: "hamstrings" },
+  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "hamstrings" },
+  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "quads" },
+  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "shoulders" },
+  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "back" },
+  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"] },
+  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"] },
+  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound", muscles: ["back", "biceps"] },
+  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["biceps"] },
+  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral", muscles: ["quads", "glutes"] },
+  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["triceps"] },
+  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["shoulders"] },
+  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["calves"] },
+  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound", muscles: ["chest", "shoulders"] },
+  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["hamstrings"] },
+  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["quads"] },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
@@ -317,6 +324,34 @@ function readinessScore(r) {
 }
 const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red");
 
+/* ---- warmup ramp ----
+   Structured percentage ramps are restricted to barbell:true exercises only
+   (mains + RDL/Front Squat/OHP/Barbell Row) — these are loaded with plates,
+   where a graduated ramp actually matters for bar speed/joint prep. Non-
+   barbell compound accessories get at most a single light feeler set, not a
+   percentage sequence; isolation/unilateral accessories get no warmup — the
+   working sets themselves are already light enough to serve as warmup.
+   Ramp length: if an earlier exercise this session already worked the same
+   movement pattern (main or accessory, barbell or not — the pattern is
+   already primed either way), a barbell exercise gets the short 2-step ramp
+   instead of the full 4-step one. Main lifts are always first in the day's
+   rotation, so in practice they always get the full ramp. */
+const FULL_RAMP = [{ pct: 0.40, reps: 5 }, { pct: 0.60, reps: 3 }, { pct: 0.75, reps: 2 }, { pct: 0.90, reps: 1 }];
+const SHORT_RAMP = [{ pct: 0.60, reps: 3 }, { pct: 0.90, reps: 1 }];
+function buildRamp(topLoad, ramp, unit, barWeight) {
+  // top-set weight itself too light for a ramp to make sense (e.g. deload-week loads near an empty bar)
+  if (topLoad <= barWeight) return null;
+  const step = unit === "kg" ? 2.5 : 5;
+  return ramp.map(({ pct, reps }) => ({ weight: Math.max(0, Math.round((topLoad * pct) / step) * step), reps }));
+}
+function buildFeeler(topLoad, reps, bodyweight, unit) {
+  if (bodyweight) return { type: "feeler", sets: [], note: "single light set — reduced range/tempo" };
+  if (topLoad <= 0) return null;
+  const step = unit === "kg" ? 2.5 : 5;
+  const weight = Math.max(0, Math.round((topLoad * 0.5) / step) * step);
+  return { type: "feeler", sets: [{ weight, reps }] };
+}
+
 /* ════════════ PRESCRIPTION ════════════ */
 function prescribe(program, readiness) {
   const day = ROTATION[program.cycleIndex % ROT];
@@ -329,7 +364,8 @@ function prescribe(program, readiness) {
   const setMult = band === "green" ? 1 : band === "amber" ? 0.85 : 0.6;
   const rpeTop = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
 
-  const items = day.items.map((key) => {
+  const barWeight = program.barWeight || 45;
+  const items = day.items.map((key, idx) => {
     const L = LIB[key];
     const lift = program.lifts[key];
     const isMain = L.role === "main";
@@ -367,10 +403,30 @@ function prescribe(program, readiness) {
     const boRaw = isMain ? lift.e1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
     const backoffLoad = isMain ? (unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5) : topLoad;
 
+    let warmup = null;
+    if (L.barbell) {
+      /* An earlier barbell exercise counts if it shares this one's landmark
+         pattern (two compound lifts under the same pattern always share the
+         main muscle, e.g. squat/front squat -> quads). An earlier non-barbell
+         exercise only counts if it actually worked this exercise's main
+         muscle — sharing the loose `pattern` tag isn't enough (curl shares
+         Barbell Row's horiz_pull pattern but works biceps, not back). */
+      const earlierPrimed = day.items.slice(0, idx).some((k) => {
+        const E = LIB[k];
+        return E.barbell ? E.pattern === L.pattern : (E.muscles || []).includes(L.mainMuscle);
+      });
+      const ramp = earlierPrimed ? SHORT_RAMP : FULL_RAMP;
+      const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
+      if (rampSets) warmup = { type: earlierPrimed ? "short" : "full", sets: rampSets };
+    } else if (!isMain && L.repTier === "compound") {
+      warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit);
+    }
+    // isolation/unilateral non-barbell accessories: no warmup (warmup stays null)
+
     return { key, label: L.label, barbell: L.barbell, isMain, pattern: L.pattern,
       bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
-      topSetCount, backoffSetCount };
+      topSetCount, backoffSetCount, warmup };
   });
 
   return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, items };
@@ -698,6 +754,7 @@ function Onboarding({ onDone }) {
 
 function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const [open, setOpen] = useState(it.isMain);
+  const [warmupOpen, setWarmupOpen] = useState(false);
   const bwScheme = it.assistanceNeeded ? "assistance needed" : it.repOnly ? "bodyweight only"
     : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
   const loadScheme = it.bodyweight ? bwScheme
@@ -729,6 +786,26 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
       )}
       {open && (
         <div className="exer-body">
+          {it.warmup && (
+            <div className="warmup">
+              <button type="button" className="warmup-head mono" onClick={() => setWarmupOpen(!warmupOpen)}>
+                <span className="warmup-label">
+                  WARM-UP · {it.warmup.type === "full" ? "4-step ramp" : it.warmup.type === "short" ? "2-step ramp" : "feeler set"}
+                </span>
+                {warmupOpen ? <ChevronDown size={14} color="#E8C547" /> : <ChevronRight size={14} color="#E8C547" />}
+              </button>
+              {warmupOpen && (
+                <div className="warmup-body">
+                  {it.warmup.note && <div className="warmup-row mono">{it.warmup.note}</div>}
+                  {it.warmup.sets.map((s, i) => (
+                    <div key={i} className="warmup-row mono">
+                      {s.weight} lb{it.barbell ? ` — ${plateText(s.weight, barWeight)}` : ""} × {s.reps}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
           <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
           <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
@@ -1094,6 +1171,11 @@ const CSS = `
 .exer-scheme{font-size:11px;color:var(--dim);margin-top:5px;}
 .bar-wrap{padding:0 10px 6px;}
 .exer-body{padding:2px 15px 12px;border-top:1px solid var(--line);}
+.warmup{background:var(--surface2);border:1px solid var(--line);border-radius:10px;margin:10px 0;overflow:hidden;}
+.warmup-head{display:flex;width:100%;justify-content:space-between;align-items:center;padding:9px 12px;background:none;border:none;color:#E8C547;cursor:pointer;font-family:inherit;}
+.warmup-label{font-size:10.5px;letter-spacing:.09em;}
+.warmup-body{padding:2px 12px 9px;border-top:1px solid var(--line);}
+.warmup-row{font-size:11.5px;color:var(--dim);padding:4px 0;}
 .warn{color:#E8C547;font-size:11px;padding-top:8px;}
 .coach{background:var(--surface);border:1px solid var(--line);border-left:3px solid #3FA85F;border-radius:11px;padding:11px 13px;margin-bottom:16px;}
 .coach-alert{border-left-color:#D7443E;}
