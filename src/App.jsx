@@ -250,7 +250,8 @@ function weeklyTarget(pattern, blockType, cycleInBlock, landmarks) {
    working range can't collapse. The 0.7 fatigue-spike bound reuses the same
    high-fatigue threshold the deload trigger already uses; both are
    literature-informed but not precisely-validated engine constants. */
-const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked"
+const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked" (same threshold as the deload trigger's highFatigue check)
+const FATIGUE_AMBER = 0.55;  // fatigue index at/above this = "amber" (same threshold as grayFatigue below and the Status fatigue-gauge color)
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
 /* pattern → main lift that carries its growth signal */
 const PATTERN_MAIN = { squat: "squat", hinge: "deadlift", horiz_press: "bench" };
@@ -470,6 +471,18 @@ function ingest(program, logs, readiness) {
   }
 
   return { next, transition, fatigueIndex, rScore, e1rmSlope, prs };
+}
+
+/* ---- post-session rest advisory ----
+   Advisory only — the engine never blocks or restricts logging a session
+   before the recommended date; this just informs the athlete. Reuses the
+   same fatigue thresholds (FATIGUE_AMBER, FATIGUE_SPIKE) the block-transition
+   and landmark-adjustment logic already key off of, so "amber"/"high" mean
+   the same thing everywhere in the app. */
+function restDaysForFatigue(fatigueIndex) {
+  if (fatigueIndex >= FATIGUE_SPIKE) return 3;
+  if (fatigueIndex >= FATIGUE_AMBER) return 2;
+  return 1;
 }
 
 function applyTransition(program, transition) {
@@ -797,6 +810,12 @@ function Today({ program, sessions, onLog }) {
         <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || k).join(", ")}</div>
       )}
 
+      {program.lastRestUntil && (
+        <div className="restnote mono">
+          <Timer size={13} /> Rest until {new Date(program.lastRestUntil).toLocaleDateString("en-US", { month: "long", day: "numeric" })} — advisory only, log anytime
+        </div>
+      )}
+
       {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} barWeight={program.barWeight || 45} onRest={startRest} />)}
 
       <div className="eyebrow mt">READINESS — Garmin Training Readiness Score</div>
@@ -944,6 +963,8 @@ export default function App() {
     }
     finalProgram.lastCoach = coach.note;
     finalProgram.lastPRs = prs.length ? prs : null;
+    const restDays = restDaysForFatigue(fatigueIndex);
+    finalProgram.lastRestUntil = Date.now() + restDays * 86400000;
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
@@ -1082,6 +1103,8 @@ const CSS = `
 .coach-off .coach-top{opacity:.65;}
 .coach-off p{color:var(--dim);font-size:11.5px;font-family:'JetBrains Mono',monospace;}
 .prnote{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-left:3px solid #E8C547;border-radius:11px;padding:11px 13px;margin-bottom:16px;font-size:11.5px;letter-spacing:.05em;color:#E8C547;}
+.restnote{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-left:3px solid #E8C547;border-radius:11px;padding:11px 13px;margin-bottom:16px;font-size:11.5px;letter-spacing:.03em;color:var(--dim);}
+.restnote svg{color:#E8C547;flex-shrink:0;}
 .plates{font-size:10.5px;color:var(--dim);letter-spacing:.04em;padding:2px 4px 6px;}
 .restbtn{width:100%;height:44px;margin-top:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--dim);font-size:11.5px;letter-spacing:.1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
 .restbtn:active{background:var(--line);}
