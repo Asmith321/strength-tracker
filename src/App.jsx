@@ -133,10 +133,11 @@ function landmarksForExperience(tier) {
    is excluded from PATTERN_FREQ since it isn't sharing that pool.
    bodyweight: e1rm is tracked as SYSTEM load (bodyweight + added load); see
    e1rmFromBW() and the bodyweight branch in prescribe().
-   repTier (accessories only): drives the per-tier rep target in ACC_REP_TIERS
-   — 'compound' (multi-joint, barbell/machine, biggest loads), 'unilateral'
-   (single-leg/arm, stability-limited), 'isolation' (single-joint, highest
-   safe rep range).
+   repTier (accessories only): drives the per-tier rep+RPE target in
+   ACC_REP_TIERS — 'compound' (multi-joint, barbell/machine, biggest loads),
+   'unilateral' (single-leg/arm, stability-limited), 'isolation' (single-joint,
+   highest safe rep range, pushed to true failure once it hits the top of
+   that range in accumulation/intensification).
    mainMuscle (barbell exercises only) / muscles (non-barbell exercises):
    used by the warmup-ramp logic to decide whether an earlier non-barbell
    exercise actually primed a later barbell exercise's target muscle, rather
@@ -163,13 +164,17 @@ const LIB = {
   inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound", muscles: ["chest", "shoulders"] },
   legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["hamstrings"] },
   legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["quads"] },
+  reversepecdeck: { label: "Reverse Pec Deck",             pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["shoulders"] },
+  wristcurl:    { label: "Dumbbell Wrist Curl",           pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["forearms"] },
+  cablecrunch:  { label: "Cable Crunch",                  pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["abs"] },
+  shrug:        { label: "Dumbbell Shrug",                pattern: "vert_pull",   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["traps"] },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise"] },
-  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row"] },
+  { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
+  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug"] },
   { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise"] },
 ];
 const ROT = ROTATION.length;
@@ -184,18 +189,21 @@ const PATTERN_FREQ = (() => {
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
-/* ---- per-tier accessory rep targets (weekly hard sets aside, this is the
-   rep count within each set) ----
-   Replaces a single shared accReps range with a direct per-tier lookup:
-   compound accessories (multi-joint, heaviest relative load) stay lowest-rep,
-   isolation (single-joint, safest to push near failure) goes highest-rep,
-   unilateral sits in between. RPE targeting (accRpe, below) stays shared
-   across tiers — only the rep count differentiates by tier. */
+/* ---- per-tier accessory rep + RPE targets ----
+   Both reps and RPE are now direct per-tier lookups (previously only reps
+   were per-tier; RPE was a single value shared across all accessories in a
+   phase). Compound accessories (multi-joint, heaviest relative load) stay
+   lowest-rep; isolation (single-joint, safest to push near failure) goes
+   highest-rep and is deliberately prescribed to RPE 10 whenever it hits the
+   12-rep ceiling in accumulation/intensification — a set should only earn
+   the top of its rep range by actually reaching genuine failure, not just
+   by hitting a rep count. Unilateral sits in between on both axes. Deload/
+   realization drop reps and RPE together, same as before. */
 const ACC_REP_TIERS = {
-  accumulation:    { compound: 8, unilateral: 9,  isolation: 10 },
-  intensification: { compound: 6, unilateral: 7,  isolation: 8 },
-  deload:          { compound: 7, unilateral: 8,  isolation: 9 },
-  realization:     { compound: 7, unilateral: 8,  isolation: 9 },
+  accumulation:    { compound: { reps: 10, rpe: 7.5 }, unilateral: { reps: 12, rpe: 8 },   isolation: { reps: 12, rpe: 10 } },
+  intensification: { compound: { reps: 9,  rpe: 8 },   unilateral: { reps: 11, rpe: 8.5 }, isolation: { reps: 12, rpe: 10 } },
+  deload:          { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
+  realization:     { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
 };
 
 /* ---- block configurations ---- */
@@ -205,7 +213,7 @@ const BLOCKS = {
     mainReps: { squat: 5, bench: 5, deadlift: 4 }, mainSets: 4,
     rpeBase: 7.0, rpeStep: 0.4, rpeCap: 8.5,
     backoffDrop: 0.06, backoffRpeCap: 8,
-    accRpe: 8, volLevel: "ramp",
+    volLevel: "ramp",
     minCycles: 3, maxCycles: 6,
   },
   intensification: {
@@ -213,7 +221,7 @@ const BLOCKS = {
     mainReps: { squat: 3, bench: 3, deadlift: 2 }, mainSets: 4,
     rpeBase: 8.5, rpeStep: 0.3, rpeCap: 9.5,
     backoffDrop: 0.08, backoffRpeCap: 8.5,
-    accRpe: 8, volLevel: "mev",
+    volLevel: "mev",
     minCycles: 2, maxCycles: 4,
   },
   deload: {
@@ -221,7 +229,7 @@ const BLOCKS = {
     mainReps: { squat: 4, bench: 4, deadlift: 3 }, mainSets: 2,
     rpeBase: 6, rpeStep: 0, rpeCap: 6,
     backoffDrop: 0.1, backoffRpeCap: 6,
-    accRpe: 6, volLevel: "half",
+    volLevel: "half",
     minCycles: 1, maxCycles: 1,
   },
   realization: {
@@ -229,7 +237,7 @@ const BLOCKS = {
     mainReps: { squat: 2, bench: 2, deadlift: 1 }, mainSets: 1,
     rpeBase: 9, rpeStep: 0.5, rpeCap: 9.5,
     backoffDrop: 0, backoffRpeCap: 9,
-    accRpe: 6, volLevel: "half",
+    volLevel: "half",
     minCycles: 1, maxCycles: 1,
   },
 };
@@ -378,8 +386,9 @@ function prescribe(program, readiness) {
     const L = LIB[key];
     const lift = program.lifts[key];
     const isMain = L.role === "main";
-    const reps = isMain ? (cfg.mainReps[key] || 4) : ACC_REP_TIERS[program.block.type][L.repTier];
-    const rpe = isMain ? rpeTop : clampRpe(cfg.accRpe + rpeAdj);
+    const accTarget = ACC_REP_TIERS[program.block.type][L.repTier];
+    const reps = isMain ? (cfg.mainReps[key] || 4) : accTarget.reps;
+    const rpe = isMain ? rpeTop : clampRpe(accTarget.rpe + rpeAdj);
 
     let sets;
     if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
@@ -589,12 +598,14 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
       const ref = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
         row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
         triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
-        legcurl: "deadlift", legext: "squat" }[k];
+        legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
+        cablecrunch: "bench", shrug: "deadlift" }[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
       const mult = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
         cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
         triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
-        legcurl: 0.4, legext: 0.65 }[k] || 0.6;
+        legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
+        cablecrunch: 0.4, shrug: 0.35 }[k] || 0.6;
       e1rm = base * mult;
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
