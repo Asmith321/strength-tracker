@@ -103,8 +103,12 @@ const PATTERNS = {
      since this program tracks vert_press as part of a whole routine, not in
      isolation. mav:7 is the midpoint of RP's 6-8 range. */
   vert_press:  { label: "Vertical Press",      mev: 2,  mav: 7,  mrv: 12 },
-  horiz_pull:  { label: "Horizontal Pull",     mev: 10, mav: 16, mrv: 22 },
-  vert_pull:   { label: "Vertical Pull",       mev: 8,  mav: 14, mrv: 20 },
+  /* horiz_pull + vert_pull are consolidated into ONE 'back' volume pool: RP's
+     landmark research treats back as a single muscle group, not two. The pull
+     exercises keep their horiz_pull/vert_pull `pattern` (used by the warmup
+     muscle-overlap check) but carry volumeGroup:'back' so all their volume
+     math (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
+  back:        { label: "Back",                mev: 10, mav: 18, mrv: 25 },
 };
 
 /* ---- experience-based landmark seeding ----
@@ -149,7 +153,12 @@ function landmarksForExperience(tier) {
    than just sharing its loose landmark `pattern` tag — e.g. Incline Dumbbell
    Curl shares Barbell Row's `horiz_pull` pattern (both feed the same volume
    landmark) but works biceps, not back, so it should NOT shorten Row's
-   warmup; Lat Pulldown (back) should. See buildRamp's caller in prescribe(). */
+   warmup; Lat Pulldown (back) should. See buildRamp's caller in prescribe().
+   volumeGroup (optional): overrides `pattern` for VOLUME math only
+   (PATTERN_FREQ / weeklyTarget / landmark auto-tune), letting several
+   patterns share one landmark pool — e.g. the horiz_pull + vert_pull pulls
+   all map to the single 'back' pool. Falls back to `pattern` when absent, so
+   `pattern` still drives warmup logic and prescription rep/RPE unchanged. */
 const LIB = {
   squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true, mainMuscle: "quads" },
   bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true, mainMuscle: "chest" },
@@ -157,10 +166,10 @@ const LIB = {
   rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "hamstrings" },
   frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "quads" },
   ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "shoulders" },
-  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "back" },
-  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"] },
-  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"] },
-  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound", muscles: ["back", "biceps"] },
+  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "back", volumeGroup: "back" },
+  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
+  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
+  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
   curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["biceps"] },
   bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral", muscles: ["quads", "glutes"] },
   triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["triceps"] },
@@ -190,7 +199,7 @@ const PATTERN_FREQ = (() => {
   const f = {};
   ROTATION.forEach((d) => d.items.forEach((k) => {
     if (LIB[k].role === "main" || LIB[k].fixedSets) return;
-    const p = LIB[k].pattern; f[p] = (f[p] || 0) + 1;
+    const p = LIB[k].volumeGroup || LIB[k].pattern; f[p] = (f[p] || 0) + 1;
   }));
   return f;
 })();
@@ -250,8 +259,8 @@ const BLOCKS = {
   },
 };
 
-function weeklyTarget(pattern, blockType, cycleInBlock, landmarks) {
-  const lm = landmarks[pattern];
+function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
+  const lm = landmarks[group]; // group is a landmark key (volumeGroup, e.g. 'back', or pattern when no override)
   const cfg = BLOCKS[blockType];
   if (cfg.volLevel === "half") return Math.round(lm.mev * 0.5);
   if (cfg.volLevel === "mev") return lm.mev;
@@ -279,13 +288,16 @@ const FATIGUE_STILL_ELEVATED = 0.5; // deliberately below FATIGUE_SPIKE: deload 
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
 /* pattern → main lift that carries its growth signal */
 const PATTERN_MAIN = { squat: "squat", hinge: "deadlift", horiz_press: "bench" };
-/* pattern → its landmark-ramped accessories (role=acc, not fixedSets), for the
-   accessory-only patterns that have no main lift to read a slope from */
+/* volumeGroup (or pattern) → its landmark-ramped accessories (role=acc, not
+   fixedSets), for the pools that have no main lift to read a slope from.
+   Keyed the same way as the landmark table so the auto-tune resolves each
+   landmark key (incl. the merged 'back' pool) to the right accessory slopes. */
 const PATTERN_RAMPED_ACC = (() => {
   const m = {};
   Object.entries(LIB).forEach(([k, L]) => {
     if (L.role !== "acc" || L.fixedSets) return;
-    (m[L.pattern] = m[L.pattern] || []).push(k);
+    const g = L.volumeGroup || L.pattern;
+    (m[g] = m[g] || []).push(k);
   });
   return m;
 })();
@@ -403,8 +415,9 @@ function prescribe(program, readiness) {
     if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
     else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
-      const wk = weeklyTarget(L.pattern, program.block.type, cyc, program.landmarks);
-      const freq = PATTERN_FREQ[L.pattern] || 1;
+      const vg = L.volumeGroup || L.pattern; // shared landmark pool key (e.g. 'back'); falls back to pattern
+      const wk = weeklyTarget(vg, program.block.type, cyc, program.landmarks);
+      const freq = PATTERN_FREQ[vg] || 1;
       const rawSets = Math.round((wk / freq) * setMult);
       sets = Math.max(1, Math.min(4, rawSets));
     }
@@ -642,6 +655,22 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
     landmarkAdjustments: {}, landmarkLog: [],
   };
+}
+
+/* Reconcile a loaded program's landmark keys to the current PATTERNS set so
+   older saved programs survive landmark-schema changes (e.g. the horiz_pull +
+   vert_pull → merged 'back' pool): add any missing group from the experience
+   defaults, drop any stale group no longer in the schema. Without this, a
+   pre-merge saved program would hit an undefined landmark on the next
+   prescribe() for a back exercise. */
+function migrateProgram(program) {
+  if (!program?.landmarks) return program;
+  const canonical = landmarksForExperience(program.experience);
+  const lm = { ...program.landmarks };
+  let changed = false;
+  for (const key of Object.keys(canonical)) if (!lm[key]) { lm[key] = canonical[key]; changed = true; }
+  for (const key of Object.keys(lm)) if (!canonical[key]) { delete lm[key]; changed = true; }
+  return changed ? { ...program, landmarks: lm } : program;
 }
 
 /* ════════════ COACH (Sonnet): narration + borderline tie-break only ════════════ */
@@ -1063,7 +1092,8 @@ export default function App() {
 
   useEffect(() => { (async () => {
     const p = await loadKey(K_PROGRAM); const s = await loadKey(K_SESSIONS);
-    if (p) setProgram(p); if (s) setSessions(s); setReady(true);
+    if (p) { const mp = migrateProgram(p); setProgram(mp); if (mp !== p) saveKey(K_PROGRAM, mp); }
+    if (s) setSessions(s); setReady(true);
   })(); }, []);
 
   const start = async (p) => { setProgram(p); await saveKey(K_PROGRAM, p); };
