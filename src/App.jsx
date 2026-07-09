@@ -97,7 +97,12 @@ const PATTERNS = {
   squat:       { label: "Squat / Quads",       mev: 8,  mav: 14, mrv: 20 },
   hinge:       { label: "Hinge / Post. chain", mev: 6,  mav: 12, mrv: 16 },
   horiz_press: { label: "Horizontal Press",    mev: 8,  mav: 14, mrv: 22 },
-  vert_press:  { label: "Vertical Press",      mev: 6,  mav: 12, mrv: 18 },
+  /* Front delts get indirect stimulus from chest/triceps pressing already
+     covered elsewhere in the program; RP's published landmark table gives
+     them an MEV of 0 for that reason. mev:2 keeps a small non-zero floor
+     since this program tracks vert_press as part of a whole routine, not in
+     isolation. mav:7 is the midpoint of RP's 6-8 range. */
+  vert_press:  { label: "Vertical Press",      mev: 2,  mav: 7,  mrv: 12 },
   horiz_pull:  { label: "Horizontal Pull",     mev: 10, mav: 16, mrv: 22 },
   vert_pull:   { label: "Vertical Pull",       mev: 8,  mav: 14, mrv: 20 },
 };
