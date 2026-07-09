@@ -168,14 +168,17 @@ const LIB = {
   wristcurl:    { label: "Dumbbell Wrist Curl",           pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["forearms"] },
   cablecrunch:  { label: "Cable Crunch",                  pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["abs"] },
   shrug:        { label: "Dumbbell Shrug",                pattern: "vert_pull",   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["traps"] },
+  goodmorning:  { label: "Good Morning",                  pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "hamstrings" },
+  cablefly:     { label: "Cable Fly",                     pattern: "horiz_press", role: "acc",  barbell: false, repTier: "isolation", muscles: ["chest"] },
+  dbshoulderpress: { label: "Dumbbell Shoulder Press",    pattern: "vert_press",  role: "acc",  barbell: false, repTier: "compound", muscles: ["shoulders", "triceps"] },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
-  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug"] },
-  { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise"] },
+  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck", "dbshoulderpress"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "goodmorning"] },
+  { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise", "cablefly"] },
 ];
 const ROT = ROTATION.length;
 const PATTERN_FREQ = (() => {
