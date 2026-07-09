@@ -267,6 +267,7 @@ function weeklyTarget(pattern, blockType, cycleInBlock, landmarks) {
    literature-informed but not precisely-validated engine constants. */
 const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked" (same threshold as the deload trigger's highFatigue check)
 const FATIGUE_AMBER = 0.55;  // fatigue index at/above this = "amber" (same threshold as grayFatigue below and the Status fatigue-gauge color)
+const FATIGUE_STILL_ELEVATED = 0.5; // deliberately below FATIGUE_SPIKE: deload must clear fatigue below this before routing into a near-max test (realization/intensification)
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
 /* pattern → main lift that carries its growth signal */
 const PATTERN_MAIN = { squat: "squat", hinge: "deadlift", horiz_press: "bench" };
@@ -541,7 +542,21 @@ function ingest(program, logs, readiness) {
           borderline: grayFatigue, nextAfter: "realization" };
       }
     } else if (t === "deload") {
-      transition = { to: next.block.nextAfter || "intensification", reason: "deload complete — fatigue dissipated" };
+      /* Fatigue gate before routing out of deload (esp. into a near-max
+         realization/intensification): if fatigue hasn't cleared below
+         FATIGUE_STILL_ELEVATED, extend deload by exactly one more cycle rather
+         than proceeding on schedule. Capped at a single extension so we can't
+         loop indefinitely — if it's still elevated after the extension we
+         proceed anyway but flag it (forcedDespiteFatigue) so it's visible. */
+      const stillElevated = fatigueIndex >= FATIGUE_STILL_ELEVATED;
+      if (stillElevated && !next.block.deloadExtended) {
+        next.block.deloadExtended = true; // extend one cycle; no transition this cycle
+      } else {
+        transition = { to: next.block.nextAfter || "intensification",
+          reason: stillElevated ? "deload complete — fatigue still elevated, proceeding anyway"
+            : (next.block.deloadExtended ? "deload extended — fatigue cleared" : "deload complete — fatigue dissipated"),
+          forcedDespiteFatigue: stillElevated };
+      }
     } else if (t === "realization") {
       transition = { to: "accumulation", reason: "maxes re-tested — new accumulation block" };
     }
@@ -581,7 +596,8 @@ function applyTransition(program, transition) {
   };
   if (transition.to === "accumulation")
     next.fatigue = { index: 0, rpeCreep: 0, readSupp: next.fatigue.readSupp, missFreq: 0, slope: 0 };
-  next.blockHistory = [...(next.blockHistory || []), { type: transition.to, at: Date.now(), reason: transition.reason }];
+  next.blockHistory = [...(next.blockHistory || []), { type: transition.to, at: Date.now(), reason: transition.reason,
+    ...(transition.forcedDespiteFatigue ? { forcedDespiteFatigue: true } : {}) }];
   return next;
 }
 
@@ -1059,7 +1075,7 @@ export default function App() {
     if (transition) {
       let t = transition;
       if (t.borderline && coach.ok && coach.confirmTransition === false) t = null;
-      else if (coach.ok && coach.override && coach.override !== "null" && BLOCKS[coach.override]) t = { ...transition, to: coach.override };
+      else if (t.borderline && coach.ok && coach.override && coach.override !== "null" && BLOCKS[coach.override]) t = { ...transition, to: coach.override };
       if (t) { finalProgram = applyTransition(next, t); appliedTransition = t.to; }
     }
     finalProgram.lastCoach = coach.note;
