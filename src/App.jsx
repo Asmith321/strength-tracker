@@ -109,6 +109,13 @@ const PATTERNS = {
      muscle-overlap check) but carry volumeGroup:'back' so all their volume
      math (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
   back:        { label: "Back",                mev: 10, mav: 18, mrv: 25 },
+  /* Rear/side delts and calves were previously fixedSets accessories (flat set
+     count, no landmark tracking); the volume audit found both sitting below
+     MEV. Promoted to real landmark-tracked pools. rear_delts = Reverse Pec Deck
+     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days).
+     Both use volumeGroup on those exercises to route here. */
+  rear_delts:  { label: "Rear / Side Delts",   mev: 8,  mav: 19, mrv: 26 },
+  calves:      { label: "Calves",              mev: 8,  mav: 14, mrv: 20 },
 };
 
 /* ---- experience-based landmark seeding ----
@@ -173,12 +180,12 @@ const LIB = {
   curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["biceps"] },
   bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral", muscles: ["quads", "glutes"] },
   triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["triceps"] },
-  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["shoulders"] },
-  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["calves"] },
+  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, repTier: "isolation", muscles: ["shoulders"], volumeGroup: "rear_delts" },
+  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, repTier: "isolation", muscles: ["calves"], volumeGroup: "calves" },
   inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound", muscles: ["chest", "shoulders"] },
   legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["hamstrings"] },
   legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["quads"] },
-  reversepecdeck: { label: "Reverse Pec Deck",             pattern: "vert_press",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["shoulders"] },
+  reversepecdeck: { label: "Reverse Pec Deck",             pattern: "vert_press",  role: "acc",  barbell: false, repTier: "isolation", muscles: ["shoulders"], volumeGroup: "rear_delts" },
   wristcurl:    { label: "Dumbbell Wrist Curl",           pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["forearms"] },
   cablecrunch:  { label: "Cable Crunch",                  pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["abs"] },
   shrug:        { label: "Dumbbell Shrug",                pattern: "vert_pull",   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["traps"] },
@@ -191,7 +198,7 @@ const LIB = {
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck", "dbshoulderpress"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "goodmorning"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "goodmorning", "calfraise"] },
   { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise", "cablefly"] },
 ];
 const ROT = ROTATION.length;
@@ -658,11 +665,13 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
 }
 
 /* Reconcile a loaded program's landmark keys to the current PATTERNS set so
-   older saved programs survive landmark-schema changes (e.g. the horiz_pull +
-   vert_pull → merged 'back' pool): add any missing group from the experience
-   defaults, drop any stale group no longer in the schema. Without this, a
-   pre-merge saved program would hit an undefined landmark on the next
-   prescribe() for a back exercise. */
+   older saved programs survive landmark-schema changes: add any missing group
+   from the experience defaults, drop any stale group no longer in the schema.
+   Generic by design — it already backfills every schema addition automatically:
+   the merged 'back' pool (horiz_pull + vert_pull), and the promoted
+   'rear_delts' / 'calves' pools (previously fixedSets, now landmark-tracked).
+   Without this, a pre-change saved program would hit an undefined landmark on
+   the next prescribe() for one of those exercises. */
 function migrateProgram(program) {
   if (!program?.landmarks) return program;
   const canonical = landmarksForExperience(program.experience);
