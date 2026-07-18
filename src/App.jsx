@@ -90,30 +90,35 @@ function liftNormSlope(lift) {
   return slope(h.slice(-8)) / base;
 }
 
-/* ---- movement patterns & landmark defaults (weekly hard sets) ----
+/* ---- muscle-group landmark defaults (weekly hard sets) ----
    These baseline MEV/MAV/MRV are the INTERMEDIATE tier; beginner/advanced
-   programs are seeded by scaling this table (see landmarksForExperience). */
+   programs are seeded by scaling this table (see landmarksForExperience).
+   Landmark groups are keyed by MUSCLE (the single canonical classification —
+   see LIB's `volumeGroup`). The four compound groups were renamed from their
+   old movement-pattern keys to their primary mover, finishing the migration
+   that already muscle-named back/rear_delts/calves:
+     squat → quads,  hinge → hamstrings,  horiz_press → chest,  vert_press → front_delts.
+   Same MEV/MAV/MRV numbers as before — this was a rename, not a recalculation.
+   migrateProgram() renames these keys in any already-saved program. */
 const PATTERNS = {
-  squat:       { label: "Squat / Quads",       mev: 8,  mav: 14, mrv: 20 },
-  hinge:       { label: "Hinge / Post. chain", mev: 6,  mav: 12, mrv: 16 },
-  horiz_press: { label: "Horizontal Press",    mev: 8,  mav: 14, mrv: 22 },
+  quads:       { label: "Quads",               mev: 8,  mav: 14, mrv: 20 },
+  hamstrings:  { label: "Hamstrings / Post. chain", mev: 6, mav: 12, mrv: 16 },
+  chest:       { label: "Chest",               mev: 8,  mav: 14, mrv: 22 },
   /* Front delts get indirect stimulus from chest/triceps pressing already
      covered elsewhere in the program; RP's published landmark table gives
      them an MEV of 0 for that reason. mev:2 keeps a small non-zero floor
-     since this program tracks vert_press as part of a whole routine, not in
-     isolation. mav:7 is the midpoint of RP's 6-8 range. */
-  vert_press:  { label: "Vertical Press",      mev: 2,  mav: 7,  mrv: 12 },
-  /* horiz_pull + vert_pull are consolidated into ONE 'back' volume pool: RP's
-     landmark research treats back as a single muscle group, not two. The pull
-     exercises keep their horiz_pull/vert_pull `pattern` (used by the warmup
-     muscle-overlap check) but carry volumeGroup:'back' so all their volume
-     math (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
+     since this program tracks front-delt pressing as part of a whole routine,
+     not in isolation. mav:7 is the midpoint of RP's 6-8 range. */
+  front_delts: { label: "Front Delts",         mev: 2,  mav: 7,  mrv: 12 },
+  /* Horizontal + vertical pulling are consolidated into ONE 'back' volume pool:
+     RP's landmark research treats back as a single muscle group, not two. Every
+     pulling exercise carries volumeGroup:'back' so all their volume math
+     (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
   back:        { label: "Back",                mev: 10, mav: 18, mrv: 25 },
   /* Rear/side delts and calves were previously fixedSets accessories (flat set
      count, no landmark tracking); the volume audit found both sitting below
      MEV. Promoted to real landmark-tracked pools. rear_delts = Reverse Pec Deck
-     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days).
-     Both use volumeGroup on those exercises to route here. */
+     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days). */
   rear_delts:  { label: "Rear / Side Delts",   mev: 8,  mav: 19, mrv: 26 },
   calves:      { label: "Calves",              mev: 8,  mav: 14, mrv: 20 },
 };
@@ -154,44 +159,46 @@ function landmarksForExperience(tier) {
    'unilateral' (single-leg/arm, stability-limited), 'isolation' (single-joint,
    highest safe rep range, pushed to true failure once it hits the top of
    that range in accumulation/intensification).
-   mainMuscle (barbell exercises only) / muscles (non-barbell exercises):
-   used by the warmup-ramp logic to decide whether an earlier non-barbell
-   exercise actually primed a later barbell exercise's target muscle, rather
-   than just sharing its loose landmark `pattern` tag — e.g. Incline Dumbbell
-   Curl shares Barbell Row's `horiz_pull` pattern (both feed the same volume
-   landmark) but works biceps, not back, so it should NOT shorten Row's
-   warmup; Lat Pulldown (back) should. See buildRamp's caller in prescribe().
-   volumeGroup (optional): overrides `pattern` for VOLUME math only
-   (PATTERN_FREQ / weeklyTarget / landmark auto-tune), letting several
-   patterns share one landmark pool — e.g. the horiz_pull + vert_pull pulls
-   all map to the single 'back' pool. Falls back to `pattern` when absent, so
-   `pattern` still drives warmup logic and prescription rep/RPE unchanged. */
+   volumeGroup: the SINGLE canonical classifier — the exercise's primary mover.
+   It drives all volume math (PATTERN_FREQ / weeklyTarget / landmark auto-tune)
+   and the warmup muscle-overlap priming check. Every exercise carries one
+   explicitly (no more falling back to a movement `pattern`). Several exercises
+   can share a pool — e.g. all pulling maps to the single 'back' pool. Groups
+   that back a landmark (quads/hamstrings/chest/front_delts/back/rear_delts/
+   calves) are looked up in PATTERNS; the isolation-only groups on fixedSets
+   accessories (biceps/triceps/forearms/abs/traps) are never landmark-tracked
+   and are used only for warmup priming.
+   Ambiguous primary movers (flagged in the muscle-volume audit): Deadlift and
+   Good Morning are both hip-hinge lifts loading the whole posterior chain
+   (glutes/hamstrings/erectors/back). Both are assigned volumeGroup 'hamstrings'
+   — consistent with the pre-existing hinge→hamstrings mapping, and it keeps
+   Deadlift as the growth driver for the hamstrings landmark (PATTERN_MAIN). */
 const LIB = {
-  squat:        { label: "Back Squat",                    pattern: "squat",       role: "main", barbell: true, mainMuscle: "quads" },
-  bench:        { label: "Bench Press",                   pattern: "horiz_press", role: "main", barbell: true, mainMuscle: "chest" },
-  deadlift:     { label: "Deadlift",                      pattern: "hinge",       role: "main", barbell: true, mainMuscle: "hamstrings" },
-  rdl:          { label: "Romanian Deadlift",              pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "hamstrings" },
-  frontsquat:   { label: "Front Squat",                   pattern: "squat",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "quads" },
-  ohp:          { label: "Overhead Press",                pattern: "vert_press",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "shoulders" },
-  row:          { label: "Barbell Row",                   pattern: "horiz_pull",  role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "back", volumeGroup: "back" },
-  cablerow:     { label: "Seated Cable Row",               pattern: "horiz_pull",  role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
-  pulldown:     { label: "Lat Pulldown",                  pattern: "vert_pull",   role: "acc",  barbell: false, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
-  pullup:       { label: "Pull-Up / Chin-Up",             pattern: "vert_pull",   role: "acc",  barbell: false, bodyweight: true, repTier: "compound", muscles: ["back", "biceps"], volumeGroup: "back" },
-  curl:         { label: "Incline Dumbbell Curl",         pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["biceps"] },
-  bsplit:       { label: "Bulgarian Split Sq",            pattern: "squat",       role: "acc",  barbell: false, repTier: "unilateral", muscles: ["quads", "glutes"] },
-  triext:       { label: "Cable Overhead Triceps Extension", pattern: "vert_press", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["triceps"] },
-  lateralraise: { label: "Cable Lateral Raise",           pattern: "vert_press",  role: "acc",  barbell: false, repTier: "isolation", muscles: ["shoulders"], volumeGroup: "rear_delts" },
-  calfraise:    { label: "Standing Calf Raise",           pattern: "squat",       role: "acc",  barbell: false, repTier: "isolation", muscles: ["calves"], volumeGroup: "calves" },
-  inclinebench: { label: "Incline Dumbbell Press (~30°)", pattern: "horiz_press", role: "acc",  barbell: false, repTier: "compound", muscles: ["chest", "shoulders"] },
-  legcurl:      { label: "Seated Leg Curl",               pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["hamstrings"] },
-  legext:       { label: "Leg Extension",                 pattern: "squat",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["quads"] },
-  reversepecdeck: { label: "Reverse Pec Deck",             pattern: "vert_press",  role: "acc",  barbell: false, repTier: "isolation", muscles: ["shoulders"], volumeGroup: "rear_delts" },
-  wristcurl:    { label: "Dumbbell Wrist Curl",           pattern: "horiz_pull",  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["forearms"] },
-  cablecrunch:  { label: "Cable Crunch",                  pattern: "hinge",       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["abs"] },
-  shrug:        { label: "Dumbbell Shrug",                pattern: "vert_pull",   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", muscles: ["traps"] },
-  goodmorning:  { label: "Good Morning",                  pattern: "hinge",       role: "acc",  barbell: true,  repTier: "compound", mainMuscle: "hamstrings" },
-  cablefly:     { label: "Cable Fly",                     pattern: "horiz_press", role: "acc",  barbell: false, repTier: "isolation", muscles: ["chest"] },
-  dbshoulderpress: { label: "Dumbbell Shoulder Press",    pattern: "vert_press",  role: "acc",  barbell: false, repTier: "compound", muscles: ["shoulders", "triceps"] },
+  squat:        { label: "Back Squat",                    role: "main", barbell: true, volumeGroup: "quads" },
+  bench:        { label: "Bench Press",                   role: "main", barbell: true, volumeGroup: "chest" },
+  deadlift:     { label: "Deadlift",                      role: "main", barbell: true, volumeGroup: "hamstrings" },
+  rdl:          { label: "Romanian Deadlift",              role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
+  frontsquat:   { label: "Front Squat",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
+  ohp:          { label: "Overhead Press",                role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "front_delts" },
+  row:          { label: "Barbell Row",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "back" },
+  cablerow:     { label: "Seated Cable Row",               role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
+  pulldown:     { label: "Lat Pulldown",                  role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
+  pullup:       { label: "Pull-Up / Chin-Up",             role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
+  curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
+  bsplit:       { label: "Bulgarian Split Sq",            role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
+  triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
+  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
+  calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
+  inclinebench: { label: "Incline Dumbbell Press (~30°)", role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest" },
+  legcurl:      { label: "Seated Leg Curl",               role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "hamstrings" },
+  legext:       { label: "Leg Extension",                 role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "quads" },
+  reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
+  wristcurl:    { label: "Dumbbell Wrist Curl",           role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
+  cablecrunch:  { label: "Cable Crunch",                  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
+  shrug:        { label: "Dumbbell Shrug",                role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
+  goodmorning:  { label: "Good Morning",                  role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
+  cablefly:     { label: "Cable Fly",                     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest" },
+  dbshoulderpress: { label: "Dumbbell Shoulder Press",    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
 };
 
 /* ---- rotation: which lifts each training day trains ---- */
@@ -206,7 +213,7 @@ const PATTERN_FREQ = (() => {
   const f = {};
   ROTATION.forEach((d) => d.items.forEach((k) => {
     if (LIB[k].role === "main" || LIB[k].fixedSets) return;
-    const p = LIB[k].volumeGroup || LIB[k].pattern; f[p] = (f[p] || 0) + 1;
+    const p = LIB[k].volumeGroup; f[p] = (f[p] || 0) + 1;
   }));
   return f;
 })();
@@ -293,17 +300,17 @@ const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked" (same thr
 const FATIGUE_AMBER = 0.55;  // fatigue index at/above this = "amber" (same threshold as grayFatigue below and the Status fatigue-gauge color)
 const FATIGUE_STILL_ELEVATED = 0.5; // deliberately below FATIGUE_SPIKE: deload must clear fatigue below this before routing into a near-max test (realization/intensification)
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
-/* pattern → main lift that carries its growth signal */
-const PATTERN_MAIN = { squat: "squat", hinge: "deadlift", horiz_press: "bench" };
-/* volumeGroup (or pattern) → its landmark-ramped accessories (role=acc, not
-   fixedSets), for the pools that have no main lift to read a slope from.
-   Keyed the same way as the landmark table so the auto-tune resolves each
-   landmark key (incl. the merged 'back' pool) to the right accessory slopes. */
+/* landmark group → main lift that carries its growth signal */
+const PATTERN_MAIN = { quads: "squat", hamstrings: "deadlift", chest: "bench" };
+/* volumeGroup → its landmark-ramped accessories (role=acc, not fixedSets), for
+   the pools that have no main lift to read a slope from. Keyed the same way as
+   the landmark table so the auto-tune resolves each landmark key (incl. the
+   merged 'back' pool) to the right accessory slopes. */
 const PATTERN_RAMPED_ACC = (() => {
   const m = {};
   Object.entries(LIB).forEach(([k, L]) => {
     if (L.role !== "acc" || L.fixedSets) return;
-    const g = L.volumeGroup || L.pattern;
+    const g = L.volumeGroup;
     (m[g] = m[g] || []).push(k);
   });
   return m;
@@ -422,7 +429,7 @@ function prescribe(program, readiness) {
     if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
     else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
-      const vg = L.volumeGroup || L.pattern; // shared landmark pool key (e.g. 'back'); falls back to pattern
+      const vg = L.volumeGroup; // shared landmark pool key (e.g. 'back')
       const wk = weeklyTarget(vg, program.block.type, cyc, program.landmarks);
       const freq = PATTERN_FREQ[vg] || 1;
       const rawSets = Math.round((wk / freq) * setMult);
@@ -454,16 +461,12 @@ function prescribe(program, readiness) {
     if (L.barbell) {
       const topPct1RM = rpePct(reps, rpe);
       const baseTier = topPct1RM >= 0.85 ? "full" : topPct1RM >= 0.70 ? "short" : "minimal";
-      /* An earlier barbell exercise counts if it shares this one's landmark
-         pattern (two compound lifts under the same pattern always share the
-         main muscle, e.g. squat/front squat -> quads). An earlier non-barbell
-         exercise only counts if it actually worked this exercise's main
-         muscle — sharing the loose `pattern` tag isn't enough (curl shares
-         Barbell Row's horiz_pull pattern but works biceps, not back). */
-      const earlierPrimed = day.items.slice(0, idx).some((k) => {
-        const E = LIB[k];
-        return E.barbell ? E.pattern === L.pattern : (E.muscles || []).includes(L.mainMuscle);
-      });
+      /* An earlier exercise this session already primed this one's target
+         muscle iff it shares the same volumeGroup (the single canonical
+         classifier). E.g. Lat Pulldown (back) primes Barbell Row (back), but
+         Incline Curl (biceps) does not — even though both used to share the
+         loose horiz_pull movement pattern. */
+      const earlierPrimed = day.items.slice(0, idx).some((k) => LIB[k].volumeGroup === L.volumeGroup);
       const type = earlierPrimed ? (baseTier === "full" ? "short" : "minimal") : baseTier;
       const ramp = type === "full" ? FULL_RAMP : type === "short" ? SHORT_RAMP : MINIMAL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
@@ -473,7 +476,7 @@ function prescribe(program, readiness) {
     }
     // isolation/unilateral non-barbell accessories: no warmup (warmup stays null)
 
-    return { key, label: L.label, barbell: L.barbell, isMain, pattern: L.pattern,
+    return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
       bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup };
@@ -547,7 +550,7 @@ function ingest(program, logs, readiness) {
 
   if (endOfCycle) {
     const t = next.block.type;
-    const atVolCeiling = ["squat", "horiz_press", "hinge"].some((p) =>
+    const atVolCeiling = ["quads", "chest", "hamstrings"].some((p) =>
       weeklyTarget(p, t, Math.max(0, cyc - 1), next.landmarks) >= next.landmarks[p].mrv);
     const highFatigue = fatigueIndex >= 0.7;
     const grayFatigue = fatigueIndex >= 0.55 && fatigueIndex < 0.7;
@@ -654,7 +657,7 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
         goodmorning: 0.55, cablefly: 0.3, dbshoulderpress: 0.6 }[k] || 0.6;
       e1rm = base * mult;
     }
-    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
+    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
@@ -666,11 +669,19 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   };
 }
 
+/* Old movement-pattern landmark keys → new muscle keys. A program saved before
+   the classification consolidation has its four compound landmarks keyed by the
+   old pattern names; rename them in place so the athlete's auto-tuned MEV/MAV/MRV
+   values (and their most-recent auto-tune deltas) carry over instead of being
+   dropped and reseeded from the experience defaults. */
+const LANDMARK_RENAME = { squat: "quads", hinge: "hamstrings", horiz_press: "chest", vert_press: "front_delts" };
+
 /* Reconcile a loaded program's landmark keys to the current PATTERNS set so
-   older saved programs survive landmark-schema changes: add any missing group
-   from the experience defaults, drop any stale group no longer in the schema.
-   Generic by design — it already backfills every schema addition automatically:
-   the merged 'back' pool (horiz_pull + vert_pull), and the promoted
+   older saved programs survive landmark-schema changes: first rename any old
+   pattern-named keys to their muscle names (preserving tuned values), then add
+   any still-missing group from the experience defaults and drop any stale group
+   no longer in the schema. Generic by design — it already backfills every schema
+   addition automatically: the merged 'back' pool, and the promoted
    'rear_delts' / 'calves' pools (previously fixedSets, now landmark-tracked).
    Without this, a pre-change saved program would hit an undefined landmark on
    the next prescribe() for one of those exercises. */
@@ -678,10 +689,21 @@ function migrateProgram(program) {
   if (!program?.landmarks) return program;
   const canonical = landmarksForExperience(program.experience);
   const lm = { ...program.landmarks };
+  const adj = { ...(program.landmarkAdjustments || {}) };
   let changed = false;
+  // 1. rename old pattern-named keys to muscle names, keeping their values.
+  for (const [oldKey, newKey] of Object.entries(LANDMARK_RENAME)) {
+    if (lm[oldKey] && !lm[newKey]) {
+      lm[newKey] = { ...lm[oldKey], label: canonical[newKey]?.label ?? lm[oldKey].label };
+      delete lm[oldKey];
+      if (adj[oldKey]) { adj[newKey] = adj[oldKey]; delete adj[oldKey]; }
+      changed = true;
+    }
+  }
+  // 2. add any missing group, drop any stale group.
   for (const key of Object.keys(canonical)) if (!lm[key]) { lm[key] = canonical[key]; changed = true; }
   for (const key of Object.keys(lm)) if (!canonical[key]) { delete lm[key]; changed = true; }
-  return changed ? { ...program, landmarks: lm } : program;
+  return changed ? { ...program, landmarks: lm, landmarkAdjustments: adj } : program;
 }
 
 /* ════════════ COACH (Sonnet): narration + borderline tie-break only ════════════ */
@@ -790,7 +812,7 @@ function LandmarkTable({ landmarks, adjustments }) {
   const fmtDelta = (d) => (d > 0 ? `▲${d}` : `▼${Math.abs(d)}`);
   return (
     <div className="lmtable">
-      <div className="lmtable-head mono"><span>PATTERN</span><span>MEV</span><span>MAV</span><span>MRV</span></div>
+      <div className="lmtable-head mono"><span>MUSCLE</span><span>MEV</span><span>MAV</span><span>MRV</span></div>
       {Object.entries(landmarks).map(([p, lm]) => {
         const adj = adjustments?.[p];
         return (
