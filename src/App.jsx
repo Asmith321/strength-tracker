@@ -687,25 +687,21 @@ function migrateProgram(program) {
 /* ════════════ COACH (Sonnet): narration + borderline tie-break only ════════════ */
 const COACH_OFFLINE_NOTE = "Coach offline — deterministic engine applied.";
 async function runCoach({ rx, fatigueIndex, e1rmSlope, rScore, transition, recent }) {
-  const prompt = `You are a strength coach reviewing one session of an autoregulated block-periodization program. The math is already done by deterministic code — do NOT recompute loads or e1RMs. Your job: (1) write a 1-2 sentence plain-language read of how things are trending, and (2) if a block transition is flagged BORDERLINE, decide whether to confirm it.
-
-Computed state this session:
-- Current block: ${rx.block} (microcycle ${rx.cycle + 1})
-- Fatigue index (0-1, higher = more accumulated fatigue): ${fatigueIndex.toFixed(2)}
-- Normalized e1RM trend per session (>0 = gaining): ${(e1rmSlope * 100).toFixed(2)}%
-- Today's readiness score (0-1): ${rScore.toFixed(2)}
-- Transition flagged: ${transition ? `${transition.to} — ${transition.reason}${transition.borderline ? " (BORDERLINE — your call)" : ""}` : "none"}
-
-Recent sessions (newest first):
-${JSON.stringify(recent, null, 1)}
-
-Respond ONLY with JSON, no prose, no code fences:
-{"note":"1-2 sentence read for the athlete","confirmTransition":true,"override":null}
-override: only set to a block name (accumulation|intensification|deload|realization) if you'd transition differently than flagged; otherwise null.`;
+  // POST only structured session state. The prompt template now lives
+  // server-side in api/coach.js, so this endpoint can't be used as a
+  // general-purpose LLM proxy.
   try {
     const res = await fetch("/api/coach", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({
+        block: rx.block,
+        cycle: rx.cycle,
+        fatigueIndex,
+        slope: e1rmSlope,
+        rScore,
+        transition,
+        recent,
+      }),
     });
     const data = await res.json();
     const text = (data.content || []).map((c) => (c.type === "text" ? c.text : "")).join("").replace(/```json|```/g, "").trim();
