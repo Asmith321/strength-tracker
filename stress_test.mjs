@@ -22,7 +22,7 @@ function ensureBundle() {
   const fresh = existsSync(BUNDLE) && statSync(BUNDLE).mtimeMs >= statSync(SRC).mtimeMs;
   if (fresh) return;
   const shim = join(ROOT, "src", ".App_stress_shim.jsx");
-  const body = readFileSync(SRC, "utf8").replace(/^import cloudStorage from "\.\/storage\.js";\s*$/m, "")
+  const body = readFileSync(SRC, "utf8").replace(/^import cloudStorage.*from "\.\/storage\.js";\s*$/m, "")
     + `\nexport { freshProgram, ingest, prescribe, applyTransition, landmarksForExperience, platesForSide, plateText, rpePct, LIB, ROTATION, BLOCKS, PATTERNS, ACC_REP_TIERS, FATIGUE_SPIKE, FATIGUE_AMBER };\n`;
   writeFileSync(shim, body);
   try {

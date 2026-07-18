@@ -5,9 +5,9 @@ import {
 import {
   Dumbbell, TrendingUp, History as HistoryIcon, Activity, Layers,
   Minus, Plus, AlertTriangle, ChevronDown, ChevronRight, Settings, Check,
-  Timer, X, Award,
+  Timer, X, Award, Download, LogOut,
 } from "lucide-react";
-import cloudStorage from "./storage.js";
+import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from "./storage.js";
 
 /* ════════════════════════════════════════════════════════════════════════
    PROGRAMMING ENGINE
@@ -643,13 +643,15 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
         row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
         triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
         legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
-        cablecrunch: "bench", shrug: "deadlift" }[k];
+        cablecrunch: "bench", shrug: "deadlift",
+        goodmorning: "deadlift", cablefly: "bench", dbshoulderpress: "bench" }[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
       const mult = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
         cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
         triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
         legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
-        cablecrunch: 0.4, shrug: 0.35 }[k] || 0.6;
+        cablecrunch: 0.4, shrug: 0.35,
+        goodmorning: 0.55, cablefly: 0.3, dbshoulderpress: 0.6 }[k] || 0.6;
       e1rm = base * mult;
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], pattern: LIB[k].pattern };
@@ -716,8 +718,34 @@ override: only set to a block name (accumulation|intensification|deload|realizat
 /* ════════════ STORAGE ════════════ */
 const K_PROGRAM = "strength.engine.program.v1";
 const K_SESSIONS = "strength.engine.sessions.v1";
-async function loadKey(k) { try { const r = await cloudStorage.get(k); return r ? JSON.parse(r.value) : null; } catch { return null; } }
+/* Errors PROPAGATE here (no swallowing): a null return means "no row exists",
+   an exception means "the load failed". The caller MUST distinguish these — a
+   failed load must never be mistaken for an empty account (which would render
+   Onboarding and let a completion overwrite real, un-loaded data). */
+async function loadKey(k) { const r = await cloudStorage.get(k); return r ? JSON.parse(r.value) : null; }
 async function saveKey(k, v) { try { await cloudStorage.set(k, JSON.stringify(v)); return true; } catch { return false; } }
+
+/* Loads program + sessions. Rejects if either read fails (propagated from
+   loadKey), so the caller can show a retry screen instead of Onboarding.
+   Exported for testing. `loadKeyFn` is injectable for that purpose. */
+export async function loadProgramState(loadKeyFn = loadKey) {
+  const p = await loadKeyFn(K_PROGRAM);
+  const s = await loadKeyFn(K_SESSIONS);
+  const mp = p ? migrateProgram(p) : null;
+  return { program: mp, sessions: s || [], migrated: !!(mp && mp !== p) };
+}
+
+/* Single source of truth for which top-level screen renders. Ordering is the
+   whole safety property: load-error is checked BEFORE program, so a failed
+   fetch can never fall through to Onboarding. Exported for testing. */
+export function decideScreen({ session, loadError, ready, program }) {
+  if (session === undefined) return "checking-auth";
+  if (!session) return "login";
+  if (loadError) return "load-error";
+  if (!ready) return "loading";
+  if (!program) return "onboarding";
+  return "app";
+}
 
 /* ════════════ UI (functional; secondary to the engine) ════════════ */
 const PLATES = [
@@ -1090,22 +1118,122 @@ function History({ sessions }) {
   );
 }
 
+function Login() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("signin"); // "signin" | "signup"
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+
+  const submit = async () => {
+    if (!email || !password) { setErr("Enter your email and password."); return; }
+    setBusy(true); setErr(""); setNote("");
+    try {
+      if (mode === "signup") {
+        const { needsConfirmation } = await signUp(email, password);
+        if (needsConfirmation) { setNote("Account created — confirm via the email link, then sign in."); setMode("signin"); }
+        // if no confirmation required, onAuthChange in App flips to the app automatically
+      } else {
+        await signIn(email, password);
+      }
+    } catch (e) { setErr(e?.message || "Authentication failed."); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="screen">
+      <div className="eyebrow">IRON LOG</div>
+      <h1 className="display sm">{mode === "signup" ? "Create your account." : "Sign in."}</h1>
+      <p className="lede">Your data is private to your account — a login is required to read or write it.</p>
+      <div className="panel" style={{ padding: 14 }}>
+        <label className="fieldrow sm" style={{ display: "block" }}><span style={{ display: "block", marginBottom: 6 }}>Email</span>
+          <input className="textinput mono" type="email" value={email} autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+        <label className="fieldrow sm" style={{ display: "block", borderBottom: "none" }}><span style={{ display: "block", marginBottom: 6 }}>Password</span>
+          <input className="textinput mono" type="password" value={password}
+            onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} /></label>
+      </div>
+      {err && <div className="warn mono" style={{ paddingTop: 4 }}>{err}</div>}
+      {note && <div className="est mono" style={{ padding: "4px 0 0", color: "#3FA85F" }}>{note}</div>}
+      <button className="cta" disabled={busy} onClick={submit}>{busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}</button>
+      <div className="est mono" style={{ textAlign: "center" }}>
+        {mode === "signup"
+          ? <>Already have an account? <a style={{ color: "var(--text)", cursor: "pointer" }} onClick={() => { setMode("signin"); setErr(""); }}>Sign in</a></>
+          : <>Need an account? <a style={{ color: "var(--text)", cursor: "pointer" }} onClick={() => { setMode("signup"); setErr(""); }}>Create one</a></>}
+      </div>
+    </div>
+  );
+}
+
+function LoadErrorScreen({ onRetry, busy }) {
+  return (
+    <div className="screen">
+      <div className="eyebrow">IRON LOG</div>
+      <h1 className="display sm">Couldn't load your data.</h1>
+      <p className="lede">The request to your database failed — this is a connection or server problem, not missing data. Your saved program and history are safe; we just couldn't reach them. Nothing has been created or overwritten.</p>
+      <button className="cta" disabled={busy} onClick={onRetry}>{busy ? "Retrying…" : "Retry"}</button>
+    </div>
+  );
+}
+
 export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = checking, null = logged out, obj = signed in
   const [program, setProgram] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [tab, setTab] = useState("today");
   const [showSettings, setShowSettings] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetPhrase, setResetPhrase] = useState("");
 
-  useEffect(() => { (async () => {
-    const p = await loadKey(K_PROGRAM); const s = await loadKey(K_SESSIONS);
-    if (p) { const mp = migrateProgram(p); setProgram(mp); if (mp !== p) saveKey(K_PROGRAM, mp); }
-    if (s) setSessions(s); setReady(true);
-  })(); }, []);
+  // ---- auth: track the session; the app is gated behind it ----
+  useEffect(() => {
+    let active = true;
+    getSession().then((s) => { if (active) setSession(s); }).catch(() => { if (active) setSession(null); });
+    const unsub = onAuthChange((s) => setSession(s));
+    return () => { active = false; unsub(); };
+  }, []);
 
-  const start = async (p) => { setProgram(p); await saveKey(K_PROGRAM, p); };
+  const loadData = async () => {
+    setLoadError(false); setReady(false); setRetrying(true);
+    try {
+      const { program: mp, sessions: s, migrated } = await loadProgramState();
+      if (mp) setProgram(mp);
+      setSessions(s);
+      if (migrated && mp) saveKey(K_PROGRAM, mp); // best-effort migration persist
+      setReady(true);
+    } catch {
+      // A failed fetch must NOT look like an empty account — surface a retry
+      // screen and never fall through to Onboarding / start().
+      setLoadError(true); setReady(true);
+    } finally { setRetrying(false); }
+  };
+
+  // load data only once signed in (and reset local state on sign-out)
+  useEffect(() => {
+    if (session) { loadData(); }
+    else { setProgram(null); setSessions([]); setReady(false); setLoadError(false); setShowSettings(false); }
+    // eslint-disable-next-line
+  }, [session]);
+
+  // checked persistence — surfaces a save failure instead of silently proceeding
+  const persist = async (prog, sess) => {
+    const okP = await saveKey(K_PROGRAM, prog);
+    const okS = await saveKey(K_SESSIONS, sess);
+    const ok = okP && okS;
+    setSaveError(!ok);
+    return ok;
+  };
+
+  const start = async (p) => {
+    if (loadError) return; // never complete onboarding while data failed to load
+    setProgram(p); await persist(p, sessions);
+  };
 
   const handleLog = async (logs, readiness, rx) => {
     const { next, transition, fatigueIndex, e1rmSlope, rScore, prs } = ingest(program, logs, readiness);
@@ -1138,32 +1266,61 @@ export default function App() {
     };
     const newSessions = [...sessions, record];
     setProgram(finalProgram); setSessions(newSessions);
-    await saveKey(K_PROGRAM, finalProgram); await saveKey(K_SESSIONS, newSessions);
+    // Check the write: if it fails, surface a save error rather than silently
+    // proceeding as though the session was safely logged.
+    await persist(finalProgram, newSessions);
     setTab("today");
   };
 
+  const retrySave = async () => { await persist(program, sessions); };
+
   const reset = async () => {
     if (resetPhrase !== "DELETE") return;
-    await saveKey(K_PROGRAM, null); await saveKey(K_SESSIONS, []);
+    const ok = await persist(null, []);
+    if (!ok) return; // don't clear local state if the delete didn't persist
     setProgram(null); setSessions([]); setTab("today"); setConfirmingReset(false); setShowSettings(false); setResetPhrase("");
   };
 
   const setProgramField = async (field, v) => {
     const next = { ...program, [field]: v };
     setProgram(next);
-    await saveKey(K_PROGRAM, next);
+    await persist(next, sessions);
   };
+
+  const exportData = () => {
+    const payload = { exportedAt: new Date().toISOString(), version: 1, program, sessions };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `iron-log-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const screen = decideScreen({ session, loadError, ready, program });
 
   return (
     <div className="root">
       <style>{CSS}</style>
-      {!ready ? <div className="screen"><div className="empty">Loading…</div></div>
-        : !program ? <Onboarding onDone={start} />
+      {screen === "checking-auth" || screen === "loading"
+        ? <div className="screen"><div className="empty">Loading…</div></div>
+        : screen === "login" ? <Login />
+        : screen === "load-error" ? <LoadErrorScreen onRetry={loadData} busy={retrying} />
+        : screen === "onboarding" ? <Onboarding onDone={start} />
         : <>
           <div className="topbar">
             <div className="brand mono"><Dumbbell size={15} /> IRON&nbsp;LOG</div>
             <button className="ghost" onClick={() => setShowSettings(true)}><Settings size={15} /></button>
           </div>
+          {saveError && (
+            <div className="savewarn mono">
+              <AlertTriangle size={14} />
+              <span className="sw-text">Couldn't save — your last change may not persist. Check your connection.</span>
+              <button onClick={retrySave}>Retry</button>
+              <button onClick={() => setSaveError(false)}><X size={13} /></button>
+            </div>
+          )}
           {showSettings && (
             <div className="screen">
               <div className="eyebrow">SETTINGS</div>
@@ -1176,6 +1333,12 @@ export default function App() {
               <p className="est mono" style={{ padding: "0 0 8px" }}>Weekly hard sets per pattern. Auto-tuned each block from your strength trend + fatigue — ▲/▼ marks the most recent change.</p>
               <LandmarkTable landmarks={program.landmarks} adjustments={program.landmarkAdjustments} />
               <div style={{ height: 16 }} />
+              <div className="eyebrow">BACKUP & ACCOUNT</div>
+              <p className="est mono" style={{ padding: "0 0 8px" }}>Supabase's free tier has no automated backups — export a copy periodically as your safety net.</p>
+              <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={exportData}><Download size={15} /> Export my data</button>
+                <button className="cta" style={{ margin: 0, background: "var(--surface2)", color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={() => signOut()}><LogOut size={15} /> Sign out</button>
+              </div>
               {!confirmingReset ? (
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="cta" style={{ margin: 0, background: "#D7443E", color: "#2A0907" }} onClick={() => setConfirmingReset(true)}>Reset everything</button>
@@ -1274,6 +1437,10 @@ const CSS = `
 .prnote{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-left:3px solid #E8C547;border-radius:11px;padding:11px 13px;margin-bottom:16px;font-size:11.5px;letter-spacing:.05em;color:#E8C547;}
 .restnote{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-left:3px solid #E8C547;border-radius:11px;padding:11px 13px;margin-bottom:16px;font-size:11.5px;letter-spacing:.03em;color:var(--dim);}
 .restnote svg{color:#E8C547;flex-shrink:0;}
+.savewarn{display:flex;align-items:center;gap:8px;margin:14px 18px 0;padding:9px 12px;background:#2A0E0C;border:1px solid #D7443E;border-radius:10px;color:#F0B7B3;font-size:11.5px;}
+.savewarn svg{color:#D7443E;flex-shrink:0;}
+.sw-text{flex:1;}
+.savewarn button{background:var(--surface2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:4px 8px;font-size:11px;cursor:pointer;display:flex;align-items:center;}
 .plates{font-size:10.5px;color:var(--dim);letter-spacing:.04em;padding:2px 4px 6px;}
 .restbtn{width:100%;height:44px;margin-top:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--dim);font-size:11.5px;letter-spacing:.1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
 .restbtn:active{background:var(--line);}
