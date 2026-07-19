@@ -1,43 +1,18 @@
 /* ============================================================================
    Engine stress-test / fuzz harness.       Run with:  node stress_test.mjs
    Read-only: drives the REAL freshProgram()/prescribe()/ingest()/applyTransition()
-   from src/App.jsx (no mocks) through a long randomized training history plus
+   from src/engine.js (no mocks) through a long randomized training history plus
    deliberately injected edge cases, and asserts a battery of invariants after
    every step. Any violation is recorded with the seed + session number + inputs
    so it is exactly reproducible.
 
-   The engine lives inside a React component file, so we bundle just its pure
-   functions into ./stress_engine.mjs via esbuild on first run (auto-rebuilt
-   whenever src/App.jsx is newer). Nothing here mutates the engine source.
+   src/engine.js is plain JS (no JSX, no React) so it imports directly with no
+   bundling step — nothing here mutates the engine source.
    ============================================================================ */
-import { execFileSync } from "node:child_process";
-import { existsSync, statSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const ROOT = dirname(fileURLToPath(import.meta.url));
-const BUNDLE = join(ROOT, "stress_engine.mjs");
-const SRC = join(ROOT, "src", "App.jsx");
-function ensureBundle() {
-  const fresh = existsSync(BUNDLE) && statSync(BUNDLE).mtimeMs >= statSync(SRC).mtimeMs;
-  if (fresh) return;
-  const shim = join(ROOT, "src", ".App_stress_shim.jsx");
-  const body = readFileSync(SRC, "utf8").replace(/^import cloudStorage.*from "\.\/storage\.js";\s*$/m, "")
-    + `\nexport { freshProgram, ingest, prescribe, applyTransition, landmarksForExperience, platesForSide, plateText, rpePct, LIB, ROTATION, BLOCKS, PATTERNS, ACC_REP_TIERS, FATIGUE_SPIKE, FATIGUE_AMBER };\n`;
-  writeFileSync(shim, body);
-  try {
-    execFileSync(join(ROOT, "node_modules", ".bin", "esbuild"),
-      [shim, "--bundle", "--format=esm", "--loader:.jsx=jsx",
-        "--external:react", "--external:react-dom", "--external:recharts", "--external:lucide-react",
-        `--outfile=${BUNDLE}`], { stdio: "pipe" });
-  } finally { rmSync(shim, { force: true }); }
-}
-ensureBundle();
-
-const {
+import {
   freshProgram, ingest, prescribe, applyTransition,
   platesForSide, rpePct, LIB, ROTATION, BLOCKS,
-} = await import("./stress_engine.mjs");
+} from "./src/engine.js";
 
 const ROT = ROTATION.length;
 const DAY = 86400000;
