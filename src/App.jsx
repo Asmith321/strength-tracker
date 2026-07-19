@@ -217,6 +217,19 @@ const PATTERN_FREQ = (() => {
   }));
   return f;
 })();
+/* Hard per-exercise weekly set cap: prescribe() never assigns a single ramped
+   accessory more than this many sets in a week, however high the landmark
+   target climbs. */
+const ACC_SET_CAP = 4;
+/* The most weekly sets a group can ACTUALLY receive: each of its landmark-ramped
+   accessories is capped at ACC_SET_CAP, and the group is trained
+   PATTERN_FREQ[group] times per week. A weekly target above this is a ceiling
+   the ramp can aim at but the schedule can never deliver — so ceiling/transition
+   and auto-tune decisions must clamp to it (see deliverableTarget), otherwise the
+   engine concludes 'MRV reached' for volume it never actually prescribed. */
+function maxDeliverable(group) {
+  return ACC_SET_CAP * (PATTERN_FREQ[group] || 0);
+}
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
@@ -283,6 +296,14 @@ function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
   return Math.round(lm.mev + (lm.mrv - lm.mev) * frac);
 }
 
+/* The weekly target a group can actually be given: the raw ramp target clamped
+   to what per-exercise cap × training frequency can produce. Ceiling/transition
+   and auto-tune 'reached MRV' decisions use THIS, not the raw target — so the
+   engine never treats undeliverable volume as if it had been trained. */
+function deliverableTarget(group, blockType, cycleInBlock, landmarks) {
+  return Math.min(weeklyTarget(group, blockType, cycleInBlock, landmarks), maxDeliverable(group));
+}
+
 /* ---- automatic volume-landmark adjustment (runs at accumulation→deload) ----
    Two signals per pattern drive a gradual ±1-set drift over many blocks:
      • growth  — normalized e1RM slope of the pattern's driver: the main lift
@@ -339,8 +360,10 @@ function adjustLandmarks(program) {
     const lm = landmarks[p];
     const { g, n } = patternGrowth(program, p);
     if (n < 3) return; // not enough e1RM history to act on — leave it alone
-    // did this pattern's ramped volume already reach MRV this block?
-    const reachedCeiling = weeklyTarget(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) >= lm.mrv;
+    // did this group's ramped volume already reach MRV this block? — measured
+    // against the DELIVERABLE target, so a group whose schedule can't reach MRV
+    // never reads as "at ceiling" (which would suppress the stalled-early check).
+    const reachedCeiling = deliverableTarget(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) >= lm.mrv;
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
 
@@ -433,7 +456,7 @@ function prescribe(program, readiness) {
       const wk = weeklyTarget(vg, program.block.type, cyc, program.landmarks);
       const freq = PATTERN_FREQ[vg] || 1;
       const rawSets = Math.round((wk / freq) * setMult);
-      sets = Math.max(1, Math.min(4, rawSets));
+      sets = Math.max(1, Math.min(ACC_SET_CAP, rawSets));
     }
     /* Top single + backoff sets are the same prescribed `sets` total, split
        explicitly rather than left as an ambiguous "sets × reps · back-off
@@ -551,7 +574,7 @@ function ingest(program, logs, readiness) {
   if (endOfCycle) {
     const t = next.block.type;
     const atVolCeiling = ["quads", "chest", "hamstrings"].some((p) =>
-      weeklyTarget(p, t, Math.max(0, cyc - 1), next.landmarks) >= next.landmarks[p].mrv);
+      deliverableTarget(p, t, Math.max(0, cyc - 1), next.landmarks) >= next.landmarks[p].mrv);
     const highFatigue = fatigueIndex >= 0.7;
     const grayFatigue = fatigueIndex >= 0.55 && fatigueIndex < 0.7;
     const stalled = e1rmSlope <= 0.001;
@@ -1056,10 +1079,13 @@ function Today({ program, sessions, onLog }) {
 function Status({ program }) {
   const cyc = program.block.cycle;
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
-    const wk = weeklyTarget(p, program.block.type, cyc, program.landmarks);
+    const target = weeklyTarget(p, program.block.type, cyc, program.landmarks);
+    const deliverable = maxDeliverable(p);
+    const wk = Math.min(target, deliverable); // actual prescribable weekly sets, not the raw ramp target
+    const capped = deliverable < lm.mrv;      // group structurally can't reach its own MRV at current exercise counts
     const pctMrv = Math.min(1, wk / lm.mrv);
     const color = wk < lm.mev ? "#9AA0AC" : wk < lm.mav ? "#3FA85F" : wk < lm.mrv ? "#E8C547" : "#D7443E";
-    return { p, label: lm.label, wk, lm, pctMrv, color };
+    return { p, label: lm.label, wk, lm, pctMrv, color, deliverable, capped };
   });
   return (
     <div className="screen">
@@ -1078,8 +1104,9 @@ function Status({ program }) {
             <div className="vol-fill" style={{ width: `${r.pctMrv * 100}%`, background: r.color }} />
             <div className="vol-tick" style={{ left: `${(r.lm.mev / r.lm.mrv) * 100}%` }} />
             <div className="vol-tick" style={{ left: `${(r.lm.mav / r.lm.mrv) * 100}%` }} />
+            {r.capped && <div className="vol-cap" style={{ left: `${(r.deliverable / r.lm.mrv) * 100}%` }} title={`max ${r.deliverable} sets deliverable`} />}
           </div>
-          <div className="vol-legend mono dim">MEV {r.lm.mev} · MAV {r.lm.mav} · MRV {r.lm.mrv}</div>
+          <div className="vol-legend mono dim">MEV {r.lm.mev} · MAV {r.lm.mav} · MRV {r.lm.mrv}{r.capped ? <span className="vol-capnote"> · ceiling {r.deliverable} (max deliverable &lt; MRV)</span> : null}</div>
         </div>
       ))}
     </div>
@@ -1494,7 +1521,9 @@ const CSS = `
 .vol-track{position:relative;height:8px;background:var(--surface2);border-radius:4px;}
 .vol-fill{height:100%;border-radius:4px;}
 .vol-tick{position:absolute;top:-2px;width:2px;height:12px;background:var(--dim);opacity:.6;}
+.vol-cap{position:absolute;top:-3px;width:2px;height:14px;background:#D7443E;opacity:.9;}
 .vol-legend{font-size:10px;margin-top:5px;}
+.vol-capnote{color:#D7443E;opacity:.9;}
 .chart{padding:14px;}
 .chart-title{font-size:11px;letter-spacing:.1em;margin-bottom:8px;}
 .hist{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:9px;}
