@@ -185,7 +185,6 @@ const LIB = {
   pulldown:     { label: "Lat Pulldown",                  role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
   pullup:       { label: "Pull-Up / Chin-Up",             role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
   curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
-  bsplit:       { label: "Bulgarian Split Sq",            role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
   triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
   lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
   calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
@@ -196,7 +195,6 @@ const LIB = {
   wristcurl:    { label: "Dumbbell Wrist Curl",           role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
   cablecrunch:  { label: "Cable Crunch",                  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
   shrug:        { label: "Dumbbell Shrug",                role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
-  goodmorning:  { label: "Good Morning",                  role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
   cablefly:     { label: "Cable Fly",                     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest" },
   dbshoulderpress: { label: "Dumbbell Shoulder Press",    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
 };
@@ -205,8 +203,8 @@ const LIB = {
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck", "dbshoulderpress"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "goodmorning", "calfraise"] },
-  { name: "Squat+Bench Vol.", items: ["squat", "bench", "bsplit", "curl", "lateralraise", "cablefly"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "calfraise", "reversepecdeck"] },
+  { name: "Squat+Bench Vol.", items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 const PATTERN_FREQ = (() => {
@@ -666,18 +664,18 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
       e1rm = e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe);
     } else {
       const ref = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
-        row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
+        row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench",
         triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
         legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
         cablecrunch: "bench", shrug: "deadlift",
-        goodmorning: "deadlift", cablefly: "bench", dbshoulderpress: "bench" }[k];
+        cablefly: "bench", dbshoulderpress: "bench" }[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
       const mult = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
-        cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
+        cablerow: 0.75, pulldown: 0.7, curl: 0.35,
         triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
         legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
         cablecrunch: 0.4, shrug: 0.35,
-        goodmorning: 0.55, cablefly: 0.3, dbshoulderpress: 0.6 }[k] || 0.6;
+        cablefly: 0.3, dbshoulderpress: 0.6 }[k] || 0.6;
       e1rm = base * mult;
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
@@ -1153,7 +1151,7 @@ function History({ sessions }) {
       {[...sessions].reverse().map((s, i) => (
         <div key={i} className="hist">
           <div className="hist-top"><span className="mono">{s.block} · {s.dayName}</span><span className="mono dim">{new Date(s.date).toLocaleDateString()}</span></div>
-          <div className="hist-lifts mono">{s.logs.map((l) => `${LIB[l.key]?.label.split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}` + (l.backoffSetCount > 0 ? ` (+${l.backoffSetCount} backoff×${l.backoffReps}@${l.backoffRpe})` : "")).join("  ·  ")}</div>
+          <div className="hist-lifts mono">{s.logs.map((l) => `${(LIB[l.key]?.label || l.key).split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}` + (l.backoffSetCount > 0 ? ` (+${l.backoffSetCount} backoff×${l.backoffReps}@${l.backoffRpe})` : "")).join("  ·  ")}</div>
           {s.prs?.length > 0 && <div className="hist-pr mono">★ e1RM PR — {s.prs.map((k) => LIB[k]?.label || k).join(", ")}</div>}
           {s.transition && <div className="hist-trans mono">→ {BLOCKS[s.transition]?.label || s.transition}</div>}
           {s.coach && s.coach !== COACH_OFFLINE_NOTE && <div className="hist-coach">{s.coach}</div>}
