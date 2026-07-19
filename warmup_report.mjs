@@ -1,27 +1,9 @@
 /* Per-day warmup + prescription report, plus the exercise→volumeGroup mapping
-   table. Used to prove the classification-system consolidation changes NO
-   actual prescription: run before and after the refactor and diff the output.
-   Bundles the real engine out of src/App.jsx (same approach as stress_test.mjs). */
-import { execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, rmSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const ROOT = dirname(fileURLToPath(import.meta.url));
-const BUNDLE = join(ROOT, "warmup_report_engine.mjs");
-const SRC = join(ROOT, "src", "App.jsx");
-const shim = join(ROOT, "src", ".App_report_shim.jsx");
-const body = readFileSync(SRC, "utf8").replace(/^import cloudStorage.*from "\.\/storage\.js";\s*$/m, "")
-  + `\nexport { freshProgram, prescribe, applyTransition, ingest, LIB, ROTATION, BLOCKS, PATTERNS };\n`;
-writeFileSync(shim, body);
-try {
-  execFileSync(join(ROOT, "node_modules", ".bin", "esbuild"),
-    [shim, "--bundle", "--format=esm", "--loader:.jsx=jsx",
-      "--external:react", "--external:react-dom", "--external:recharts", "--external:lucide-react",
-      `--outfile=${BUNDLE}`], { stdio: "pipe" });
-} finally { rmSync(shim, { force: true }); }
-
-const { freshProgram, prescribe, LIB, ROTATION, PATTERNS } = await import("./warmup_report_engine.mjs?t=" + Date.now());
+   table. Used to prove an engine change (or none at all) changes NO actual
+   prescription: run before and after and diff the output.
+   src/engine.js is plain JS (no JSX, no React) so it imports directly with no
+   bundling step. */
+import { freshProgram, prescribe, LIB, ROTATION, PATTERNS } from "./src/engine.js";
 
 const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
 
@@ -46,7 +28,7 @@ function report(blockType) {
 console.log("==== EXERCISE → VOLUME GROUP ====");
 const groups = new Set();
 for (const [k, L] of Object.entries(LIB)) {
-  const vg = L.volumeGroup || L.pattern;
+  const vg = L.volumeGroup;
   groups.add(vg);
   console.log(`  ${k.padEnd(16)} -> ${vg}`);
 }
@@ -57,4 +39,3 @@ for (const bt of ["accumulation", "intensification", "deload", "realization"]) {
   console.log(`\n==== PRESCRIPTION REPORT · block=${bt} ====`);
   console.log(report(bt));
 }
-rmSync(BUNDLE, { force: true });
