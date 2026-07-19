@@ -4,3 +4,4 @@ dist
 .DS_Store
 .env.local
 stress_engine.mjs
+warmup_report_engine.mjs
