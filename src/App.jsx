@@ -10,7 +10,7 @@ import {
 import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from "./storage.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram,
-  prescribe, ingest, applyTransition, restDaysForFatigue, weeklyTarget, maxDeliverable, e1rmFrom,
+  prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, e1rmFrom,
   PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -284,12 +284,12 @@ function Today({ program, sessions, onLog }) {
   const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
 
   useEffect(() => {
-    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe })));
+    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap })));
     // eslint-disable-next-line
   }, [program.sessionCount]);
 
   useEffect(() => {
-    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, missedSets: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe } : l)));
+    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, missedSets: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe, backoffRpeCap: rx.items[i].backoffRpeCap } : l)));
     // eslint-disable-next-line
   }, [rx.band]);
 
@@ -352,9 +352,8 @@ function Today({ program, sessions, onLog }) {
 function Status({ program }) {
   const cyc = program.block.cycle;
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
-    const target = weeklyTarget(p, program.block.type, cyc, program.landmarks);
-    const deliverable = maxDeliverable(p);
-    const wk = Math.min(target, deliverable); // actual prescribable weekly sets, not the raw ramp target
+    const wk = deliveredWeekly(p, program.block.type, cyc, program.landmarks); // full-muscle sets actually prescribed (mains + fixedSets + ramped)
+    const deliverable = maxDeliverable(p, program.block.type);
     const capped = deliverable < lm.mrv;      // group structurally can't reach its own MRV at current exercise counts
     const pctMrv = Math.min(1, wk / lm.mrv);
     const color = wk < lm.mev ? "#9AA0AC" : wk < lm.mav ? "#3FA85F" : wk < lm.mrv ? "#E8C547" : "#D7443E";
@@ -554,7 +553,12 @@ export default function App() {
   };
 
   const handleLog = async (logs, readiness, rx) => {
-    const { next, transition, fatigueIndex, e1rmSlope, rScore, prs } = ingest(program, logs, readiness);
+    /* Normalize the UI's internal _touched marker into an explicit `touched`
+       boolean for the engine: untouched entries are the prescription echoed
+       back, and ingest() excludes them from e1RM/trend/PR math (they still
+       count for adherence + fatigue bookkeeping). */
+    const ingestLogs = logs.map((l) => ({ ...l, touched: !!l._touched }));
+    const { next, transition, fatigueIndex, e1rmSlope, rScore, prs } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
         lifts: logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
@@ -579,7 +583,7 @@ export default function App() {
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
       logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets,
-        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe })),
+        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: !!l._touched })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
     };
     const newSessions = [...sessions, record];
