@@ -77,11 +77,29 @@ function slope(ys) {
 /* Per-lift e1RM trend, normalized by current e1RM so patterns are comparable
    regardless of absolute load. Generalizes the block-level slope in ingest()
    so the same computation feeds both the fatigue index and the per-pattern
-   growth signal used for landmark auto-tuning. */
+   growth signal used for landmark auto-tuning.
+   Fits over RAW session readings (p.raw), not the EWMA-smoothed series — the
+   smoothed line already lags by construction, and fitting a trend line to it
+   double-lags the signal. The window is also scoped to the trailing run of
+   same-block-type entries (hist entries carry `b`): a block transition shifts
+   rep ranges, which steps the e1RM estimate for reasons unrelated to real
+   strength change, so a window straddling the boundary reads phantom slopes.
+   Entries from before `b` existed match any block, so migrated history keeps
+   contributing until it naturally ages out of the window. */
 function liftNormSlope(lift) {
-  const h = (lift?.hist || []).map((p) => p.e);
+  const h = lift?.hist || [];
+  if (!h.length) return 0;
+  let lastB = null;
+  for (let i = h.length - 1; i >= 0 && !lastB; i--) lastB = h[i].b || null;
+  const run = [];
+  for (let i = h.length - 1; i >= 0; i--) {
+    const p = h[i];
+    if (lastB && p.b && p.b !== lastB) break;
+    run.unshift(p);
+  }
+  const ys = run.slice(-8).map((p) => p.raw ?? p.e);
   const base = lift?.e1rm || 1;
-  return slope(h.slice(-8)) / base;
+  return slope(ys) / base;
 }
 
 /* ---- muscle-group landmark defaults (weekly hard sets) ----
@@ -112,7 +130,12 @@ const PATTERNS = {
   /* Rear/side delts and calves were previously fixedSets accessories (flat set
      count, no landmark tracking); the volume audit found both sitting below
      MEV. Promoted to real landmark-tracked pools. rear_delts = Reverse Pec Deck
-     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days). */
+     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days).
+     KNOWN SIMPLIFICATION: 'rear_delts' pools rear delts (pec deck, 2 slots) and
+     side delts (lateral raise, 1 slot) under one landmark, so the side-delt
+     driver is capped near 4 sets/week regardless of what the pool total reads.
+     Splitting them means a landmark-schema migration + a second lateral slot in
+     the rotation — deliberately out of scope for this pass. */
   rear_delts:  { label: "Rear / Side Delts",   mev: 8,  mav: 19, mrv: 26 },
   calves:      { label: "Calves",              mev: 8,  mav: 14, mrv: 20 },
 };
@@ -193,14 +216,23 @@ const LIB = {
   dbshoulderpress: { label: "Dumbbell Shoulder Press",    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
 };
 
-/* ---- rotation: which lifts each training day trains ---- */
+/* ---- rotation: which lifts each training day trains ----
+   volumeDay: main lifts on this day get a differentiated second exposure —
+   higher reps, RPE-capped (see VOLUME_DAY_* in prescribe) — instead of
+   repeating the week's first heavy top set. */
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck", "dbshoulderpress"] },
   { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "calfraise", "reversepecdeck"] },
-  { name: "Squat+Bench Vol.", items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
+  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
 ];
 const ROT = ROTATION.length;
+/* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
+   not distinct training days (e.g. both front-delt slots land on the same
+   Bench day). That is the intended semantics everywhere it's used: it divides
+   the weekly residual across slots in prescribe()/rampedSlotSets, and it
+   multiplies the per-slot cap in maxDeliverable. Nothing in the engine reads
+   it as "days per week this muscle is trained". */
 const PATTERN_FREQ = (() => {
   const f = {};
   ROTATION.forEach((d) => d.items.forEach((k) => {
@@ -213,31 +245,65 @@ const PATTERN_FREQ = (() => {
    accessory more than this many sets in a week, however high the landmark
    target climbs. */
 const ACC_SET_CAP = 4;
-/* The most weekly sets a group can ACTUALLY receive: each of its landmark-ramped
-   accessories is capped at ACC_SET_CAP, and the group is trained
-   PATTERN_FREQ[group] times per week. A weekly target above this is a ceiling
-   the ramp can aim at but the schedule can never deliver — so ceiling/transition
-   and auto-tune decisions must clamp to it (see deliverableTarget), otherwise the
-   engine concludes 'MRV reached' for volume it never actually prescribed. */
-function maxDeliverable(group) {
-  return ACC_SET_CAP * (PATTERN_FREQ[group] || 0);
-}
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
+/* ---- full-muscle volume accounting ----
+   Landmark MEV/MAV/MRV are RP-style FULL-MUSCLE weekly hard-set counts, so
+   every hard set for the muscle counts toward them 1:1 — main-lift sets and
+   fixedSets accessories included (volumeGroup is the exercise's PRIMARY mover,
+   so full credit; fractional credit for secondary movers is a refinement this
+   engine deliberately skips). The landmark ramp therefore prescribes the
+   RESIDUAL: ramped accessories fill the gap between the block's weekly target
+   and the fixed contribution the schedule already delivers.
+   Before this accounting, mains + fixedSets (11 quad / 7 hamstring / 8 chest
+   weekly sets in accumulation) counted toward nothing: accessory capacity
+   alone could never reach the landmarks, so the volume ramp for those groups
+   was pinned flat from cycle 0 and the atVolCeiling transition could
+   mathematically never fire. */
+
+/* Weekly sets a group receives from sources that do NOT ramp: main-lift work
+   (BLOCKS[bt].mainSets per rotation slot) and fixedSets accessories (scaled by
+   the block's volume tier). Green-readiness nominal, same as weeklyTarget. */
+function fixedWeeklySets(group, blockType) {
+  const cfg = BLOCKS[blockType];
+  let total = 0;
+  ROTATION.forEach((d) => d.items.forEach((k) => {
+    const L = LIB[k];
+    if (L.volumeGroup !== group) return;
+    if (L.role === "main") total += cfg.mainSets;
+    else if (L.fixedSets) total += Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel]));
+  }));
+  return total;
+}
+
+/* The most weekly sets a group can ACTUALLY receive in a block: its fixed
+   contribution plus every ramped slot at ACC_SET_CAP. A weekly target above
+   this is a ceiling the ramp can aim at but the schedule can never deliver —
+   ceiling/transition and auto-tune decisions clamp to it, so the engine never
+   treats undeliverable volume as if it had been trained. blockType defaults to
+   accumulation, the only block with a volume ramp. */
+function maxDeliverable(group, blockType = "accumulation") {
+  return fixedWeeklySets(group, blockType) + ACC_SET_CAP * (PATTERN_FREQ[group] || 0);
+}
+
 /* ---- per-tier accessory rep + RPE targets ----
-   Both reps and RPE are now direct per-tier lookups (previously only reps
-   were per-tier; RPE was a single value shared across all accessories in a
-   phase). Compound accessories (multi-joint, heaviest relative load) stay
-   lowest-rep; isolation (single-joint, safest to push near failure) goes
-   highest-rep and is deliberately prescribed to RPE 10 whenever it hits the
-   12-rep ceiling in accumulation/intensification — a set should only earn
-   the top of its rep range by actually reaching genuine failure, not just
-   by hitting a rep count. Unilateral sits in between on both axes. Deload/
-   realization drop reps and RPE together, same as before. */
+   Both reps and RPE are direct per-tier lookups. Compound accessories
+   (multi-joint, heaviest relative load) stay lowest-rep; isolation
+   (single-joint, safest to push near failure) goes highest-rep. Unilateral
+   sits in between on both axes. Deload/realization drop reps and RPE
+   together, same as before.
+   Isolation effort now RAMPS across the block instead of sitting at RPE 10
+   from day one: rpe is the cycle-0 base, rpeStep advances it per cycle, and
+   rpeCap bounds it — accumulation runs 8 → 10 over 4 cycles, intensification
+   9 → 10 over 2. Ten straight weeks of every isolation set at true failure
+   was all fatigue cost and no periodization; failure is now earned in the
+   late cycles the same way main-lift RPE climbs, which also matches the
+   double-progression load rule (see prescribe): reps climb first, effort
+   peaks late. */
 const ACC_REP_TIERS = {
-  accumulation:    { compound: { reps: 10, rpe: 7.5 }, unilateral: { reps: 12, rpe: 8 },   isolation: { reps: 12, rpe: 10 } },
-  intensification: { compound: { reps: 9,  rpe: 8 },   unilateral: { reps: 11, rpe: 8.5 }, isolation: { reps: 12, rpe: 10 } },
+  accumulation:    { compound: { reps: 10, rpe: 7.5 }, unilateral: { reps: 12, rpe: 8 },   isolation: { reps: 12, rpe: 8, rpeStep: 0.5, rpeCap: 10 } },
+  intensification: { compound: { reps: 9,  rpe: 8 },   unilateral: { reps: 11, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
   deload:          { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
   realization:     { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
 };
@@ -278,8 +344,19 @@ const BLOCKS = {
   },
 };
 
+/* Weekly TOTAL hard-set target for a landmark group this cycle (full-muscle:
+   mains + fixedSets + ramped accessories all count — see the accounting note
+   above maxDeliverable).
+   CALENDAR-TIME ASSUMPTION: "weekly" here means ONE FULL ROTATION (ROT=4
+   sessions), not 7 calendar days. Training ~4x/week the two coincide; at
+   3x/week a rotation takes ~9 days so real per-calendar-week volume runs ~25%
+   lighter than these numbers, at 5x/week ~20% heavier. ingest() tracks
+   avgSessionGapDays so a future pass can scale targets by implied frequency.
+   TODO: frequency-scale the ramp from avgSessionGapDays — deferred because it
+   interacts with the landmark auto-tune (delivered-vs-MRV comparisons) and
+   deserves its own verification pass rather than riding along here. */
 function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
-  const lm = landmarks[group]; // group is a landmark key (volumeGroup, e.g. 'back', or pattern when no override)
+  const lm = landmarks[group]; // group is a landmark key (volumeGroup, e.g. 'back')
   const cfg = BLOCKS[blockType];
   if (cfg.volLevel === "half") return Math.round(lm.mev * 0.5);
   if (cfg.volLevel === "mev") return lm.mev;
@@ -288,12 +365,33 @@ function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
   return Math.round(lm.mev + (lm.mrv - lm.mev) * frac);
 }
 
-/* The weekly target a group can actually be given: the raw ramp target clamped
-   to what per-exercise cap × training frequency can produce. Ceiling/transition
-   and auto-tune 'reached MRV' decisions use THIS, not the raw target — so the
-   engine never treats undeliverable volume as if it had been trained. */
-function deliverableTarget(group, blockType, cycleInBlock, landmarks) {
-  return Math.min(weeklyTarget(group, blockType, cycleInBlock, landmarks), maxDeliverable(group));
+/* Sets prescribed to ONE ramped accessory slot of `group` this cycle (green
+   readiness): the residual left after the fixed contribution, split across the
+   group's slots, floored at 1 (a movement-maintenance set — an exercise is
+   never dropped to zero mid-block just because mains already cover the
+   target) and capped at ACC_SET_CAP. prescribe() and the ceiling math below
+   both go through this, so what's checked is exactly what's prescribed. */
+function rampedSlotSets(group, blockType, cycleInBlock, landmarks) {
+  const wk = weeklyTarget(group, blockType, cycleInBlock, landmarks);
+  const freq = PATTERN_FREQ[group] || 1;
+  const residual = wk - fixedWeeklySets(group, blockType);
+  return Math.max(1, Math.min(ACC_SET_CAP, Math.round(residual / freq)));
+}
+
+/* Total weekly sets the schedule actually delivers for `group` this cycle
+   (green readiness): fixed contribution + every ramped slot. THIS — not the
+   raw weeklyTarget — is what ceiling checks and the landmark auto-tune compare
+   against MEV/MAV/MRV, so decisions are made about volume that was really
+   prescribed. */
+function deliveredWeekly(group, blockType, cycleInBlock, landmarks) {
+  return fixedWeeklySets(group, blockType)
+    + rampedSlotSets(group, blockType, cycleInBlock, landmarks) * (PATTERN_FREQ[group] || 0);
+}
+
+/* The volume ceiling a block can actually reach for `group`: its MRV, unless
+   the schedule saturates first. */
+function effectiveCeiling(group, blockType, landmarks) {
+  return Math.min(landmarks[group].mrv, maxDeliverable(group, blockType));
 }
 
 /* ---- automatic volume-landmark adjustment (runs at accumulation→deload) ----
@@ -313,7 +411,8 @@ const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked" (same thr
 const FATIGUE_AMBER = 0.55;  // fatigue index at/above this = "amber" (same threshold as grayFatigue below and the Status fatigue-gauge color)
 const FATIGUE_STILL_ELEVATED = 0.5; // deliberately below FATIGUE_SPIKE: deload must clear fatigue below this before routing into a near-max test (realization/intensification)
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
-/* landmark group → main lift that carries its growth signal */
+/* landmark group → main lift that carries its growth signal (quads/hamstrings/
+   chest are driven by their main lift's e1RM; other pools read accessory slopes) */
 const PATTERN_MAIN = { quads: "squat", hamstrings: "deadlift", chest: "bench" };
 /* volumeGroup → its landmark-ramped accessories (role=acc, not fixedSets), for
    the pools that have no main lift to read a slope from. Keyed the same way as
@@ -352,15 +451,32 @@ function adjustLandmarks(program) {
     const lm = landmarks[p];
     const { g, n } = patternGrowth(program, p);
     if (n < 3) return; // not enough e1RM history to act on — leave it alone
-    // did this group's ramped volume already reach MRV this block? — measured
-    // against the DELIVERABLE target, so a group whose schedule can't reach MRV
-    // never reads as "at ceiling" (which would suppress the stalled-early check).
-    const reachedCeiling = deliverableTarget(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) >= lm.mrv;
+    /* Did this group's DELIVERED volume (fixed + ramped, the sets actually
+       prescribed) reach the ceiling this block actually offers (MRV, or the
+       schedule max if that saturates first)? Compared against delivered
+       reality, a capped group correctly reads "at ceiling" when its ramp
+       saturates — so a stall there isn't misread as stalling with headroom. */
+    const capA = maxDeliverable(p, "accumulation");
+    const reachedCeiling =
+      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks)
+        >= effectiveCeiling(p, "accumulation", program.landmarks);
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
 
     let dMev = 0, dMrv = 0, signal = null;
-    if (grew && fatigueComfortable) { dMev = 1; dMrv = 1; signal = "growth strong, fatigue in check"; }
+    if (grew && fatigueComfortable) {
+      /* Raises are gated to what the schedule can deliver: drifting MRV above
+         maxDeliverable would grow a stored number no prescription can ever
+         reach (the pre-fix failure mode). MEV raises are likewise kept ≥2
+         below the (possibly capacity-frozen) MRV so they can't drag it up
+         through the range clamp below. */
+      const canRaiseMrv = lm.mrv + 1 <= capA;
+      const mrvAfter = lm.mrv + (canRaiseMrv ? 1 : 0);
+      const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capA) - 2;
+      dMev = canRaiseMev ? 1 : 0;
+      dMrv = canRaiseMrv ? 1 : 0;
+      if (dMev || dMrv) signal = canRaiseMrv ? "growth strong, fatigue in check" : "growth strong — schedule at capacity, MEV only";
+    }
     else if (stalledEarly && fatigueSpikedEarly) { dMrv = -1; signal = "stalled early with fatigue spike"; }
     if (!dMev && !dMrv) return;
 
@@ -420,6 +536,27 @@ function buildFeeler(topLoad, reps, bodyweight, unit) {
 }
 
 /* ════════════ PRESCRIPTION ════════════ */
+/* Layoff handling: after a gap past LAYOFF_THRESHOLD_DAYS the stored e1RM is
+   stale — prescribing full load off it is exactly how comeback sessions get
+   ugly. Strength is well-preserved through ~2 weeks of detraining, so under
+   the threshold nothing changes; past it, prescription loads take a gentle
+   haircut per day, capped at LAYOFF_MAX_DECAY. The stored e1rm itself is NOT
+   mutated — the first real comeback session re-anchors it through the normal
+   EWMA (an RPE≥7 session still updates, see E1RM_MIN_RPE). */
+const LAYOFF_THRESHOLD_DAYS = 14;
+const LAYOFF_DECAY_PER_DAY = 0.004; // ~0.4%/day beyond the threshold
+const LAYOFF_MAX_DECAY = 0.15;      // never cut a comeback prescription more than 15%
+/* Volume-day main-lift override (see ROTATION[3].volumeDay): the second weekly
+   squat/bench exposure runs higher-rep and RPE-capped instead of duplicating
+   the week's first heavy top set — rep bump on the block's base reps, effort
+   capped even when the block's RPE ramp has climbed past it. */
+const VOLUME_DAY_REP_BUMP = 3;
+const VOLUME_DAY_RPE_CAP = 8;
+/* Double-progression rep floor for isolation accessories: load holds while
+   reps climb from here to the tier's rep target; hitting the target earns one
+   load step and resets reps (see the isolation branch in prescribe). */
+const DP_MIN_REPS = 8;
+
 function prescribe(program, readiness) {
   const day = ROTATION[program.cycleIndex % ROT];
   const cfg = BLOCKS[program.block.type];
@@ -431,24 +568,38 @@ function prescribe(program, readiness) {
   const setMult = band === "green" ? 1 : band === "amber" ? 0.85 : 0.6;
   const rpeTop = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
 
+  const gapDays = program.lastSessionAt ? (Date.now() - program.lastSessionAt) / 86400000 : 0;
+  const layoffFactor = gapDays > LAYOFF_THRESHOLD_DAYS
+    ? 1 - Math.min(LAYOFF_MAX_DECAY, (gapDays - LAYOFF_THRESHOLD_DAYS) * LAYOFF_DECAY_PER_DAY)
+    : 1;
+
+  const inTraining = program.block.type === "accumulation" || program.block.type === "intensification";
   const barWeight = program.barWeight || 45;
   const items = day.items.map((key, idx) => {
     const L = LIB[key];
     const lift = program.lifts[key];
     const isMain = L.role === "main";
     const accTarget = ACC_REP_TIERS[program.block.type][L.repTier];
-    const reps = isMain ? (cfg.mainReps[key] || 4) : accTarget.reps;
-    const rpe = isMain ? rpeTop : clampRpe(accTarget.rpe + rpeAdj);
+    /* isolation effort ramps across the block (rpeStep/rpeCap); other tiers
+       are flat — see ACC_REP_TIERS */
+    const accRpeBase = accTarget && accTarget.rpeStep
+      ? Math.min(accTarget.rpeCap, accTarget.rpe + accTarget.rpeStep * cyc)
+      : accTarget?.rpe;
+    const volMain = isMain && day.volumeDay;
+    let reps = isMain ? (cfg.mainReps[key] || 4) + (volMain ? VOLUME_DAY_REP_BUMP : 0) : accTarget.reps;
+    const rpe = isMain
+      ? (volMain ? clampRpe(Math.min(rpeTop, VOLUME_DAY_RPE_CAP)) : rpeTop)
+      : clampRpe(accRpeBase + rpeAdj);
 
     let sets;
     if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
     else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
+      /* ramped pool accessory: prescribe the residual share (full-muscle
+         accounting — see rampedSlotSets); readiness trims but never exceeds
+         the slot's nominal share */
       const vg = L.volumeGroup; // shared landmark pool key (e.g. 'back')
-      const wk = weeklyTarget(vg, program.block.type, cyc, program.landmarks);
-      const freq = PATTERN_FREQ[vg] || 1;
-      const rawSets = Math.round((wk / freq) * setMult);
-      sets = Math.max(1, Math.min(ACC_SET_CAP, rawSets));
+      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks) * setMult));
     }
     /* Top single + backoff sets are the same prescribed `sets` total, split
        explicitly rather than left as an ambiguous "sets × reps · back-off
@@ -457,19 +608,39 @@ function prescribe(program, readiness) {
     const topSetCount = isMain ? 1 : sets;
     const backoffSetCount = isMain ? Math.max(0, sets - 1) : 0;
 
+    const effE1rm = lift.e1rm * layoffFactor;
+    const step = unit === "kg" ? 2.5 : 5;
     let topLoad, assistanceNeeded = false, repOnly = false;
     if (L.bodyweight) {
       const bw = program.bodyweight || 0;
-      const rawSys = lift.e1rm * rpePct(reps, rpe);
-      const step = unit === "kg" ? 2.5 : 5;
+      const rawSys = effE1rm * rpePct(reps, rpe);
       const addedRaw = rawSys - bw;
       if (addedRaw >= 0) topLoad = Math.round(addedRaw / step) * step;
       else if (rawSys >= bw * 0.85) { topLoad = 0; repOnly = true; }
       else { topLoad = 0; assistanceNeeded = true; }
+    } else if (L.repTier === "isolation" && lift.last?.w > 0) {
+      /* Double progression for isolation accessories: at these low absolute
+         loads one 5 lb / 2.5 kg plate step is a 15-25% jump, so re-deriving
+         load from a noisy e1RM through a %1RM multiplier whipsaws the
+         prescription. Instead: hold the last performed load and climb reps
+         toward the tier's target; hitting the target earns exactly one load
+         step and resets reps to DP_MIN_REPS. `lift.last` only records
+         accumulation/intensification sessions (see ingest), so deload
+         haircuts never become the next progression anchor. Deload/realization
+         prescribe the last working load minus ~15% at the tier's lighter
+         rep/RPE targets. First-ever session (no `last` yet) falls back to the
+         e1RM path below. */
+      if (inTraining) {
+        const anchor = Math.round((lift.last.w * layoffFactor) / step) * step;
+        if (lift.last.reps >= accTarget.reps) { topLoad = anchor + step; reps = DP_MIN_REPS; }
+        else { topLoad = anchor; reps = clampReps(Math.max(DP_MIN_REPS, lift.last.reps + 1)); }
+      } else {
+        topLoad = Math.max(step, Math.round((lift.last.w * 0.85 * layoffFactor) / step) * step);
+      }
     } else {
-      topLoad = loadFor(lift.e1rm, reps, rpe, unit);
+      topLoad = loadFor(effE1rm, reps, rpe, unit);
     }
-    const boRaw = isMain ? lift.e1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
+    const boRaw = isMain ? effE1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
     const backoffLoad = isMain ? (unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5) : topLoad;
 
     let warmup = null;
@@ -497,10 +668,17 @@ function prescribe(program, readiness) {
       topSetCount, backoffSetCount, warmup };
   });
 
-  return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, items };
+  return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, items,
+    layoff: layoffFactor < 1 ? { days: Math.round(gapDays), factor: +layoffFactor.toFixed(3) } : null };
 }
 
 /* ════════════ INGEST + STATE MACHINE ════════════ */
+/* e1RM readings below this RPE don't update trend/PR machinery: the RPE table
+   is an extrapolation below ~7, and deload runs at RPE 6 BY DESIGN — feeding
+   those readings into the EWMA/slope treats a deliberately-light week as a
+   strength change. Such sessions still count for fatigue/adherence below. */
+const E1RM_MIN_RPE = 7;
+
 function ingest(program, logs, readiness) {
   const next = structuredClone(program);
   const prs = [];
@@ -511,6 +689,24 @@ function ingest(program, logs, readiness) {
     const L = LIB[g.key];
     if (!lift || !L || !g.topReps) return;
     if (!L.bodyweight && !g.topWeight) return;
+    /* Last-performed memory for the isolation double-progression rule — only
+       from training blocks (deload/realization loads are deliberate haircuts,
+       not progression anchors). Recorded even for untouched logs: logging an
+       unedited prescription is a tacit claim the sheet was done as written,
+       which is exactly the information double progression keys on. That's
+       different from the trend gate below — an echoed log carries zero
+       information about whether the MODEL's estimate is right, so it must not
+       feed e1RM/slope, but it does tell us what load was on the bar. */
+    if (next.block.type === "accumulation" || next.block.type === "intensification")
+      lift.last = { w: g.topWeight, reps: g.topReps, rpe: g.topRpe };
+    /* Data-quality gates: a log the athlete never edited is the prescription
+       echoed back, not a measurement — echoes sit exactly on the model's own
+       prediction, flattening liftNormSlope toward zero and spuriously tripping
+       the "stalled" transition. Logs without the flag (older records, test
+       harnesses) are treated as touched. Sub-E1RM_MIN_RPE sessions are skipped
+       for the table-validity reason above. */
+    if (g.touched === false) return;
+    if (g.topRpe < E1RM_MIN_RPE) return;
     const reading = L.bodyweight
       ? e1rmFromBW(next.bodyweight, g.topWeight, g.topReps, g.topRpe)
       : e1rmFrom(g.topWeight, g.topReps, g.topRpe);
@@ -518,7 +714,9 @@ function ingest(program, logs, readiness) {
     lift.e1rmRaw = reading;
     const alpha = LIB[g.key].role === "main" ? 0.34 : 0.20;
     lift.e1rm = ewma(lift.e1rm, reading, alpha);
-    lift.hist = [...(lift.hist || []), { e: Math.round(lift.e1rm), raw: Math.round(reading) }].slice(-60);
+    /* hist entries tag the block type (`b`) so liftNormSlope can scope its
+       window to the current block and skip cross-boundary rep-range steps */
+    lift.hist = [...(lift.hist || []), { e: Math.round(lift.e1rm), raw: Math.round(reading), b: next.block.type }].slice(-60);
     /* raw-reading PR ratchet; first ingest sets the baseline silently */
     if (lift.best == null) lift.best = reading;
     else if (reading > lift.best + prEps) { prs.push(g.key); lift.best = reading; }
@@ -536,11 +734,32 @@ function ingest(program, logs, readiness) {
   next.fatigue.rpeCreep *= (1 - recoveryFactor);
   next.fatigue.readSupp *= (1 - recoveryFactor);
   next.lastSessionAt = now;
+  /* Rolling inter-session gap (days), capped so a one-off layoff doesn't wreck
+     the average. Not yet consumed by the volume math — tracked so weeklyTarget
+     can eventually frequency-scale its rotation≈week assumption (see TODO
+     there). */
+  if (daysSinceLast > 0)
+    next.avgSessionGapDays = ewma(next.avgSessionGapDays, Math.min(daysSinceLast, 14), 0.3);
 
+  /* RPE-creep reads only TOUCHED main logs: an unedited log echoes the target
+     back (miss = 0 by construction), so counting it would fake recovery. When
+     no touched mains exist this session, creep is simply left where it was —
+     no evidence either way. */
   const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
-  const rpeMiss = mainLogs.length
-    ? mainLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / mainLogs.length : 0;
-  next.fatigue.rpeCreep = ewma(next.fatigue.rpeCreep, rpeMiss, 0.4);
+  const rpeLogs = mainLogs.filter((g) => g.touched !== false);
+  if (rpeLogs.length) {
+    const rpeMiss = rpeLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / rpeLogs.length;
+    /* Backoff-set RPE drifting above its prescribed cap while the top set sits
+       on target is fatigue accumulating UNDER the top set — cheap signal the
+       UI already collects, previously discarded. Folded into the same creep
+       channel at half weight (backoff sets are submaximal; their drift is a
+       softer signal than a top-set overshoot). */
+    const boLogs = rpeLogs.filter((g) => g.backoffSetCount > 0 && g.backoffRpe != null && g.backoffRpeCap != null);
+    const backoffDrift = boLogs.length
+      ? boLogs.reduce((s, g) => s + Math.max(0, g.backoffRpe - g.backoffRpeCap), 0) / boLogs.length : 0;
+    next.fatigue.backoffDrift = ewma(next.fatigue.backoffDrift ?? 0, backoffDrift, 0.4);
+    next.fatigue.rpeCreep = ewma(next.fatigue.rpeCreep, rpeMiss + 0.5 * backoffDrift, 0.4);
+  }
   next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, 0.3);
   const missFreq = logs.length ? logs.filter((g) => g.missedSets > 0).length / logs.length : 0;
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
@@ -565,8 +784,22 @@ function ingest(program, logs, readiness) {
 
   if (endOfCycle) {
     const t = next.block.type;
-    const atVolCeiling = ["quads", "chest", "hamstrings"].some((p) =>
-      deliverableTarget(p, t, Math.max(0, cyc - 1), next.landmarks) >= next.landmarks[p].mrv);
+    /* Volume-ceiling trigger, on DELIVERED volume (the sets actually
+       prescribed — full-muscle accounting), for the three main-lift-driven
+       groups only: they carry the systemic fatigue cost, and a small group
+       (calves) saturating its slots shouldn't end accumulation for everything
+       else. When the ceiling is true MRV, reaching it fires immediately; when
+       the schedule saturates BELOW MRV (effectiveCeiling < mrv), the ceiling
+       must have been held for one extra full cycle first — saturation alone
+       isn't the same evidence of accumulated volume tolerance as reaching MRV. */
+    const justDone = Math.max(0, cyc - 1);
+    const ceilingHit = (p) => {
+      const ceil = effectiveCeiling(p, t, next.landmarks);
+      if (deliveredWeekly(p, t, justDone, next.landmarks) < ceil) return false;
+      if (ceil >= next.landmarks[p].mrv) return true;
+      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks) >= ceil;
+    };
+    const atVolCeiling = ["quads", "chest", "hamstrings"].some(ceilingHit);
     const highFatigue = fatigueIndex >= 0.7;
     const grayFatigue = fatigueIndex >= 0.55 && fatigueIndex < 0.7;
     const stalled = e1rmSlope <= 0.001;
@@ -575,7 +808,7 @@ function ingest(program, logs, readiness) {
       const enoughTime = cyc >= cfg.minCycles, maxedTime = cyc >= cfg.maxCycles;
       if (maxedTime || (enoughTime && (atVolCeiling || highFatigue || (stalled && cyc >= cfg.minCycles + 1)))) {
         transition = { to: "deload",
-          reason: maxedTime ? "max accumulation length reached" : atVolCeiling ? "weekly volume reached your MRV"
+          reason: maxedTime ? "max accumulation length reached" : atVolCeiling ? "weekly volume reached its ceiling"
             : highFatigue ? "fatigue index high" : "e1RM progress stalled",
           borderline: grayFatigue && !atVolCeiling && !maxedTime };
       }
@@ -641,7 +874,7 @@ function applyTransition(program, transition) {
     nextAfter: transition.nextAfter || (transition.to === "deload" ? next.block.nextAfter : null),
   };
   if (transition.to === "accumulation")
-    next.fatigue = { index: 0, rpeCreep: 0, readSupp: next.fatigue.readSupp, missFreq: 0, slope: 0 };
+    next.fatigue = { index: 0, rpeCreep: 0, readSupp: next.fatigue.readSupp, missFreq: 0, slope: 0, backoffDrift: 0 };
   next.blockHistory = [...(next.blockHistory || []), { type: transition.to, at: Date.now(), reason: transition.reason,
     ...(transition.forcedDespiteFatigue ? { forcedDespiteFatigue: true } : {}) }];
   return next;
@@ -676,8 +909,8 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
-    cycleIndex: 0, sessionCount: 0, lastSessionAt: null,
-    fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0 },
+    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null,
+    fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
     landmarkAdjustments: {}, landmarkLog: [],
@@ -743,8 +976,10 @@ export {
   RPE_TABLE, clampReps, clampRpe, rpePct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
-  weeklyTarget, deliverableTarget,
-  FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS,
+  weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling,
+  FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE,
+  LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
+  VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,
