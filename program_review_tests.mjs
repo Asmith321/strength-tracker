@@ -124,5 +124,44 @@ console.log("\n== Feeler sanity (root cause of the old 160-violation baseline) =
   check("normal feeler still prescribed at ~50%", f2?.sets[0].weight === 50);
 }
 
+console.log("\n== bsplit load-logging convention (per-dumbbell, matched pair) ==");
+{
+  // prescribe() must expose a generic `unilateral` flag driving App.jsx's
+  // "Weight per dumbbell" field label + "lb/dumbbell" scheme text — not a
+  // bsplit-specific UI check, so any future unilateral exercise inherits it
+  // automatically.
+  check("LIB.bsplit is repTier:unilateral", LIB.bsplit.repTier === "unilateral");
+  const p = fresh();
+  const items = prescribe(p, green).items;
+  const bs = items.find((i) => i.key === "bsplit");
+  check("prescribe() flags bsplit as unilateral:true", bs?.unilateral === true);
+  const nonUnilateral = items.filter((i) => i.key !== "bsplit");
+  check("every non-unilateral item is unilateral:false (no stray true)", nonUnilateral.every((i) => i.unilateral === false));
+
+  // Seeded first-session load must be sane relative to squat, across a range
+  // of starting strengths — not absurdly heavy (holding squat-sized
+  // dumbbells) or trivially light (an empty-hand set), under the per-
+  // dumbbell convention.
+  const strengthLevels = [
+    { squat: { weight: 135, reps: 5, rpe: 8 }, bench: { weight: 95, reps: 5, rpe: 8 }, deadlift: { weight: 185, reps: 5, rpe: 8 } }, // novice
+    { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } }, // intermediate
+    { squat: { weight: 495, reps: 5, rpe: 8 }, bench: { weight: 315, reps: 5, rpe: 8 }, deadlift: { weight: 585, reps: 5, rpe: 8 } }, // advanced
+  ];
+  for (const s of strengthLevels) {
+    const pl = freshProgram({ seeds: s, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+    const rx = prescribe(pl, green);
+    const bsplitLoad = rx.items.find((i) => i.key === "bsplit").topLoad;
+    const squatLoad = rx.items.find((i) => i.key === "squat").topLoad;
+    const ratio = bsplitLoad / squatLoad;
+    check(`squat ${s.squat.weight}: per-dumbbell bsplit load ${bsplitLoad} lb is a sane fraction of squat top load ${squatLoad} lb (ratio ${ratio.toFixed(3)}, expect 0.10-0.30)`,
+      ratio >= 0.10 && ratio <= 0.30);
+    check(`squat ${s.squat.weight}: bsplit load is not trivially light (>=10 lb)`, bsplitLoad >= 10);
+  }
+  // no-seed fallback (base=100 reference): still a plausible light starting load
+  const pNoSeed = freshProgram({ seeds: {}, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 180 });
+  const noSeedLoad = prescribe(pNoSeed, green).items.find((i) => i.key === "bsplit").topLoad;
+  check(`no-seed fallback bsplit load (${noSeedLoad} lb) is light but non-zero`, noSeedLoad >= 5 && noSeedLoad <= 30);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
