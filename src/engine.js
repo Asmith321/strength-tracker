@@ -47,6 +47,22 @@ function e1rmFrom(weight, reps, rpe) {
   if (!weight || !reps) return 0;
   return weight / rpePct(reps, rpe);
 }
+/* Applying RPE_TABLE unmodified to unilateral work (repTier:"unilateral", e.g.
+   bsplit): the underlying Helms/Zourdos data was validated on bilateral
+   barbell compounds, not stability-limited single-leg/arm movements, so this
+   is a judgment call, not a proven fit — but a defensible one, and no numeric
+   offset is applied. Reasoning: e1rmFrom/loadFor never compare this e1rm
+   against another exercise's — every read (e1rmFrom) and every prescription
+   (loadFor) round-trips through the SAME per-exercise e1rm, so the table only
+   needs to be a reasonable model of how THIS lift's own %-of-max decays across
+   reps/RPE, not an absolute cross-exercise truth. A flat offset (shifting RPE
+   or scaling load) would only be justified by evidence that the CURVE's shape
+   — not its anchor — differs for unilateral work; no such exercise-specific
+   data exists to size an offset from, and inventing one would be exactly the
+   unjustified fudge factor this was flagged against. If balance/coordination
+   fatigue causes systematic RPE under-reporting relative to true mechanical
+   effort, that shows up as a slower measured e1RM climb, which the existing
+   EWMA/slope machinery already absorbs — no separate correction needed. */
 /* ---- bodyweight lifts: e1rm tracked as SYSTEM load (bodyweight + added) ----
    added may be 0 (bodyweight-only) or negative (band/machine assistance),
    so unlike e1rmFrom() we can't gate on truthy weight — only reps + a
@@ -224,6 +240,12 @@ const LIB = {
   curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
   triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
   lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts" },
+  /* LOGGING CONVENTION for this and any future repTier:"unilateral" dumbbell
+     exercise: log the weight of ONE dumbbell, assuming a matched pair (one in
+     each hand) — the convention lifters already use mentally for split
+     squats/lunges, and the one App.jsx's "Weight per dumbbell" field label
+     (driven by prescribe()'s `unilateral` flag, not a bsplit-specific check)
+     assumes. See ACC_E1RM_MULT.bsplit for how the seed ratio maps to this. */
   bsplit:       { label: "Bulgarian Split Squat",         role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
   calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
   inclinebench: { label: "Incline Dumbbell Press (~30°)", role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest" },
@@ -712,7 +734,7 @@ function prescribe(program, readiness) {
     // isolation non-barbell accessories: no warmup (working sets are light enough)
 
     return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
-      bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
+      bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup };
   });
@@ -949,8 +971,17 @@ const ACC_E1RM_REF = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
   legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
   cablecrunch: "bench", shrug: "deadlift",
   cablefly: "bench", dbshoulderpress: "bench" };
+/* bsplit: 0.2 is a PER-DUMBBELL fraction of squat e1RM, matching the logging
+   convention on LIB.bsplit (one dumbbell, matched pair). Derived from the
+   natural estimate of TOTAL added load for a loaded single-leg squat pattern
+   (~0.4x squat e1RM combined across both hands — most of the resistance
+   already comes from bodyweight loaded through one leg) halved for one hand.
+   For a 315 lb squat e1RM (~388 lb) this seeds ~55 lb per dumbbell at cycle 0
+   — a plausible opening load, not a guess: any future unilateral dumbbell
+   exercise should size its own MULT the same way (estimate total two-hand
+   load, then halve for the per-dumbbell logging convention). */
 const ACC_E1RM_MULT = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
-  cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
+  cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.2,
   triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
   legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
   cablecrunch: 0.4, shrug: 0.35,

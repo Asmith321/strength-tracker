@@ -186,6 +186,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
   const loadScheme = it.bodyweight ? bwScheme
     : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`
+    : it.unilateral ? `${it.topLoad} lb/dumbbell`
     : `${it.topLoad} lb`;
   const setWord = (n) => (n === 1 ? "set" : "sets");
   /* Unambiguous total-set breakdown for mains: `sets` is the FULL working-set
@@ -234,7 +235,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
               )}
             </div>
           )}
-          <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
+          <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
           <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
           <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
           <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
