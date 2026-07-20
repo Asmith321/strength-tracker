@@ -86,9 +86,9 @@ function slope(ys) {
    strength change, so a window straddling the boundary reads phantom slopes.
    Entries from before `b` existed match any block, so migrated history keeps
    contributing until it naturally ages out of the window. */
-function liftNormSlope(lift) {
+function liftSlopeInfo(lift) {
   const h = lift?.hist || [];
-  if (!h.length) return 0;
+  if (!h.length) return { g: 0, n: 0 };
   let lastB = null;
   for (let i = h.length - 1; i >= 0 && !lastB; i--) lastB = h[i].b || null;
   const run = [];
@@ -99,8 +99,12 @@ function liftNormSlope(lift) {
   }
   const ys = run.slice(-8).map((p) => p.raw ?? p.e);
   const base = lift?.e1rm || 1;
-  return slope(ys) / base;
+  /* n = points the fit actually used (0 when below slope()'s 3-point minimum,
+     where the returned slope is a placeholder 0, not evidence of flatness) —
+     consumers weight by this so sparse lifts don't dilute pooled signals. */
+  return { g: slope(ys) / base, n: ys.length >= 3 ? ys.length : 0 };
 }
+function liftNormSlope(lift) { return liftSlopeInfo(lift).g; }
 
 /* ---- muscle-group landmark defaults (weekly hard sets) ----
    These baseline MEV/MAV/MRV are the INTERMEDIATE tier; beginner/advanced
@@ -127,16 +131,18 @@ const PATTERNS = {
      pulling exercise carries volumeGroup:'back' so all their volume math
      (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
   back:        { label: "Back",                mev: 10, mav: 18, mrv: 25 },
-  /* Rear/side delts and calves were previously fixedSets accessories (flat set
-     count, no landmark tracking); the volume audit found both sitting below
-     MEV. Promoted to real landmark-tracked pools. rear_delts = Reverse Pec Deck
-     + Cable Lateral Raise; calves = Standing Calf Raise (trained on two days).
-     KNOWN SIMPLIFICATION: 'rear_delts' pools rear delts (pec deck, 2 slots) and
-     side delts (lateral raise, 1 slot) under one landmark, so the side-delt
-     driver is capped near 4 sets/week regardless of what the pool total reads.
-     Splitting them means a landmark-schema migration + a second lateral slot in
-     the rotation — deliberately out of scope for this pass. */
-  rear_delts:  { label: "Rear / Side Delts",   mev: 8,  mav: 19, mrv: 26 },
+  /* Rear and side delts are SEPARATE pools (split from the old combined
+     'rear_delts' pool — different muscles with different jobs: side delts =
+     abduction, trained only by lateral raises here; rear delts = horizontal
+     extension, trained by the pec deck AND heavily as a secondary in all four
+     pulling slots). Pooling them let the fixed 2:1 pec-deck:lateral slot ratio
+     silently decide the mix. Rear delts carry a lower direct-set MEV precisely
+     because of that pulling overlap; side delts get no such indirect help
+     (especially with barbell OHP dropped from the rotation), so their direct
+     numbers sit higher. migrateProgram() resets an old combined pool to these
+     canonical values — old tuned numbers described a different quantity. */
+  rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 10, mrv: 16 },
+  side_delts:  { label: "Side Delts",          mev: 6,  mav: 12, mrv: 18 },
   calves:      { label: "Calves",              mev: 8,  mav: 14, mrv: 20 },
 };
 
@@ -189,13 +195,27 @@ function landmarksForExperience(tier) {
    Good Morning are both hip-hinge lifts loading the whole posterior chain
    (glutes/hamstrings/erectors/back). Both are assigned volumeGroup 'hamstrings'
    — consistent with the pre-existing hinge→hamstrings mapping, and it keeps
-   Deadlift as the growth driver for the hamstrings landmark (PATTERN_MAIN). */
+   Deadlift as the growth driver for the hamstrings landmark (PATTERN_MAIN).
+   Entries can exist here WITHOUT a rotation slot (ohp, legext): they keep
+   History labels and e1RM records for previously-logged sessions while
+   contributing nothing to volume math (fixedWeeklySets/PATTERN_FREQ read the
+   ROTATION, and PATTERN_RAMPED_ACC filters to rotation members).
+   TODO (macrocycle exercise variation): the rotation trains the same ~20
+   movements indefinitely. Standard practice is to swap accessory VARIANTS
+   between macrocycles (e.g. incline DB press ⇄ machine press, cable row ⇄
+   chest-supported row) while keeping the mains stable, both for connective-
+   tissue variety and to re-sensitize stimulus. The clean implementation is a
+   per-slot variant list with rotation at realization→accumulation boundaries
+   + an e1RM re-seed for the incoming variant — a full pass of its own, since
+   every variant needs seeds, rep-tier review, and hist continuity handling. */
 const LIB = {
   squat:        { label: "Back Squat",                    role: "main", barbell: true, volumeGroup: "quads" },
   bench:        { label: "Bench Press",                   role: "main", barbell: true, volumeGroup: "chest" },
   deadlift:     { label: "Deadlift",                      role: "main", barbell: true, volumeGroup: "hamstrings" },
   rdl:          { label: "Romanian Deadlift",              role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
   frontsquat:   { label: "Front Squat",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
+  /* out of rotation by athlete preference — DB Shoulder Press carries the
+     front-delt slot; kept defined for History labels/old e1RM records */
   ohp:          { label: "Overhead Press",                role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "front_delts" },
   row:          { label: "Barbell Row",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "back" },
   cablerow:     { label: "Seated Cable Row",               role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
@@ -203,10 +223,14 @@ const LIB = {
   pullup:       { label: "Pull-Up / Chin-Up",             role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
   curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
   triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
-  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
+  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts" },
+  bsplit:       { label: "Bulgarian Split Squat",         role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
   calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
   inclinebench: { label: "Incline Dumbbell Press (~30°)", role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest" },
   legcurl:      { label: "Seated Leg Curl",               role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "hamstrings" },
+  /* out of rotation — its D0 slot went to Bulgarian Split Squat (same quad
+     volume, plus unilateral stability/asymmetry work the program otherwise
+     lacked); kept defined for History labels/old e1RM records */
   legext:       { label: "Leg Extension",                 role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "quads" },
   reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
   wristcurl:    { label: "Dumbbell Wrist Curl",           role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
@@ -219,10 +243,18 @@ const LIB = {
 /* ---- rotation: which lifts each training day trains ----
    volumeDay: main lifts on this day get a differentiated second exposure —
    higher reps, RPE-capped (see VOLUME_DAY_* in prescribe) — instead of
-   repeating the week's first heavy top set. */
+   repeating the week's first heavy top set.
+   Session-balance note: the previous layout peaked Bench day at 31 sets while
+   Squat day sat at 24. Three moves rebalance late-block days to ~28/28/30/23
+   with no net weekly growth: OHP dropped (athlete preference), its D1 space
+   taken by the second lateral-raise slot (side delts lose OHP's indirect work
+   and have no other direct driver); triceps isolation moved D1→D0 (trained
+   fresh instead of pre-fatigued 8th on pressing day — triceps already get
+   heavy indirect work from every D1 press); Bulgarian Split Squat takes leg
+   extension's D0 slot as a ramped unilateral quad slot. */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "legcurl", "legext", "calfraise", "wristcurl", "cablecrunch"] },
-  { name: "Bench",            items: ["bench", "ohp", "cablerow", "triext", "pullup", "inclinebench", "reversepecdeck", "dbshoulderpress"] },
+  { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "calfraise", "triext", "wristcurl", "cablecrunch"] },
+  { name: "Bench",            items: ["bench", "cablerow", "pullup", "inclinebench", "dbshoulderpress", "reversepecdeck", "lateralraise"] },
   { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "calfraise", "reversepecdeck"] },
   { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
 ];
@@ -288,24 +320,24 @@ function maxDeliverable(group, blockType = "accumulation") {
 }
 
 /* ---- per-tier accessory rep + RPE targets ----
-   Both reps and RPE are direct per-tier lookups. Compound accessories
-   (multi-joint, heaviest relative load) stay lowest-rep; isolation
-   (single-joint, safest to push near failure) goes highest-rep. Unilateral
-   sits in between on both axes. Deload/realization drop reps and RPE
-   together, same as before.
-   Isolation effort now RAMPS across the block instead of sitting at RPE 10
-   from day one: rpe is the cycle-0 base, rpeStep advances it per cycle, and
-   rpeCap bounds it — accumulation runs 8 → 10 over 4 cycles, intensification
-   9 → 10 over 2. Ten straight weeks of every isolation set at true failure
-   was all fatigue cost and no periodization; failure is now earned in the
-   late cycles the same way main-lift RPE climbs, which also matches the
-   double-progression load rule (see prescribe): reps climb first, effort
-   peaks late. */
+   Both reps and RPE are direct per-tier lookups. Compound + unilateral
+   accessories run 6-8 reps (athlete's stated range — heavier, strength-
+   supporting loading for multi-joint work): the higher-rep end (8) in
+   accumulation, the lower end (6-7) in intensification as loads climb with
+   the block's intensity emphasis. Unilateral stays a rep above bilateral
+   compound in intensification — balance-limited movements shouldn't chase the
+   same low-rep loading. Isolation (single-joint, safest near failure) stays
+   10-12, unchanged.
+   Isolation effort RAMPS across the block instead of sitting at RPE 10 from
+   day one: rpe is the cycle-0 base, rpeStep advances it per cycle, rpeCap
+   bounds it — accumulation 8 → 10 over 4 cycles, intensification 9 → 10 over
+   2. Failure is earned in the late cycles the same way main-lift RPE climbs,
+   matching the double-progression load rule (see prescribe). */
 const ACC_REP_TIERS = {
-  accumulation:    { compound: { reps: 10, rpe: 7.5 }, unilateral: { reps: 12, rpe: 8 },   isolation: { reps: 12, rpe: 8, rpeStep: 0.5, rpeCap: 10 } },
-  intensification: { compound: { reps: 9,  rpe: 8 },   unilateral: { reps: 11, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
-  deload:          { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
-  realization:     { compound: { reps: 8,  rpe: 6 },   unilateral: { reps: 9,  rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
+  accumulation:    { compound: { reps: 8, rpe: 7.5 }, unilateral: { reps: 8, rpe: 8 },   isolation: { reps: 12, rpe: 8, rpeStep: 0.5, rpeCap: 10 } },
+  intensification: { compound: { reps: 6, rpe: 8 },   unilateral: { reps: 7, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
+  deload:          { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
+  realization:     { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
 };
 
 /* ---- block configurations ---- */
@@ -415,13 +447,16 @@ const GROWTH_POS = 0.001;    // normalized slope above this = still progressing 
    chest are driven by their main lift's e1RM; other pools read accessory slopes) */
 const PATTERN_MAIN = { quads: "squat", hamstrings: "deadlift", chest: "bench" };
 /* volumeGroup → its landmark-ramped accessories (role=acc, not fixedSets), for
-   the pools that have no main lift to read a slope from. Keyed the same way as
-   the landmark table so the auto-tune resolves each landmark key (incl. the
-   merged 'back' pool) to the right accessory slopes. */
+   the pools that have no main lift to read a slope from. Restricted to
+   exercises actually IN the rotation — LIB entries kept only for history
+   (ohp) would otherwise dilute the pooled slope with a permanently-flat,
+   never-trained lift. Keyed the same way as the landmark table so the
+   auto-tune resolves each landmark key to the right accessory slopes. */
 const PATTERN_RAMPED_ACC = (() => {
+  const inRotation = new Set(ROTATION.flatMap((d) => d.items));
   const m = {};
   Object.entries(LIB).forEach(([k, L]) => {
-    if (L.role !== "acc" || L.fixedSets) return;
+    if (L.role !== "acc" || L.fixedSets || !inRotation.has(k)) return;
     const g = L.volumeGroup;
     (m[g] = m[g] || []).push(k);
   });
@@ -430,14 +465,20 @@ const PATTERN_RAMPED_ACC = (() => {
 function patternGrowth(program, pattern) {
   const mainKey = PATTERN_MAIN[pattern];
   if (mainKey) {
-    const lift = program.lifts[mainKey];
-    return { g: liftNormSlope(lift), n: (lift?.hist || []).length };
+    const { g, n } = liftSlopeInfo(program.lifts[mainKey]);
+    return { g, n };
   }
   const accs = PATTERN_RAMPED_ACC[pattern] || [];
   if (!accs.length) return { g: 0, n: 0 };
-  const gs = accs.map((k) => liftNormSlope(program.lifts[k]));
-  const ns = accs.map((k) => (program.lifts[k]?.hist || []).length);
-  return { g: gs.reduce((a, b) => a + b, 0) / gs.length, n: Math.max(...ns) };
+  /* precision-weighted pool: each accessory's slope weighted by the points its
+     fit used, so a sparsely-logged lift contributes proportionally less signal
+     instead of dragging the average toward zero. n reports window points (the
+     evidence the slope actually rests on), not raw hist length. */
+  const infos = accs.map((k) => liftSlopeInfo(program.lifts[k]));
+  const totalN = infos.reduce((s, i) => s + i.n, 0);
+  if (!totalN) return { g: 0, n: 0 };
+  const g = infos.reduce((s, i) => s + i.g * i.n, 0) / totalN;
+  return { g, n: Math.max(...infos.map((i) => i.n)) };
 }
 function adjustLandmarks(program) {
   const cyc = program.block.cycle;
@@ -532,6 +573,11 @@ function buildFeeler(topLoad, reps, bodyweight, unit) {
   if (topLoad <= 0) return null;
   const step = unit === "kg" ? 2.5 : 5;
   const weight = Math.max(0, Math.round((topLoad * 0.5) / step) * step);
+  /* At very light working loads the 50% feeler rounds up into the working
+     weight itself — a "warmup" at >= the work weight is no warmup at all, so
+     skip it (this was the stress suite's entire long-standing
+     feeler>=topLoad violation class). */
+  if (weight >= topLoad) return null;
   return { type: "feeler", sets: [{ weight, reps }] };
 }
 
@@ -657,10 +703,13 @@ function prescribe(program, readiness) {
       const ramp = type === "full" ? FULL_RAMP : type === "short" ? SHORT_RAMP : MINIMAL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
       if (rampSets) warmup = { type, sets: rampSets };
-    } else if (!isMain && L.repTier === "compound") {
+    } else if (!isMain && (L.repTier === "compound" || L.repTier === "unilateral")) {
+      /* unilateral accessories earn a feeler too now that they run 6-8 reps —
+         at that loading a working set is no longer light enough to be its own
+         warmup, and single-leg stability benefits from a rehearsal set */
       warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit);
     }
-    // isolation/unilateral non-barbell accessories: no warmup (warmup stays null)
+    // isolation non-barbell accessories: no warmup (working sets are light enough)
 
     return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
       bodyweight: !!L.bodyweight, assistanceNeeded, repOnly,
@@ -768,8 +817,17 @@ function ingest(program, logs, readiness) {
     0.5 * Math.min(1, next.fatigue.rpeCreep / 1.5) + 0.3 * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
-  const slopes = ["squat", "bench", "deadlift"].map((k) => liftNormSlope(next.lifts[k]));
-  const e1rmSlope = slopes.reduce((a, b) => a + b, 0) / slopes.length;
+  /* Block-level strength trend: main-lift slopes, PRECISION-WEIGHTED by the
+     number of same-block readings each fit used. Deadlift logs one exposure
+     per rotation vs two each for squat/bench, so early in a block its window
+     is below slope()'s 3-point minimum and its placeholder-zero slope used to
+     count 1/3 of the average — diluting a genuine squat/bench trend toward
+     the stall threshold. Weighting by evidence lets the lifts with real data
+     carry the signal; a lift with <3 points contributes nothing rather than a
+     fake zero. */
+  const slopeInfos = ["squat", "bench", "deadlift"].map((k) => liftSlopeInfo(next.lifts[k]));
+  const slopeN = slopeInfos.reduce((s, i) => s + i.n, 0);
+  const e1rmSlope = slopeN ? slopeInfos.reduce((s, i) => s + i.g * i.n, 0) / slopeN : 0;
   next.fatigue.slope = e1rmSlope;
 
   next.sessionCount += 1;
@@ -880,6 +938,24 @@ function applyTransition(program, transition) {
   return next;
 }
 
+/* Accessory e1RM seeding ratios (fraction of a reference lift's e1RM) — used
+   by freshProgram for a new program AND by migrateProgram to backfill a lift
+   for any exercise added to the rotation after a program was saved (without
+   this, prescribe() would crash on the missing lift). Rough on purpose: the
+   EWMA re-anchors from the first real session. */
+const ACC_E1RM_REF = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
+  row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
+  triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
+  legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
+  cablecrunch: "bench", shrug: "deadlift",
+  cablefly: "bench", dbshoulderpress: "bench" };
+const ACC_E1RM_MULT = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
+  cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.4,
+  triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
+  legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
+  cablecrunch: 0.4, shrug: 0.35,
+  cablefly: 0.3, dbshoulderpress: 0.6 };
+
 function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   const landmarks = landmarksForExperience(experience);
   const lifts = {};
@@ -890,20 +966,9 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
     } else if (seeds[k]) {
       e1rm = e1rmFrom(seeds[k].weight, seeds[k].reps, seeds[k].rpe);
     } else {
-      const ref = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
-        row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench",
-        triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
-        legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
-        cablecrunch: "bench", shrug: "deadlift",
-        cablefly: "bench", dbshoulderpress: "bench" }[k];
+      const ref = ACC_E1RM_REF[k];
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
-      const mult = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
-        cablerow: 0.75, pulldown: 0.7, curl: 0.35,
-        triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
-        legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
-        cablecrunch: 0.4, shrug: 0.35,
-        cablefly: 0.3, dbshoulderpress: 0.6 }[k] || 0.6;
-      e1rm = base * mult;
+      e1rm = base * (ACC_E1RM_MULT[k] || 0.6);
     }
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
   });
@@ -948,10 +1013,35 @@ function migrateProgram(program) {
       changed = true;
     }
   }
+  /* 1.5. rear/side delt split: a program without a side_delts pool predates
+     the split, so its rear_delts numbers describe the OLD combined pool
+     (rear + side pooled). Those tuned values are a different quantity than
+     the new rear-only pool measures — carrying them over would hand the
+     rear-only pool a combined-pool MRV — so rear_delts resets to canonical
+     and step 2 below adds side_delts fresh. */
+  if (lm.rear_delts && !lm.side_delts) {
+    lm.rear_delts = { ...canonical.rear_delts };
+    delete adj.rear_delts;
+    changed = true;
+  }
   // 2. add any missing group, drop any stale group.
   for (const key of Object.keys(canonical)) if (!lm[key]) { lm[key] = canonical[key]; changed = true; }
   for (const key of Object.keys(lm)) if (!canonical[key]) { delete lm[key]; changed = true; }
-  return changed ? { ...program, landmarks: lm, landmarkAdjustments: adj } : program;
+  /* 3. backfill a lift record for any rotation member added to the program
+     AFTER this save was created (e.g. bsplit re-entering the rotation) —
+     seeded off a reference lift the program already tracks, exactly like
+     freshProgram. Without this, prescribe() dereferences a missing lift and
+     crashes on the first day containing the new exercise. */
+  const lifts = { ...(program.lifts || {}) };
+  let liftsChanged = false;
+  ROTATION.forEach((d) => d.items.forEach((k) => {
+    if (lifts[k]) return;
+    const base = lifts[ACC_E1RM_REF[k]]?.e1rm || 100;
+    const e1rm = base * (ACC_E1RM_MULT[k] || 0.6);
+    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
+    liftsChanged = true;
+  }));
+  return (changed || liftsChanged) ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts } : program;
 }
 
 /* ---- plate math (pure; the Barbell UI component in App.jsx renders these) ---- */
@@ -973,7 +1063,7 @@ function plateText(weight, bar = 45) {
 }
 
 export {
-  RPE_TABLE, clampReps, clampRpe, rpePct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope,
+  RPE_TABLE, clampReps, clampRpe, rpePct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling,
