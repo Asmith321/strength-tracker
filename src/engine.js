@@ -448,6 +448,31 @@ function effectiveCeiling(group, blockType, landmarks) {
   return Math.min(landmarks[group].mrv, maxDeliverable(group, blockType));
 }
 
+/* ---- frequency-aware volume comparison ----
+   weeklyTarget/deliveredWeekly/maxDeliverable all count sets per ONE ROTATION
+   PASS (ROT sessions). That equals a calendar week only at exactly 4x/week,
+   where a rotation takes ~7 days. At other frequencies a rotation spans a
+   different number of calendar days, so an identical per-rotation set count is
+   a different TRUE weekly training RATE — while the MRV landmark it's judged
+   against is a per-calendar-week number. weeklyFreqScale bridges the two: it's
+   how many calendar weeks one rotation actually spans, from the athlete's
+   tracked mean inter-session gap (ingest()'s avgSessionGapDays):
+     rotation length in days = ROT * avgSessionGapDays
+     weeks per rotation       = (ROT * avgSessionGapDays) / 7
+   so   sets/rotation ÷ weeklyFreqScale = sets/true-week.
+   Returns 1 with no gap history yet, so a fresh (or pre-frequency-awareness)
+   program behaves exactly as before. Clamped to [0.6, 1.8] — roughly a
+   ~6.7x/week…~2.2x/week band — so a stretch of missed or bunched sessions
+   can't distort volume decisions past sane frequencies.
+   Applied ONLY at the two delivered-vs-ceiling DECISION sites (ingest()'s
+   ceilingHit transition trigger and adjustLandmarks' reachedCeiling auto-tune
+   gate); the helpers above and every UI/display consumer stay in per-rotation
+   units (see the item-4 note on those sites). */
+function weeklyFreqScale(avgSessionGapDays) {
+  if (avgSessionGapDays == null) return 1;
+  return Math.max(0.6, Math.min(1.8, (ROT * avgSessionGapDays) / 7));
+}
+
 /* ---- automatic volume-landmark adjustment (runs at accumulation→deload) ----
    Two signals per pattern drive a gradual ±1-set drift over many blocks:
      • growth  — normalized e1RM slope of the pattern's driver: the main lift
@@ -510,19 +535,27 @@ function adjustLandmarks(program) {
   const fatigueSpikedEarly = fatigueIndex >= FATIGUE_SPIKE && cyc < maxCycles;
   const landmarks = structuredClone(program.landmarks);
   const adjustments = {};
+  /* Convert delivered volume and the schedule ceiling into a true per-calendar-
+     week rate before comparing to MRV, so this auto-tune gate and the
+     transition trigger in ingest() (ceilingHit) agree on units — computed once
+     per call since it depends only on the program's tracked frequency. */
+  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
   Object.keys(landmarks).forEach((p) => {
     const lm = landmarks[p];
     const { g, n } = patternGrowth(program, p);
     if (n < 3) return; // not enough e1RM history to act on — leave it alone
     /* Did this group's DELIVERED volume (fixed + ramped, the sets actually
        prescribed) reach the ceiling this block actually offers (MRV, or the
-       schedule max if that saturates first)? Compared against delivered
-       reality, a capped group correctly reads "at ceiling" when its ramp
-       saturates — so a stall there isn't misread as stalling with headroom. */
-    const capA = maxDeliverable(p, "accumulation");
+       schedule max if that saturates first)? Both sides converted to a true
+       weekly rate (÷ freqScale) so the comparison is against MRV as a
+       per-calendar-week number; MRV itself is already weekly and isn't scaled.
+       Compared against delivered reality, a capped group correctly reads "at
+       ceiling" when its ramp saturates — so a stall there isn't misread as
+       stalling with headroom. */
+    const capA = maxDeliverable(p, "accumulation"); // per-rotation; the MRV-raise gate below stays in these units
     const reachedCeiling =
-      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks)
-        >= effectiveCeiling(p, "accumulation", program.landmarks);
+      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) / freqScale
+        >= Math.min(lm.mrv, capA / freqScale);
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
 
@@ -928,11 +961,18 @@ function ingest(program, logs, readiness) {
        must have been held for one extra full cycle first — saturation alone
        isn't the same evidence of accumulated volume tolerance as reaching MRV. */
     const justDone = Math.max(0, cyc - 1);
+    /* Convert both delivered volume and the schedule ceiling from per-rotation-
+       pass units into a true per-CALENDAR-WEEK rate before comparing to the
+       (already per-true-week) MRV landmark: one rotation spans freqScale weeks,
+       so N sets/rotation is N/freqScale sets/week. MRV is a weekly number and
+       is NOT scaled. Same conversion the adjustLandmarks auto-tune gate uses,
+       so the two stay in agreement. Helpers keep per-rotation units (item 4). */
+    const freqScale = weeklyFreqScale(next.avgSessionGapDays);
     const ceilingHit = (p) => {
-      const ceil = effectiveCeiling(p, t, next.landmarks);
-      if (deliveredWeekly(p, t, justDone, next.landmarks) < ceil) return false;
-      if (ceil >= next.landmarks[p].mrv) return true;
-      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks) >= ceil;
+      const ceilTrue = Math.min(next.landmarks[p].mrv, maxDeliverable(p, t) / freqScale);
+      if (deliveredWeekly(p, t, justDone, next.landmarks) / freqScale < ceilTrue) return false;
+      if (ceilTrue >= next.landmarks[p].mrv) return true;
+      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks) / freqScale >= ceilTrue;
     };
     const atVolCeiling = ["quads", "chest", "hamstrings"].some(ceilingHit);
     const highFatigue = fatigueIndex >= 0.7;
@@ -1157,7 +1197,7 @@ export {
   RPE_TABLE, clampReps, clampRpe, rpePct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
-  weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling,
+  weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS,

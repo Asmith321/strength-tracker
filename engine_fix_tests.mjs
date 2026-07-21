@@ -5,9 +5,9 @@
    these verify the fixes numerically, not just that the code runs.
    ============================================================================ */
 import {
-  freshProgram, prescribe, ingest, adjustLandmarks, liftNormSlope,
-  deliveredWeekly, effectiveCeiling, maxDeliverable, landmarksForExperience,
-  BLOCKS, ROTATION, LIB, PATTERNS,
+  freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, liftNormSlope,
+  deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience,
+  BLOCKS, ROTATION, ROT, LIB, PATTERNS,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
 } from "./src/engine.js";
@@ -209,6 +209,101 @@ console.log("\n== P3: volume day is a differentiated second exposure ==");
   check(`late-block volume-day RPE capped at ${VOLUME_DAY_RPE_CAP} while heavy day climbs (${vol4.rpe} vs ${heavy4.rpe})`,
     vol4.rpe === VOLUME_DAY_RPE_CAP && heavy4.rpe > VOLUME_DAY_RPE_CAP);
   check("volume-day top load is lighter than heavy-day top load", vol4.topLoad < heavy4.topLoad);
+}
+
+console.log("\n== Frequency-aware volume comparison (weeklyFreqScale) ==");
+{
+  // unit conversion: how many calendar weeks one ROT-session rotation spans
+  check("weeklyFreqScale(null) === 1 (no gap history → behaves as before)", weeklyFreqScale(null) === 1);
+  check("weeklyFreqScale(undefined) === 1", weeklyFreqScale(undefined) === 1);
+  const s4 = weeklyFreqScale(7 / 4); // ~4x/week: gap 1.75d
+  check(`~4x/week (gap 1.75d) ≈ 1.0 (got ${s4.toFixed(3)})`, Math.abs(s4 - 1) < 1e-9);
+  const s3 = weeklyFreqScale(7 / 3); // ~3x/week: gap 2.33d, rotation spans >1 wk → schedule under-delivers vs true week
+  check(`~3x/week (gap 2.33d) > 1 (got ${s3.toFixed(3)})`, s3 > 1);
+  const s5 = weeklyFreqScale(7 / 5); // ~5x/week: gap 1.4d, rotation spans <1 wk → over-delivers vs true week
+  check(`~5x/week (gap 1.4d) < 1 (got ${s5.toFixed(3)})`, s5 < 1);
+  check("clamped to [0.6, 1.8] at extreme gaps", weeklyFreqScale(0.1) === 0.6 && weeklyFreqScale(99) === 1.8);
+  check("ROT is the rotation length used (formula = ROT*gap/7)", Math.abs(weeklyFreqScale(3.5) - Math.max(0.6, Math.min(1.8, ROT * 3.5 / 7))) < 1e-12);
+}
+
+console.log("\n== Frequency scaling changes the ceiling-transition timing ==");
+{
+  /* Longitudinal sim: a steadily-growing, green-readiness athlete whose ONLY
+     available early transition trigger is the volume ceiling (no stall, no
+     fatigue spike). Runs the SAME program at three cadences, pinning
+     avgSessionGapDays, and records the block.cycle at which the "weekly volume
+     reached its ceiling" transition fires.
+
+     NOTE ON DIRECTION — this is where the fix's real behavior differs from a
+     naive expectation. The three trigger groups (quads/chest/hamstrings) are
+     all SCHEDULE-SATURATED below their MRV (maxDeliverable < mrv), so at ≤4x/
+     week both delivered volume and the schedule cap scale by the same
+     freqScale and cancel: 3x/week fires at the SAME cyc as 4x/week, not
+     earlier. The timing shift surfaces at the HIGH-frequency end — at 5x/week,
+     maxDeliverable/freqScale rises up to MRV, flipping the group into the
+     "fire the cycle MRV is reached" regime one cycle sooner. So higher true
+     weekly frequency → ceiling reached at a LOWER cyc, which is the
+     physiologically-correct direction (more true weekly volume → hit the
+     ceiling sooner). See PR notes: the task brief's "3x lower than 4x" is
+     inverted relative to the specified formula's actual behaviour. */
+  const simSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
+  const runCadence = (gapDays) => {
+    let p = freshProgram({ seeds: simSeeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+    p.avgSessionGapDays = gapDays;
+    const green = { trainingReadiness: 85 };
+    const gains = {};
+    let fired = null, n = 0;
+    while (!fired && n < 60) {
+      const rx = prescribe(p, green);
+      const logs = rx.items.map((it) => {
+        gains[it.key] = (gains[it.key] || 0) + 2; // steady growth: never stalls
+        return { key: it.key, touched: true,
+          topWeight: it.bodyweight ? it.topLoad : it.topLoad + gains[it.key],
+          topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0,
+          backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+          backoffRpe: Math.min(it.rpe, it.backoffRpeCap), backoffRpeCap: it.backoffRpeCap };
+      });
+      CLOCK += gapDays * 86400000;
+      const r = ingest(p, logs, green);
+      r.next.avgSessionGapDays = gapDays; // keep frequency pinned for a deterministic comparison
+      if (r.transition && /ceiling/.test(r.transition.reason)) fired = { cyc: r.next.block.cycle };
+      p = r.transition ? applyTransition(r.next, r.transition) : r.next;
+      p.avgSessionGapDays = gapDays;
+      n++;
+    }
+    return fired;
+  };
+  const c5 = runCadence(7 / 5), c4 = runCadence(7 / 4), c3 = runCadence(7 / 3);
+  check(`all three cadences hit the volume ceiling (5x@cyc${c5?.cyc}, 4x@cyc${c4?.cyc}, 3x@cyc${c3?.cyc})`,
+    c5 && c4 && c3);
+  check(`5x/week reaches the ceiling at a LOWER cyc than 4x/week (${c5?.cyc} < ${c4?.cyc}) — frequency changes timing`,
+    c5.cyc < c4.cyc);
+  check(`3x/week never fires EARLIER than 4x/week (${c3?.cyc} >= ${c4?.cyc}) — lower frequency can't shorten the block`,
+    c3.cyc >= c4.cyc);
+  // control: with no frequency info the pre-fix per-rotation behaviour is preserved
+  const cNull = (() => {
+    let p = freshProgram({ seeds: simSeeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+    const green = { trainingReadiness: 85 }; const gains = {}; let fired = null, n = 0;
+    while (!fired && n < 60) {
+      const rx = prescribe(p, green);
+      const logs = rx.items.map((it) => {
+        gains[it.key] = (gains[it.key] || 0) + 2;
+        return { key: it.key, touched: true, topWeight: it.bodyweight ? it.topLoad : it.topLoad + gains[it.key],
+          topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0,
+          backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: Math.min(it.rpe, it.backoffRpeCap), backoffRpeCap: it.backoffRpeCap };
+      });
+      CLOCK += 1.75 * 86400000;
+      const r = ingest(p, logs, green);
+      r.next.avgSessionGapDays = null; // force "no history" every step
+      if (r.transition && /ceiling/.test(r.transition.reason)) fired = { cyc: r.next.block.cycle };
+      p = r.transition ? applyTransition(r.next, r.transition) : r.next;
+      p.avgSessionGapDays = null;
+      n++;
+    }
+    return fired;
+  })();
+  check(`null avgSessionGapDays reproduces 4x/week timing exactly (${cNull?.cyc} === ${c4?.cyc}) — freqScale 1 is a no-op`,
+    cNull.cyc === c4.cyc);
 }
 
 Date.now = RealNow;
