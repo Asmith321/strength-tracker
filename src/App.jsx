@@ -103,14 +103,20 @@ function Stepper({ value, set, min = 0, max = 9999, step = 1, suffix, w }) {
 
 /* Read-only landmarks view, shared by the onboarding preview and Settings.
    When `adjustments` is passed, the most-recent auto-tune delta per pattern is
-   surfaced inline (e.g. "18 ▲1") so the automation is visible, not silent. */
-function LandmarkTable({ landmarks, adjustments }) {
+   surfaced inline (e.g. "18 ▲1") so the automation is visible, not silent.
+   `stallNotices` (optional — the onboarding preview has no real program, so
+   no stalls to show) is separate from `lastCoach`: that note is overwritten
+   every session, which would hide a persistent multi-block stall notice the
+   moment the athlete logs anything else. This is observation only — it never
+   changes what's prescribed; see adjustLandmarks in src/engine.js. */
+function LandmarkTable({ landmarks, adjustments, stallNotices }) {
   const fmtDelta = (d) => (d > 0 ? `▲${d}` : `▼${Math.abs(d)}`);
   return (
     <div className="lmtable">
       <div className="lmtable-head mono"><span>MUSCLE</span><span>MEV</span><span>MAV</span><span>MRV</span></div>
       {Object.entries(landmarks).map(([p, lm]) => {
         const adj = adjustments?.[p];
+        const stall = stallNotices?.[p];
         return (
           <div key={p} className="lmrow">
             <div className="lmrow-main">
@@ -120,6 +126,11 @@ function LandmarkTable({ landmarks, adjustments }) {
               <span className="mono">{lm.mrv}{adj?.dMrv ? <em className={"lmdelta" + (adj.dMrv < 0 ? " dn" : "")}>{fmtDelta(adj.dMrv)}</em> : null}</span>
             </div>
             {adj?.signal && <div className="lmsig mono">↳ last auto-tune: {adj.signal}</div>}
+            {stall && (
+              <div className="lmstall mono">
+                <AlertTriangle size={11} /> {lm.label}: no growth for {stall.cyclesStalled} blocks despite volume at MAV — consider a manual exercise swap.
+              </div>
+            )}
           </div>
         );
       })}
@@ -675,7 +686,7 @@ export default function App() {
               <div className="est mono" style={{ padding: "0 0 14px" }}>Bodyweight drives Pull-Up / Chin-Up system-load math. Bar weight drives the plate-loading breakdown.</div>
               <div className="eyebrow">VOLUME LANDMARKS · {(EXPERIENCE_TIERS[program.experience] || EXPERIENCE_TIERS.intermediate).label.toUpperCase()} SEED</div>
               <p className="est mono" style={{ padding: "0 0 8px" }}>Weekly hard sets per pattern. Auto-tuned each block from your strength trend + fatigue — ▲/▼ marks the most recent change.</p>
-              <LandmarkTable landmarks={program.landmarks} adjustments={program.landmarkAdjustments} />
+              <LandmarkTable landmarks={program.landmarks} adjustments={program.landmarkAdjustments} stallNotices={program.stallNotices} />
               <div style={{ height: 16 }} />
               <div className="eyebrow">BACKUP & ACCOUNT</div>
               <p className="est mono" style={{ padding: "0 0 8px" }}>Supabase's free tier has no automated backups — export a copy periodically as your safety net.</p>
@@ -815,6 +826,8 @@ const CSS = `
 .lmdelta{font-style:normal;font-size:9.5px;margin-left:3px;color:#3FA85F;letter-spacing:.02em;}
 .lmdelta.dn{color:#D7443E;}
 .lmsig{font-size:10px;color:var(--dim);margin-top:5px;letter-spacing:.02em;}
+.lmstall{display:flex;align-items:flex-start;gap:6px;font-size:10.5px;color:#E8C547;margin-top:6px;letter-spacing:.02em;line-height:1.4;}
+.lmstall svg{flex-shrink:0;margin-top:1px;}
 .volrow{margin-bottom:13px;}
 .volrow-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;}
 .vol-track{position:relative;height:8px;background:var(--surface2);border-radius:4px;}

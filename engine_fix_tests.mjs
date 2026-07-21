@@ -5,10 +5,10 @@
    these verify the fixes numerically, not just that the code runs.
    ============================================================================ */
 import {
-  freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, liftNormSlope,
+  freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS,
-  E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS,
+  E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
 } from "./src/engine.js";
 
@@ -142,6 +142,107 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   const adj1 = adjustLandmarks(p1).adjustments.quads;
   check(`freqScale=1 companion case: byte-identical dMrv/after.mrv/signal (${adj1?.dMrv},${adj1?.after.mrv},"${adj1?.signal}")`,
     adj1 && adj1.dMrv === adj.dMrv && adj1.after.mrv === adj.after.mrv && adj1.signal === adj.signal);
+}
+
+console.log("\n== Stall notice: observation-only tracking (does not change MEV/MRV/exercises) ==");
+{
+  /* Shared fixture: flat-growth squat (quads driver) with n=3 evidence points
+     — enough for patternGrowth to act on, slope ~0 either way. Individual
+     tests below vary landmarks/fatigue to flip exactly one gate at a time.
+     Reference values at cyc=0 with default intermediate quads landmarks
+     (mev 8/mav 14/mrv 20): deliveredWeekly=10, effectiveCeiling=16. */
+  const flatHist = () => [300, 300, 300].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+  const risingHist = () => [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+
+  // 1. all three gates clear (volume>=mav, fatigue comfortable, not at ceiling) -> streak increments
+  {
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3; // comfortable (< FATIGUE_SPIKE 0.7)
+    p.landmarks.quads.mav = 8; // <= deliveredWeekly(10): volume gate clears
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`flat growth + volume>=mav + fatigue ok + not at ceiling -> streak increments (0 -> ${stallStreaks.quads})`,
+      stallStreaks.quads === 1);
+  }
+
+  // 2. growth resumes -> streak resets to 0 and any live notice is cleared,
+  //    regardless of how high the streak already was
+  {
+    const p = fresh();
+    p.lifts.squat.hist = risingHist(); p.lifts.squat.e1rm = 312; // real growth
+    p.fatigue.index = 0.3;
+    p.stallStreaks = { quads: 5 };
+    p.stallNotices = { quads: { cyclesStalled: 5, sinceCycle: 0 } };
+    const { stallStreaks, stallNotices } = adjustLandmarks(p);
+    check(`growth resumed -> streak resets to 0 (was 5, got ${stallStreaks.quads})`, stallStreaks.quads === 0);
+    check("growth resumed -> the live notice is cleared", !("quads" in stallNotices));
+  }
+
+  // 3. flat growth but volume BELOW mav -> streak left unchanged (no increment, no reset)
+  {
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    // default quads mav=14 > deliveredWeekly(10): volume gate fails, no landmark edit needed
+    p.stallStreaks = { quads: 2 };
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`volume below MAV -> streak unchanged (stayed 2, got ${stallStreaks.quads})`, stallStreaks.quads === 2);
+  }
+
+  // 4. flat growth, volume clears, but fatigue is SPIKED -> streak left unchanged
+  {
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.85; // >= FATIGUE_SPIKE 0.7
+    p.landmarks.quads.mav = 8; // volume gate would clear on its own
+    p.stallStreaks = { quads: 2 };
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`fatigue spiked -> streak unchanged (stayed 2, got ${stallStreaks.quads})`, stallStreaks.quads === 2);
+  }
+
+  // 5. flat growth, volume clears, fatigue ok, but the pattern IS at its own
+  //    ceiling this block -> streak left unchanged (this is a capacity
+  //    story, not evidence the exercise stopped working)
+  {
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    p.landmarks.quads.mav = 8;
+    p.landmarks.quads.mrv = 10; // effectiveCeiling(10,16)=10 <= deliveredWeekly(10): reachedCeiling=true
+    p.stallStreaks = { quads: 2 };
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`at ceiling -> streak unchanged (stayed 2, got ${stallStreaks.quads})`, stallStreaks.quads === 2);
+  }
+
+  // 6. notice appears exactly at STALL_STREAK_THRESHOLD, not before, across
+  //    consecutive all-clear calls (simulating consecutive stalled blocks) —
+  //    plus migrateProgram backfills the two new fields for an old save.
+  {
+    let p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    p.landmarks.quads.mav = 8;
+    const seenNotice = [];
+    for (let i = 0; i < STALL_STREAK_THRESHOLD; i++) {
+      const { stallStreaks, stallNotices } = adjustLandmarks(p);
+      p = { ...p, stallStreaks, stallNotices };
+      seenNotice.push("quads" in stallNotices);
+    }
+    check(`no notice before the threshold [${seenNotice.join(",")}]`,
+      seenNotice.slice(0, -1).every((v) => v === false));
+    check(`notice appears exactly at the ${STALL_STREAK_THRESHOLD}rd call`, seenNotice[seenNotice.length - 1] === true);
+    check(`notice shape: cyclesStalled=${STALL_STREAK_THRESHOLD}, sinceCycle is a number`,
+      p.stallNotices.quads.cyclesStalled === STALL_STREAK_THRESHOLD && typeof p.stallNotices.quads.sinceCycle === "number");
+
+    const old = fresh();
+    delete old.stallStreaks;
+    delete old.stallNotices;
+    const migrated = migrateProgram(old);
+    check("migrateProgram backfills stallStreaks as {} for an old-schema save",
+      migrated.stallStreaks && typeof migrated.stallStreaks === "object");
+    check("migrateProgram backfills stallNotices as {} for an old-schema save",
+      migrated.stallNotices && typeof migrated.stallNotices === "object");
+  }
 }
 
 console.log("\n== P1.1: sub-RPE-7 readings don't move e1RM/trend/PRs ==");
