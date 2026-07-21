@@ -554,11 +554,18 @@ export default function App() {
   };
 
   const handleLog = async (logs, readiness, rx) => {
-    /* Normalize the UI's internal _touched marker into an explicit `touched`
-       boolean for the engine: untouched entries are the prescription echoed
-       back, and ingest() excludes them from e1RM/trend/PR math (they still
-       count for adherence + fatigue bookkeeping). */
-    const ingestLogs = logs.map((l) => ({ ...l, touched: !!l._touched }));
+    /* Every log reaching handleLog was submitted by the athlete through the
+       Today screen — there is no auto-log/skip-and-fill path here, so
+       submission itself is sufficient evidence the session happened,
+       regardless of whether any field was edited from the prescribed
+       default. `touched` is always true for real submissions; ingest()'s
+       `g.touched === false` gate exists for a future bulk-import/migration
+       path that might construct logs without real user submission, not for
+       this one. (`_touched` is a separate, UI-local concern — see the `upd`
+       function below — tracking which fields the athlete edited so the
+       readiness-resync effect doesn't clobber their edits; it is NOT a
+       signal about whether the session itself is real data.) */
+    const ingestLogs = logs.map((l) => ({ ...l, touched: true }));
     const { next, transition, fatigueIndex, e1rmSlope, rScore, prs, rpeMiss, backoffDrift, missFreq } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
@@ -584,7 +591,7 @@ export default function App() {
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
       logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets,
-        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: !!l._touched })),
+        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: true })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
       /* Readiness instrumentation for readiness_analysis.mjs: the band/score
          and adjustment that were ACTUALLY applied to this session's
