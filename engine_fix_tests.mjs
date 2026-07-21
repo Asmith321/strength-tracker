@@ -86,6 +86,64 @@ console.log("\n== P0: auto-tune won't drift MRV past deliverable capacity ==");
   check(`signal explains the capacity gate ("${adj?.signal}")`, /capacity/.test(adj?.signal || ""));
 }
 
+console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of freqScale ==");
+{
+  /* The reachedCeiling comparison a few lines above in adjustLandmarks DOES
+     convert through weeklyFreqScale (delivered volume and the ceiling are
+     both per-calendar-week quantities being compared to MRV). But capA — the
+     cap the MRV-RAISE gate (canRaiseMrv = lm.mrv + 1 <= capA) checks against
+     — is deliberately left in raw per-rotation maxDeliverable() units,
+     un-divided by freqScale: capA is a schedule-delivery ceiling (how many
+     sets ONE rotation pass can prescribe), not a rate being compared to a
+     weekly landmark, so scaling it would be a category error, not a fix.
+
+     A test run at the SAME mrv as the freqScale=1 test above can't actually
+     distinguish "correctly ignores freqScale" from "accidentally scaled but
+     it happened not to matter here": that setup starts at mrv=20, capA=16,
+     so mrv+1=21 already exceeds capA before any scaling is even in play —
+     dividing capA by freqScale (16/1.333≈12) still blocks the raise, so a
+     buggy scaled version and the correct unscaled version give the identical
+     answer and the bug would ship invisibly. Closing that blind spot needs a
+     landmark value where scaled vs. unscaled DISAGREE: with capA=16 and
+     freqScale≈1.333, mrv=12 puts mrv+1=13, which is <= capA=16 (unscaled:
+     raise allowed) but > capA/freqScale≈12 (a scaled gate would wrongly
+     block it) — so this only passes if capA truly stays unscaled. */
+  const p = fresh();
+  p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+  p.lifts.squat.e1rm = 312;
+  p.avgSessionGapDays = 7 / 3; // ~3x/week -> freqScale = (ROT * gap) / 7 = (4 * 7/3) / 7 = 4/3 ≈ 1.333, not 1
+  const scale = weeklyFreqScale(p.avgSessionGapDays);
+  check(`sanity: this program's freqScale is not 1 (got ${scale.toFixed(3)})`, Math.abs(scale - 1) > 1e-9);
+
+  const capA = maxDeliverable("quads", "accumulation");
+  p.landmarks.quads.mrv = 12; // mrv+1=13 straddles capA (16) and capA/scale (~12) — see comment above
+  p.landmarks.quads.mav = 11; // keep mav < mrv so the range clamp doesn't interfere
+  check(`sanity: mrv+1 (13) is <= capA (${capA}) but > capA/scale (${(capA / scale).toFixed(2)}) — the two paths must disagree`,
+    13 <= capA && 13 > capA / scale);
+
+  const { adjustments } = adjustLandmarks(p);
+  const adj = adjustments.quads;
+
+  check(`quads adjustment exists at freqScale≈${scale.toFixed(3)} (growth strong)`, !!adj);
+  check(`capA used unscaled: MRV DOES raise here (${p.landmarks.quads.mrv} -> ${adj?.after.mrv}) — would be blocked if capA were divided by freqScale`,
+    adj && adj.dMrv === 1 && adj.after.mrv === 13);
+  check(`signal reflects a normal (non-capacity-gated) raise ("${adj?.signal}")`,
+    adj?.signal === "growth strong, fatigue in check");
+
+  // Companion case: identical scenario at freqScale=1 must produce the SAME
+  // capA-vs-mrv decision — proving the gate's behavior doesn't depend on
+  // freqScale at all, not just that this one non-1 value happens to work.
+  const p1 = fresh();
+  p1.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+  p1.lifts.squat.e1rm = 312;
+  p1.avgSessionGapDays = null; // freqScale = 1
+  p1.landmarks.quads.mrv = 12;
+  p1.landmarks.quads.mav = 11;
+  const adj1 = adjustLandmarks(p1).adjustments.quads;
+  check(`freqScale=1 companion case: byte-identical dMrv/after.mrv/signal (${adj1?.dMrv},${adj1?.after.mrv},"${adj1?.signal}")`,
+    adj1 && adj1.dMrv === adj.dMrv && adj1.after.mrv === adj.after.mrv && adj1.signal === adj.signal);
+}
+
 console.log("\n== P1.1: sub-RPE-7 readings don't move e1RM/trend/PRs ==");
 {
   const p = fresh();
