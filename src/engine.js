@@ -490,6 +490,15 @@ const FATIGUE_SPIKE = 0.7;   // fatigue index at/above this = "spiked" (same thr
 const FATIGUE_AMBER = 0.55;  // fatigue index at/above this = "amber" (same threshold as grayFatigue below and the Status fatigue-gauge color)
 const FATIGUE_STILL_ELEVATED = 0.5; // deliberately below FATIGUE_SPIKE: deload must clear fatigue below this before routing into a near-max test (realization/intensification)
 const GROWTH_POS = 0.001;    // normalized slope above this = still progressing (mirrors the stall check)
+/* Consecutive ACCUMULATION BLOCKS (not cycles within a block — adjustLandmarks
+   runs once per completed accumulation block) a pattern must show flat growth
+   with volume/fatigue/ceiling all ruled out before a persistent stall notice
+   surfaces. 3 blocks is ~9-18 real training sessions of genuine "volume and
+   recovery aren't the problem" evidence — enough to rule out normal block-to-
+   block noise, not so long the athlete goes months on an ineffective exercise
+   before anything says so. Observation only: see the stall-streak block in
+   adjustLandmarks — it never touches exercise selection, MEV/MRV, or e1RM. */
+const STALL_STREAK_THRESHOLD = 3;
 /* landmark group → main lift that carries its growth signal (quads/hamstrings/
    chest are driven by their main lift's e1RM; other pools read accessory slopes) */
 const PATTERN_MAIN = { quads: "squat", hamstrings: "deadlift", chest: "bench" };
@@ -540,6 +549,15 @@ function adjustLandmarks(program) {
      transition trigger in ingest() (ceilingHit) agree on units — computed once
      per call since it depends only on the program's tracked frequency. */
   const freqScale = weeklyFreqScale(program.avgSessionGapDays);
+  /* Stall-notice tracking (additive, observation-only — see STALL_STREAK_
+     THRESHOLD): reads program.landmarks (the pre-adjustment values, same
+     source reachedCeiling below already uses) and reachedCeiling itself, so
+     it can never be affected by this same call's own MEV/MRV/MAV mutations.
+     Copied forward (not mutated in place) so a program with no evidence this
+     call leaves both objects reference-equal to the input — same defensive
+     style as `landmarks`/`adjustments` above. */
+  const stallStreaks = { ...(program.stallStreaks || {}) };
+  const stallNotices = { ...(program.stallNotices || {}) };
   Object.keys(landmarks).forEach((p) => {
     const lm = landmarks[p];
     const { g, n } = patternGrowth(program, p);
@@ -558,6 +576,43 @@ function adjustLandmarks(program) {
         >= Math.min(lm.mrv, capA / freqScale);
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
+
+    /* Stall-notice streak: runs independently of the MEV/MRV raise/lower
+       decision below (including when neither fires), since this is
+       ADDITIVE tracking, not a modification of that logic.
+         - real growth resets the streak to 0 (and clears any live notice) —
+           the pattern is not stalled, unconditionally.
+         - no growth increments the streak ONLY when volume, fatigue, and
+           ceiling are all ruled out as explanations (delivered volume has
+           reached MAV, fatigue is comfortable, and the pattern hasn't
+           saturated its own ceiling this block) — i.e. every condition this
+           engine already tracks for "why might growth have stalled" says
+           it's NOT volume, NOT fatigue, and NOT a schedule ceiling.
+         - if growth is flat but any of those three gates fails (low volume,
+           high fatigue, or already at ceiling), the streak is left
+           UNCHANGED — neither incremented nor reset — matching the
+           rpeMiss/backoffDrift "null means no evidence" convention: a
+           volume/fatigue/ceiling-confounded block is not evidence the
+           EXERCISE itself has stopped working, so it shouldn't count either
+           for or against the streak. */
+    if (grew) {
+      stallStreaks[p] = 0;
+      delete stallNotices[p];
+    } else {
+      const deliveredThis = deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks);
+      const volumeAtMav = deliveredThis >= program.landmarks[p].mav;
+      if (volumeAtMav && fatigueComfortable && !reachedCeiling) {
+        stallStreaks[p] = (stallStreaks[p] || 0) + 1;
+        if (stallStreaks[p] >= STALL_STREAK_THRESHOLD) {
+          stallNotices[p] = {
+            cyclesStalled: stallStreaks[p],
+            // fixed at first detection, not overwritten on later stalled blocks
+            sinceCycle: stallNotices[p]?.sinceCycle ?? cyc,
+          };
+        }
+      }
+      // else: volume/fatigue/ceiling confounded — leave the streak untouched
+    }
 
     let dMev = 0, dMrv = 0, signal = null;
     if (grew && fatigueComfortable) {
@@ -585,7 +640,7 @@ function adjustLandmarks(program) {
     if (!rMev && !rMrv) return;
     adjustments[p] = { before, after: { mev: lm.mev, mav: lm.mav, mrv: lm.mrv }, dMev: rMev, dMrv: rMrv, signal, at: Date.now() };
   });
-  return { landmarks, adjustments };
+  return { landmarks, adjustments, stallStreaks, stallNotices };
 }
 
 /* ---- readiness score (0–1) from Garmin Training Readiness Score ----
@@ -1042,12 +1097,17 @@ function applyTransition(program, transition) {
      closes into a deload — the point where a full block's worth of growth +
      fatigue evidence is available. */
   if (program.block.type === "accumulation" && transition.to === "deload") {
-    const { landmarks, adjustments } = adjustLandmarks(program);
+    const { landmarks, adjustments, stallStreaks, stallNotices } = adjustLandmarks(program);
     if (Object.keys(adjustments).length) {
       next.landmarks = landmarks;
       next.landmarkAdjustments = { ...(program.landmarkAdjustments || {}), ...adjustments };
       next.landmarkLog = [...(program.landmarkLog || []), { at: Date.now(), cycle: program.block.cycle, changes: adjustments }].slice(-24);
     }
+    /* Stall streaks/notices update every time adjustLandmarks runs, not just
+       when adjustments is non-empty — a flat-growth block with no MEV/MRV
+       change is exactly the case the streak needs to increment on. */
+    next.stallStreaks = stallStreaks;
+    next.stallNotices = stallNotices;
   }
   next.block = {
     type: transition.to, cycle: 0, sessionsInBlock: 0,
@@ -1109,7 +1169,7 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
-    landmarkAdjustments: {}, landmarkLog: [],
+    landmarkAdjustments: {}, landmarkLog: [], stallStreaks: {}, stallNotices: {},
   };
 }
 
@@ -1172,7 +1232,13 @@ function migrateProgram(program) {
     lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
     liftsChanged = true;
   }));
-  return (changed || liftsChanged) ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts } : program;
+  // 4. backfill stall-notice tracking for a program saved before this feature existed.
+  const stallStreaks = program.stallStreaks || {};
+  const stallNotices = program.stallNotices || {};
+  const stallFieldsChanged = !program.stallStreaks || !program.stallNotices;
+  return (changed || liftsChanged || stallFieldsChanged)
+    ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts, stallStreaks, stallNotices }
+    : program;
 }
 
 /* ---- plate math (pure; the Barbell UI component in App.jsx renders these) ---- */
@@ -1198,7 +1264,7 @@ export {
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
-  FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE,
+  FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
