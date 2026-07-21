@@ -11,7 +11,7 @@ import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from 
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram,
   prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, e1rmFrom,
-  PLATES, platesForSide, plateText,
+  readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
 /* All sport-science logic (RPE/e1RM math, volume landmarks, block periodization,
@@ -559,7 +559,7 @@ export default function App() {
        back, and ingest() excludes them from e1RM/trend/PR math (they still
        count for adherence + fatigue bookkeeping). */
     const ingestLogs = logs.map((l) => ({ ...l, touched: !!l._touched }));
-    const { next, transition, fatigueIndex, e1rmSlope, rScore, prs } = ingest(program, ingestLogs, readiness);
+    const { next, transition, fatigueIndex, e1rmSlope, rScore, prs, rpeMiss, backoffDrift, missFreq } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
         lifts: logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
@@ -586,6 +586,20 @@ export default function App() {
       logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets,
         backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: !!l._touched })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
+      /* Readiness instrumentation for readiness_analysis.mjs: the band/score
+         and adjustment that were ACTUALLY applied to this session's
+         prescription (rx — captured at prescribe-time, not re-derived later,
+         so a future change to READINESS_RPE_ADJ/READINESS_SET_MULT can never
+         retroactively rewrite what an old session's numbers say happened),
+         alongside the real outcome ingest() already computed (reused, not
+         recomputed) so the two can eventually be compared per band. */
+      readinessOutcome: {
+        band: rx.band, score: +readinessScore(readiness).toFixed(3),
+        rpeAdj: rx.rpeAdj, setMult: rx.setMult,
+        rpeMiss: rpeMiss == null ? null : +rpeMiss.toFixed(3),
+        backoffDrift: backoffDrift == null ? null : +backoffDrift.toFixed(3),
+        missFreq: +missFreq.toFixed(3),
+      },
     };
     const newSessions = [...sessions, record];
     setProgram(finalProgram); setSessions(newSessions);

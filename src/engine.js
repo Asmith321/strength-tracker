@@ -555,11 +555,54 @@ function adjustLandmarks(program) {
   return { landmarks, adjustments };
 }
 
-/* ---- readiness score (0–1) from Garmin Training Readiness Score ---- */
+/* ---- readiness score (0–1) from Garmin Training Readiness Score ----
+   Readiness plays TWO SEPARATE, deliberately-decoupled roles in this engine,
+   on two different timescales — see engine-research-summary.md's Readiness
+   section for the full rationale (bounded/secondary role; HRV-guided-
+   programming evidence doesn't hold up for resistance training the way it
+   does for endurance work, so readiness never drives the program alone):
+     1. SAME-DAY prescription softening (READINESS_RPE_ADJ / READINESS_SET_MULT
+        below, consumed in prescribe()) — reads TODAY's live readiness object
+        directly via readinessScore/readinessBand every session. Nothing here
+        is smoothed or remembered across sessions.
+     2. MULTI-SESSION fatigue-index contribution (READINESS_FATIGUE_WEIGHT,
+        consumed in ingest()) — an EWMA of (1 - today's score) accumulated
+        into fatigue.readSupp, which drives deload timing alongside RPE-creep
+        and missed-set frequency.
+   These are structurally independent code paths (prescribe() never reads
+   fatigue.readSupp; ingest()'s EWMA never reads rpeAdj/setMult) and each has
+   its OWN named constant below specifically so they can be tuned separately
+   once real session history exists — a run of noisy wearable readings should
+   be able to soften isolated sessions without necessarily nudging the
+   athlete toward an early deload for reasons that were never about
+   accumulated training stress, and vice versa. See
+   engine-research-summary.md for why these particular numbers were chosen
+   as a first-pass parameterization and how to validate/adjust them against
+   this athlete's own logged data (readiness_analysis.mjs). */
 function readinessScore(r) {
   return Math.max(0, Math.min(1, r.trainingReadiness / 100));
 }
 const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red");
+/* Same-day-only: how much a non-green readiness band softens TODAY's rpe
+   target / set count. Read exclusively by prescribe(); never accumulated,
+   never touches fatigue.index. */
+const READINESS_RPE_ADJ = { green: 0, amber: -0.5, red: -1.5 };
+const READINESS_SET_MULT = { green: 1, amber: 0.85, red: 0.6 };
+/* Multi-session-only: how much weight the EWMA'd readiness-deficit signal
+   (fatigue.readSupp) carries in the composite fatigue index — see ingest().
+   Read exclusively there; never consulted by prescribe()'s same-day path.
+   The EWMA's own smoothing rate (readSuppAlpha, also in ingest()) is a
+   SEPARATE constant from this weight even though both happen to be 0.3 today
+   — one governs how fast the multi-session signal moves, the other how much
+   it counts once it has; conflating them into one shared literal is exactly
+   the kind of accidental coupling this split is meant to prevent. */
+const READINESS_FATIGUE_WEIGHT = 0.3;
+/* How fast fatigue.readSupp itself moves toward each new daily reading —
+   distinct from READINESS_FATIGUE_WEIGHT (how much the resulting value counts
+   once smoothed). Both are 0.3 today; that's a coincidence of the initial
+   parameterization; keeping them as two constants means changing one can
+   never accidentally change the other. */
+const READSUPP_EWMA_ALPHA = 0.3;
 
 /* ---- warmup ramp ----
    Structured percentage ramps are restricted to barbell:true exercises only
@@ -632,8 +675,8 @@ function prescribe(program, readiness) {
   const unit = program.unit;
 
   const band = readiness ? readinessBand(readinessScore(readiness)) : "green";
-  const rpeAdj = band === "green" ? 0 : band === "amber" ? -0.5 : -1.5;
-  const setMult = band === "green" ? 1 : band === "amber" ? 0.85 : 0.6;
+  const rpeAdj = READINESS_RPE_ADJ[band];
+  const setMult = READINESS_SET_MULT[band];
   const rpeTop = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
 
   const gapDays = program.lastSessionAt ? (Date.now() - program.lastSessionAt) / 86400000 : 0;
@@ -739,7 +782,7 @@ function prescribe(program, readiness) {
       topSetCount, backoffSetCount, warmup };
   });
 
-  return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, items,
+  return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, rpeAdj, setMult, items,
     layoff: layoffFactor < 1 ? { days: Math.round(gapDays), factor: +layoffFactor.toFixed(3) } : null };
 }
 
@@ -815,28 +858,40 @@ function ingest(program, logs, readiness) {
   /* RPE-creep reads only TOUCHED main logs: an unedited log echoes the target
      back (miss = 0 by construction), so counting it would fake recovery. When
      no touched mains exist this session, creep is simply left where it was —
-     no evidence either way. */
+     no evidence either way.
+     rpeMiss/backoffDrift are hoisted (not just used inline) so this session's
+     RAW outcome numbers — not the multi-session EWMA'd fatigue fields they
+     also feed — can be returned below for readiness_analysis.mjs to compare
+     against the readiness band/adjustment that was actually applied. null
+     means "no evidence this session", not "zero overshoot". */
   const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
   const rpeLogs = mainLogs.filter((g) => g.touched !== false);
+  let rpeMiss = null, backoffDrift = null;
   if (rpeLogs.length) {
-    const rpeMiss = rpeLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / rpeLogs.length;
+    rpeMiss = rpeLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / rpeLogs.length;
     /* Backoff-set RPE drifting above its prescribed cap while the top set sits
        on target is fatigue accumulating UNDER the top set — cheap signal the
        UI already collects, previously discarded. Folded into the same creep
        channel at half weight (backoff sets are submaximal; their drift is a
        softer signal than a top-set overshoot). */
     const boLogs = rpeLogs.filter((g) => g.backoffSetCount > 0 && g.backoffRpe != null && g.backoffRpeCap != null);
-    const backoffDrift = boLogs.length
+    backoffDrift = boLogs.length
       ? boLogs.reduce((s, g) => s + Math.max(0, g.backoffRpe - g.backoffRpeCap), 0) / boLogs.length : 0;
     next.fatigue.backoffDrift = ewma(next.fatigue.backoffDrift ?? 0, backoffDrift, 0.4);
     next.fatigue.rpeCreep = ewma(next.fatigue.rpeCreep, rpeMiss + 0.5 * backoffDrift, 0.4);
   }
-  next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, 0.3);
+  /* Multi-session readiness-deficit accumulator (fatigue.readSupp): a
+     SEPARATE EWMA smoothing rate (READSUPP_EWMA_ALPHA) from
+     READINESS_FATIGUE_WEIGHT below, on purpose — see the decoupling note
+     above readinessScore(). This is the ONLY place readiness feeds the
+     multi-session fatigue index; prescribe()'s same-day softening
+     (READINESS_RPE_ADJ/READINESS_SET_MULT) never reads this field. */
+  next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, READSUPP_EWMA_ALPHA);
   const missFreq = logs.length ? logs.filter((g) => g.missedSets > 0).length / logs.length : 0;
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
 
   const fatigueIndex = Math.max(0, Math.min(1,
-    0.5 * Math.min(1, next.fatigue.rpeCreep / 1.5) + 0.3 * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
+    0.5 * Math.min(1, next.fatigue.rpeCreep / 1.5) + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
   /* Block-level strength trend: main-lift slopes, PRECISION-WEIGHTED by the
@@ -921,7 +976,12 @@ function ingest(program, logs, readiness) {
     }
   }
 
-  return { next, transition, fatigueIndex, rScore, e1rmSlope, prs };
+  /* rpeMiss/backoffDrift/missFreq are THIS SESSION's raw outcome numbers
+     (before EWMA smoothing) — returned so callers can record what actually
+     happened alongside the readiness band/adjustment that was applied, for
+     later retrospective comparison (see readiness_analysis.mjs). Distinct
+     from fatigueIndex/e1rmSlope, which are the smoothed multi-session state. */
+  return { next, transition, fatigueIndex, rScore, e1rmSlope, prs, rpeMiss, backoffDrift, missFreq };
 }
 
 /* ---- post-session rest advisory ----
@@ -1102,7 +1162,7 @@ export {
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
-  readinessScore, readinessBand,
+  readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,
   prescribe, ingest, restDaysForFatigue, applyTransition, freshProgram,
   LANDMARK_RENAME, migrateProgram,
