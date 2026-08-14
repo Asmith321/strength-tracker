@@ -10,7 +10,7 @@ import {
 import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from "./storage.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram,
-  prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, e1rmFrom,
+  prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -363,8 +363,18 @@ function Today({ program, sessions, onLog }) {
 
 function Status({ program }) {
   const cyc = program.block.cycle;
+  /* Same frequency correction prescribe() applies to the ramped-accessory
+     set count (see weeklyTarget in engine.js): deliveredWeekly is called
+     WITH freqScale so it reflects what's really being prescribed at this
+     athlete's actual training frequency, then divided by freqScale again to
+     land back on a true-weekly RATE — comparable to the weekly-unit MEV/
+     MAV/MRV landmarks this row is judged against. Without both steps this
+     display would silently drift from what prescribe() actually hands the
+     athlete the moment avgSessionGapDays departs from ~4x/week. */
+  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
-    const wk = deliveredWeekly(p, program.block.type, cyc, program.landmarks); // full-muscle sets actually prescribed (mains + fixedSets + ramped)
+    // true-weekly full-muscle sets actually prescribed (mains + fixedSets + ramped); rounded since freqScale != 1 makes this a rate, not a literal per-rotation count
+    const wk = Math.round(deliveredWeekly(p, program.block.type, cyc, program.landmarks, freqScale) / freqScale);
     const deliverable = maxDeliverable(p, program.block.type);
     const capped = deliverable < lm.mrv;      // group structurally can't reach its own MRV at current exercise counts
     const pctMrv = Math.min(1, wk / lm.mrv);
