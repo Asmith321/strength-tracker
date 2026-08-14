@@ -402,21 +402,30 @@ const BLOCKS = {
    mains + fixedSets + ramped accessories all count — see the accounting note
    above maxDeliverable).
    CALENDAR-TIME ASSUMPTION: "weekly" here means ONE FULL ROTATION (ROT=4
-   sessions), not 7 calendar days. Training ~4x/week the two coincide; at
-   3x/week a rotation takes ~9 days so real per-calendar-week volume runs ~25%
-   lighter than these numbers, at 5x/week ~20% heavier. ingest() tracks
-   avgSessionGapDays so a future pass can scale targets by implied frequency.
-   TODO: frequency-scale the ramp from avgSessionGapDays — deferred because it
-   interacts with the landmark auto-tune (delivered-vs-MRV comparisons) and
-   deserves its own verification pass rather than riding along here. */
-function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
+   sessions), not 7 calendar days. `freqScale` (from weeklyFreqScale(), see
+   above maxDeliverable) is how many calendar weeks one rotation pass actually
+   spans at the athlete's real training frequency — pass it and this scales
+   its result accordingly (`freqScale` defaults to 1 = the old 4x/week-only
+   assumption, for any caller that hasn't been updated to pass it).
+   At 3x/week (freqScale>1) one rotation takes LONGER than a week, so it needs
+   MORE than the raw weekly figure to average out to the correct true-weekly
+   rate once delivered over that longer span; at 5x/week (freqScale<1) the
+   opposite. This return value stays a PER-ROTATION figure — scaled UP or DOWN
+   so that dividing it back by the same freqScale reconstructs the true weekly
+   rate (see rampedSlotSets/deliveredWeekly below, and the ceilingHit/
+   adjustLandmarks call sites that already do that division). */
+function weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
   const lm = landmarks[group]; // group is a landmark key (volumeGroup, e.g. 'back')
   const cfg = BLOCKS[blockType];
-  if (cfg.volLevel === "half") return Math.round(lm.mev * 0.5);
-  if (cfg.volLevel === "mev") return lm.mev;
-  const span = Math.max(1, cfg.maxCycles - 1);
-  const frac = Math.min(1, cycleInBlock / span);
-  return Math.round(lm.mev + (lm.mrv - lm.mev) * frac);
+  let target;
+  if (cfg.volLevel === "half") target = lm.mev * 0.5;
+  else if (cfg.volLevel === "mev") target = lm.mev;
+  else {
+    const span = Math.max(1, cfg.maxCycles - 1);
+    const frac = Math.min(1, cycleInBlock / span);
+    target = lm.mev + (lm.mrv - lm.mev) * frac;
+  }
+  return Math.round(target * freqScale);
 }
 
 /* Sets prescribed to ONE ramped accessory slot of `group` this cycle (green
@@ -424,9 +433,16 @@ function weeklyTarget(group, blockType, cycleInBlock, landmarks) {
    group's slots, floored at 1 (a movement-maintenance set — an exercise is
    never dropped to zero mid-block just because mains already cover the
    target) and capped at ACC_SET_CAP. prescribe() and the ceiling math below
-   both go through this, so what's checked is exactly what's prescribed. */
-function rampedSlotSets(group, blockType, cycleInBlock, landmarks) {
-  const wk = weeklyTarget(group, blockType, cycleInBlock, landmarks);
+   both go through this, so what's checked is exactly what's prescribed.
+   `freqScale` passes straight through to weeklyTarget; fixedWeeklySets and
+   ACC_SET_CAP are deliberately NOT scaled — fixedWeeklySets is a real
+   structural count (mains + fixedSets accessories) delivered exactly once per
+   rotation regardless of how long that rotation takes in calendar time, and
+   ACC_SET_CAP is a per-exposure schedule-capacity ceiling, not a rate. Only
+   the ramped-accessory residual — the part of the volume math that actually
+   flexes to hit a weekly landmark target — gets frequency-compensated. */
+function rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
+  const wk = weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale);
   const freq = PATTERN_FREQ[group] || 1;
   const residual = wk - fixedWeeklySets(group, blockType);
   return Math.max(1, Math.min(ACC_SET_CAP, Math.round(residual / freq)));
@@ -436,10 +452,15 @@ function rampedSlotSets(group, blockType, cycleInBlock, landmarks) {
    (green readiness): fixed contribution + every ramped slot. THIS — not the
    raw weeklyTarget — is what ceiling checks and the landmark auto-tune compare
    against MEV/MAV/MRV, so decisions are made about volume that was really
-   prescribed. */
-function deliveredWeekly(group, blockType, cycleInBlock, landmarks) {
+   prescribed. `freqScale` passes through to rampedSlotSets; callers that need
+   a true-weekly RATE (comparable to a weekly-unit landmark) still divide this
+   PER-ROTATION return value by the same freqScale externally, exactly as
+   before — passing freqScale in here makes that division land on volume that
+   ACTUALLY reflects what prescribe() delivers at the real frequency, instead
+   of silently drifting stale once prescribe() itself became frequency-aware. */
+function deliveredWeekly(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
   return fixedWeeklySets(group, blockType)
-    + rampedSlotSets(group, blockType, cycleInBlock, landmarks) * (PATTERN_FREQ[group] || 0);
+    + rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale) * (PATTERN_FREQ[group] || 0);
 }
 
 /* The volume ceiling a block can actually reach for `group`: its MRV, unless
@@ -464,10 +485,30 @@ function effectiveCeiling(group, blockType, landmarks) {
    program behaves exactly as before. Clamped to [0.6, 1.8] — roughly a
    ~6.7x/week…~2.2x/week band — so a stretch of missed or bunched sessions
    can't distort volume decisions past sane frequencies.
-   Applied ONLY at the two delivered-vs-ceiling DECISION sites (ingest()'s
-   ceilingHit transition trigger and adjustLandmarks' reachedCeiling auto-tune
-   gate); the helpers above and every UI/display consumer stay in per-rotation
-   units (see the item-4 note on those sites). */
+   Two, complementary uses, composed at every consumer that needs a true-
+   weekly RATE:
+     1. weeklyTarget/rampedSlotSets/deliveredWeekly take freqScale as an
+        optional param (default 1) and MULTIPLY their MEV/MRV-anchored
+        interpolation by it — a rotation spanning MORE than a week needs
+        MORE sets scheduled into it to average out to the same true-weekly
+        rate once delivered. This is what makes prescribe()'s actual
+        per-session accessory set count frequency-aware.
+     2. Callers that need a true-weekly rate for comparison against a
+        weekly-unit landmark (ingest()'s ceilingHit, adjustLandmarks'
+        reachedCeiling) pass the SAME freqScale into deliveredWeekly (so it
+        accurately reflects what's actually being delivered) and then
+        DIVIDE that result by freqScale again externally, exactly as before
+        — converting the now-accurate per-rotation total back into a rate.
+        This is not double-counting: (1) makes the per-rotation number
+        accurate, (2) converts that accurate number into a comparable rate;
+        composed on an unclamped value they're inverse operations and net
+        out near the frequency-independent target, which is the intended
+        behavior — clamps (ACC_SET_CAP, MRV itself) are exactly where they
+        stop netting out, because those are real capacity/landmark limits,
+        not something frequency should be able to launder away.
+   fixedWeeklySets, maxDeliverable/capA/ACC_SET_CAP are NEVER scaled by
+   freqScale anywhere — real structural per-rotation counts and schedule-
+   capacity ceilings, not rates (see the comment above weeklyTarget). */
 function weeklyFreqScale(avgSessionGapDays) {
   if (avgSessionGapDays == null) return 1;
   return Math.max(0.6, Math.min(1.8, (ROT * avgSessionGapDays) / 7));
@@ -567,12 +608,19 @@ function adjustLandmarks(program) {
        schedule max if that saturates first)? Both sides converted to a true
        weekly rate (÷ freqScale) so the comparison is against MRV as a
        per-calendar-week number; MRV itself is already weekly and isn't scaled.
+       deliveredWeekly is called WITH freqScale (see the comment above
+       weeklyFreqScale's definition — prescribe() now delivers a frequency-
+       corrected ramped-accessory count, so this must match to stay accurate)
+       and the /freqScale below still converts that real per-rotation total
+       into a rate; not double-scaling, two different jobs. capA (used
+       unscaled a few lines below for the MRV-raise gate) only gets its OWN
+       /freqScale here, same as before.
        Compared against delivered reality, a capped group correctly reads "at
        ceiling" when its ramp saturates — so a stall there isn't misread as
        stalling with headroom. */
     const capA = maxDeliverable(p, "accumulation"); // per-rotation; the MRV-raise gate below stays in these units
     const reachedCeiling =
-      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks) / freqScale
+      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale
         >= Math.min(lm.mrv, capA / freqScale);
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
@@ -599,6 +647,16 @@ function adjustLandmarks(program) {
       stallStreaks[p] = 0;
       delete stallNotices[p];
     } else {
+      /* Deliberately called WITHOUT freqScale (stays at the default of 1,
+         i.e. unchanged from how the stall-streak feature originally shipped):
+         this compares a per-rotation count directly against `mav` with no
+         /freqScale conversion at all, which is a separate, pre-existing
+         units simplification in the stall-streak logic (unlike
+         reachedCeiling two lines above, which does the full round-trip).
+         Out of scope here — this pass only threads freqScale through the
+         actual prescription math and the two spots that were already
+         freqScale-aware; changing stall-streak's threshold behavior is a
+         distinct decision this task didn't ask for. */
       const deliveredThis = deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks);
       const volumeAtMav = deliveredThis >= program.landmarks[p].mav;
       if (volumeAtMav && fatigueComfortable && !reachedCeiling) {
@@ -761,6 +819,11 @@ function prescribe(program, readiness) {
   const cfg = BLOCKS[program.block.type];
   const cyc = program.block.cycle;
   const unit = program.unit;
+  /* Frequency-corrects the ramped-accessory set count below (see the comment
+     above weeklyTarget) — this is the actual per-session prescription math,
+     not just a decision-site comparison; without it prescribe() keeps
+     assuming exactly 4x/week regardless of the athlete's real cadence. */
+  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
 
   const band = readiness ? readinessBand(readinessScore(readiness)) : "green";
   const rpeAdj = READINESS_RPE_ADJ[band];
@@ -795,10 +858,10 @@ function prescribe(program, readiness) {
     else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
       /* ramped pool accessory: prescribe the residual share (full-muscle
-         accounting — see rampedSlotSets); readiness trims but never exceeds
-         the slot's nominal share */
+         accounting, frequency-corrected — see rampedSlotSets); readiness
+         trims but never exceeds the slot's nominal share */
       const vg = L.volumeGroup; // shared landmark pool key (e.g. 'back')
-      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks) * setMult));
+      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale) * setMult));
     }
     /* Top single + backoff sets are the same prescribed `sets` total, split
        explicitly rather than left as an ambiguous "sets × reps · back-off
@@ -937,9 +1000,14 @@ function ingest(program, logs, readiness) {
   next.fatigue.readSupp *= (1 - recoveryFactor);
   next.lastSessionAt = now;
   /* Rolling inter-session gap (days), capped so a one-off layoff doesn't wreck
-     the average. Not yet consumed by the volume math — tracked so weeklyTarget
-     can eventually frequency-scale its rotation≈week assumption (see TODO
-     there). */
+     the average. Consumed by weeklyFreqScale() to frequency-scale the
+     rotation≈week assumption: prescribe()'s ramped-accessory dosing,
+     ingest()'s ceilingHit transition trigger, and adjustLandmarks' reachedCeiling
+     auto-tune gate all read weeklyFreqScale(avgSessionGapDays) — see the
+     comment above weeklyTarget() for what's scaled (the ramped-accessory
+     residual, wherever it's computed) vs. deliberately not (fixedWeeklySets,
+     ACC_SET_CAP/maxDeliverable — real structural counts and schedule-capacity
+     ceilings, not rates). */
   if (daysSinceLast > 0)
     next.avgSessionGapDays = ewma(next.avgSessionGapDays, Math.min(daysSinceLast, 14), 0.3);
 
@@ -1021,13 +1089,22 @@ function ingest(program, logs, readiness) {
        (already per-true-week) MRV landmark: one rotation spans freqScale weeks,
        so N sets/rotation is N/freqScale sets/week. MRV is a weekly number and
        is NOT scaled. Same conversion the adjustLandmarks auto-tune gate uses,
-       so the two stay in agreement. Helpers keep per-rotation units (item 4). */
+       so the two stay in agreement.
+       deliveredWeekly is called WITH freqScale (prescribe() now delivers a
+       frequency-corrected ramped-accessory count — see weeklyTarget — so this
+       must reflect the SAME correction to accurately measure what was really
+       prescribed) and the external /freqScale below still runs on top of that,
+       converting the now-accurate per-rotation total into a rate. That is not
+       double-scaling: passing freqScale in makes the number real; dividing by
+       it afterward makes it comparable to a weekly landmark — two different
+       jobs. maxDeliverable/capA is a schedule-capacity ceiling and stays
+       unscaled internally (only its own /freqScale below, unchanged). */
     const freqScale = weeklyFreqScale(next.avgSessionGapDays);
     const ceilingHit = (p) => {
       const ceilTrue = Math.min(next.landmarks[p].mrv, maxDeliverable(p, t) / freqScale);
-      if (deliveredWeekly(p, t, justDone, next.landmarks) / freqScale < ceilTrue) return false;
+      if (deliveredWeekly(p, t, justDone, next.landmarks, freqScale) / freqScale < ceilTrue) return false;
       if (ceilTrue >= next.landmarks[p].mrv) return true;
-      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks) / freqScale >= ceilTrue;
+      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks, freqScale) / freqScale >= ceilTrue;
     };
     const atVolCeiling = ["quads", "chest", "hamstrings"].some(ceilingHit);
     const highFatigue = fatigueIndex >= 0.7;

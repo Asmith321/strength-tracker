@@ -385,34 +385,38 @@ console.log("\n== Frequency-aware volume comparison (weeklyFreqScale) ==");
   check("ROT is the rotation length used (formula = ROT*gap/7)", Math.abs(weeklyFreqScale(3.5) - Math.max(0.6, Math.min(1.8, ROT * 3.5 / 7))) < 1e-12);
 }
 
-console.log("\n== Frequency scaling changes the ceiling-transition timing ==");
+console.log("\n== Frequency scaling changes real prescribe()-driven transition timing ==");
 {
   /* Longitudinal sim: a steadily-growing, green-readiness athlete whose ONLY
      available early transition trigger is the volume ceiling (no stall, no
-     fatigue spike). Runs the SAME program at three cadences, pinning
-     avgSessionGapDays, and records the block.cycle at which the "weekly volume
-     reached its ceiling" transition fires.
+     fatigue spike). Runs the SAME program at several cadences, pinning
+     avgSessionGapDays, and records the block.cycle + reason at which the
+     block transitions.
 
-     NOTE ON DIRECTION — this is where the fix's real behavior differs from a
-     naive expectation. The three trigger groups (quads/chest/hamstrings) are
-     all SCHEDULE-SATURATED below their MRV (maxDeliverable < mrv), so at ≤4x/
-     week both delivered volume and the schedule cap scale by the same
-     freqScale and cancel: 3x/week fires at the SAME cyc as 4x/week, not
-     earlier. The timing shift surfaces at the HIGH-frequency end — at 5x/week,
-     maxDeliverable/freqScale rises up to MRV, flipping the group into the
-     "fire the cycle MRV is reached" regime one cycle sooner. So higher true
-     weekly frequency → ceiling reached at a LOWER cyc, which is the
-     physiologically-correct direction (more true weekly volume → hit the
-     ceiling sooner). See PR notes: the task brief's "3x lower than 4x" is
-     inverted relative to the specified formula's actual behaviour. */
+     REVISED FOR THE PRESCRIBE()-LEVEL FREQUENCY FIX. This test previously
+     asserted "5x/week fires the ceiling at a lower cyc than 4x, 3x never
+     fires earlier than 4x" — that held when only the DECISION sites
+     (ceilingHit/adjustLandmarks) were frequency-aware and prescribe() itself
+     still assumed 4x/week. Now that prescribe() ALSO scales the ramped-
+     accessory count it actually delivers, the real relationship is the
+     OPPOSITE and is driven by a different mechanism: ACC_SET_CAP (the per-
+     exposure schedule-capacity ceiling) is deliberately NOT frequency-scaled
+     (see the comment above weeklyTarget) — so at LOW frequency, prescribe()
+     needs MORE sets per rotation to hit the same true-weekly rate, and hits
+     that unscaled per-exposure cap SOONER in raw cycle terms. A schedule that
+     saturates sooner reaches its (now lower, capacity-limited) true ceiling
+     sooner too. Verified empirically across a sweep of frequencies
+     (4.1x-4.5x tie with 4x itself; 3.8x/3.5x/3.2x file downward with
+     frequency exactly like 3x below; the relationship is monotonic and
+     reproduces on repeat runs) before picking these three concrete points. */
   const simSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
-  const runCadence = (gapDays) => {
+  const runCadence = (gapDays, pinnedGap = gapDays) => {
     let p = freshProgram({ seeds: simSeeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
-    p.avgSessionGapDays = gapDays;
+    p.avgSessionGapDays = pinnedGap;
     const green = { trainingReadiness: 85 };
     const gains = {};
     let fired = null, n = 0;
-    while (!fired && n < 60) {
+    while (!fired && n < 80) {
       const rx = prescribe(p, green);
       const logs = rx.items.map((it) => {
         gains[it.key] = (gains[it.key] || 0) + 2; // steady growth: never stalls
@@ -424,45 +428,74 @@ console.log("\n== Frequency scaling changes the ceiling-transition timing ==");
       });
       CLOCK += gapDays * 86400000;
       const r = ingest(p, logs, green);
-      r.next.avgSessionGapDays = gapDays; // keep frequency pinned for a deterministic comparison
-      if (r.transition && /ceiling/.test(r.transition.reason)) fired = { cyc: r.next.block.cycle };
+      r.next.avgSessionGapDays = pinnedGap; // keep frequency pinned for a deterministic comparison
+      if (r.transition) fired = { cyc: r.next.block.cycle, reason: r.transition.reason };
       p = r.transition ? applyTransition(r.next, r.transition) : r.next;
-      p.avgSessionGapDays = gapDays;
+      p.avgSessionGapDays = pinnedGap;
       n++;
     }
     return fired;
   };
-  const c5 = runCadence(7 / 5), c4 = runCadence(7 / 4), c3 = runCadence(7 / 3);
-  check(`all three cadences hit the volume ceiling (5x@cyc${c5?.cyc}, 4x@cyc${c4?.cyc}, 3x@cyc${c3?.cyc})`,
-    c5 && c4 && c3);
-  check(`5x/week reaches the ceiling at a LOWER cyc than 4x/week (${c5?.cyc} < ${c4?.cyc}) — frequency changes timing`,
-    c5.cyc < c4.cyc);
-  check(`3x/week never fires EARLIER than 4x/week (${c3?.cyc} >= ${c4?.cyc}) — lower frequency can't shorten the block`,
-    c3.cyc >= c4.cyc);
-  // control: with no frequency info the pre-fix per-rotation behaviour is preserved
-  const cNull = (() => {
-    let p = freshProgram({ seeds: simSeeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
-    const green = { trainingReadiness: 85 }; const gains = {}; let fired = null, n = 0;
-    while (!fired && n < 60) {
+  const c3 = runCadence(7 / 3), c4 = runCadence(7 / 4), c5 = runCadence(7 / 5);
+  check(`3x/week: reaches the volume ceiling at cyc ${c3?.cyc} ("${c3?.reason}")`,
+    c3?.cyc === 3 && /ceiling/.test(c3?.reason || ""));
+  check(`4x/week (freqScale=1): unchanged baseline — reaches the ceiling at cyc ${c4?.cyc} ("${c4?.reason}")`,
+    c4?.cyc === 5 && /ceiling/.test(c4?.reason || ""));
+  check(`3x/week reaches the ceiling STRICTLY SOONER than 4x/week (${c3?.cyc} < ${c4?.cyc}) — lower frequency saturates the unscaled per-exposure cap sooner`,
+    c3.cyc < c4.cyc);
+  check(`5x/week: the fix changes real behavior here too — no longer reaches "ceiling" within the block at all (cyc ${c5?.cyc}, "${c5?.reason}"); runs the full accumulation length instead`,
+    c5?.cyc === 6 && /max accumulation length/.test(c5?.reason || ""));
+
+  // control: with no frequency info the OLD (pre-fix, per-rotation-only) behavior is preserved
+  const cNull = runCadence(1.75, null);
+  check(`null avgSessionGapDays reproduces 4x/week timing exactly (${cNull?.cyc} === ${c4?.cyc}, "${cNull?.reason}") — freqScale 1 is a no-op`,
+    cNull?.cyc === c4.cyc && cNull?.reason === c4.reason);
+}
+
+console.log("\n== CRITICAL VERIFICATION 1: prescribe() output is byte-identical at freqScale=1 ==");
+{
+  /* Snapshot captured from the PRE-this-fix engine (git-stashed and run
+     directly) across 3 cycles × all 4 rotation days — every exercise's sets/
+     topLoad/reps. If threading freqScale through weeklyTarget/rampedSlotSets
+     changed anything at the default freqScale=1 (no avgSessionGapDays), a
+     single value in this table would differ. */
+  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":0,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":3,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":0,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":3,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":0,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
+  const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
+  let idx = 0, allMatch = true;
+  for (const cyc of [0, 2, 5]) {
+    for (let d = 0; d < 4; d++) {
+      const p = freshProgram({ seeds: snapSeeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+      p.cycleIndex = d;
+      p.block = { type: "accumulation", cycle: cyc, sessionsInBlock: cyc * 4, nextAfter: null };
       const rx = prescribe(p, green);
-      const logs = rx.items.map((it) => {
-        gains[it.key] = (gains[it.key] || 0) + 2;
-        return { key: it.key, touched: true, topWeight: it.bodyweight ? it.topLoad : it.topLoad + gains[it.key],
-          topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0,
-          backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: Math.min(it.rpe, it.backoffRpeCap), backoffRpeCap: it.backoffRpeCap };
-      });
-      CLOCK += 1.75 * 86400000;
-      const r = ingest(p, logs, green);
-      r.next.avgSessionGapDays = null; // force "no history" every step
-      if (r.transition && /ceiling/.test(r.transition.reason)) fired = { cyc: r.next.block.cycle };
-      p = r.transition ? applyTransition(r.next, r.transition) : r.next;
-      p.avgSessionGapDays = null;
-      n++;
+      const actual = rx.items.map((i) => ({ key: i.key, sets: i.sets, topLoad: i.topLoad, reps: i.reps }));
+      if (JSON.stringify(actual) !== JSON.stringify(EXPECTED[idx])) allMatch = false;
+      idx++;
     }
-    return fired;
-  })();
-  check(`null avgSessionGapDays reproduces 4x/week timing exactly (${cNull?.cyc} === ${c4?.cyc}) — freqScale 1 is a no-op`,
-    cNull.cyc === c4.cyc);
+  }
+  check(`prescribe() sets/topLoad/reps byte-identical to pre-fix across ${idx} full sessions (3 cycles × 4 rotation days)`, allMatch);
+}
+
+console.log("\n== CRITICAL VERIFICATION 2: deliveredWeekly does not double-apply freqScale ==");
+{
+  // reuse the p1 setup style already used in the freqScale MRV-gate test above: 7/3 days -> freqScale ≈ 1.333
+  const lm = landmarksForExperience("intermediate");
+  const fs = weeklyFreqScale(7 / 3);
+  check(`sanity: freqScale is not 1 (got ${fs.toFixed(3)})`, Math.abs(fs - 1) > 1e-9);
+  for (const g of ["quads", "chest", "hamstrings", "back", "calves"]) {
+    for (const cyc of [0, 2, 5]) {
+      const referenceUnscaled = deliveredWeekly(g, "accumulation", cyc, lm); // freqScale defaults to 1 == frequency-independent reference
+      const scaledThenDivided = deliveredWeekly(g, "accumulation", cyc, lm, fs) / fs;
+      // Not asserting exact equality: clamps (ACC_SET_CAP, the floor of 1) mean the
+      // round-trip isn't a pure no-op — that's correct, capacity limits shouldn't
+      // net out. Asserting it lands CLOSE, not scaled by an extra factor of fs or
+      // 1/fs (which double-scaling would produce and which would be a large, easily
+      // distinguished miss, not a small clamp-driven rounding difference).
+      const ratio = scaledThenDivided / referenceUnscaled;
+      check(`${g} cyc${cyc}: deliveredWeekly(fs)/fs (${scaledThenDivided.toFixed(2)}) stays near the frequency-independent reference (${referenceUnscaled}), ratio=${ratio.toFixed(3)} (not ×${fs.toFixed(2)} or ×${(1 / fs).toFixed(2)} off)`,
+        ratio > 0.7 && ratio < 1.3);
+    }
+  }
 }
 
 Date.now = RealNow;
