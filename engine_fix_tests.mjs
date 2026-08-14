@@ -245,6 +245,71 @@ console.log("\n== Stall notice: observation-only tracking (does not change MEV/M
   }
 }
 
+console.log("\n== Stall notice: volumeAtMav now uses the same call-then-divide freqScale pattern as reachedCeiling ==");
+{
+  /* Fixes a units inconsistency this section's own PR left behind:
+     reachedCeiling (a few lines above volumeAtMav inside adjustLandmarks)
+     already called deliveredWeekly WITH freqScale and divided the result by
+     freqScale, so it reflects what prescribe() actually delivers at the
+     athlete's real frequency. volumeAtMav still called deliveredWeekly
+     unscaled — a hypothetical "at 4x/week" number — which was defensible
+     only while prescribe() itself ignored frequency, and stopped being once
+     prescribe() started scaling its own output. */
+
+  // 1. freqScale=1 (no avgSessionGapDays): byte-identical to before this fix —
+  //    dividing by 1 is a no-op, but assert it explicitly rather than assume.
+  {
+    const flatHist = () => [300, 300, 300].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    p.landmarks.quads.mav = 8; // volume gate clears (deliveredWeekly(quads, cyc0)=10 >= 8)
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`freqScale=1: volumeAtMav gate still clears and increments the streak exactly as before (0 -> ${stallStreaks.quads})`,
+      stallStreaks.quads === 1);
+  }
+
+  // 2. freqScale != 1: a case constructed so the OLD unscaled deliveredThis
+  //    and the NEW scaled-then-divided deliveredThis land on OPPOSITE sides
+  //    of mav — not a case where both happen to agree. At freqScale=1.333
+  //    (7/3-day gap), quads at cyc0: old(unscaled)=10, new(scaled/freqScale)=9.
+  //    mav=9.5 sits strictly between them.
+  {
+    const fs733 = weeklyFreqScale(7 / 3);
+    const oldVal = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"));
+    const newVal = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"), fs733) / fs733;
+    check(`sanity: old (${oldVal}) and new (${newVal.toFixed(2)}) deliveredThis land on opposite sides of mav=9.5`,
+      oldVal >= 9.5 && newVal < 9.5);
+
+    const flatHist = () => [300, 300, 300].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    p.avgSessionGapDays = 7 / 3; // freqScale ≈ 1.333
+    p.landmarks.quads.mav = 9.5; // between old=10 and new=9.00
+    const { stallStreaks } = adjustLandmarks(p);
+    // "leave the streak unchanged" from a never-touched {} means the key stays
+    // absent (undefined), not 0 — asserting undefined here, not === 0, is the
+    // correct expectation for the "gate fails, no evidence" path.
+    check(`freqScale≈1.333: volumeAtMav correctly reads FALSE (streak never incremented, stays undefined/absent) — the OLD unscaled code would have wrongly cleared this gate`,
+      stallStreaks.quads === undefined);
+  }
+
+  // 3. the flip side: a threshold where BOTH old and new agree the gate
+  //    clears, confirming the fix isn't just suppressing every increment.
+  {
+    const flatHist = () => [300, 300, 300].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+    const p = fresh();
+    p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
+    p.fatigue.index = 0.3;
+    p.avgSessionGapDays = 7 / 3;
+    p.landmarks.quads.mav = 8; // below both old(10) and new(9.00) -> both agree it clears
+    const { stallStreaks } = adjustLandmarks(p);
+    check(`freqScale≈1.333, low mav: gate still correctly clears and increments (0 -> ${stallStreaks.quads})`,
+      stallStreaks.quads === 1);
+  }
+}
+
 console.log("\n== P1.1: sub-RPE-7 readings don't move e1RM/trend/PRs ==");
 {
   const p = fresh();

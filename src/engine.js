@@ -647,17 +647,19 @@ function adjustLandmarks(program) {
       stallStreaks[p] = 0;
       delete stallNotices[p];
     } else {
-      /* Deliberately called WITHOUT freqScale (stays at the default of 1,
-         i.e. unchanged from how the stall-streak feature originally shipped):
-         this compares a per-rotation count directly against `mav` with no
-         /freqScale conversion at all, which is a separate, pre-existing
-         units simplification in the stall-streak logic (unlike
-         reachedCeiling two lines above, which does the full round-trip).
-         Out of scope here — this pass only threads freqScale through the
-         actual prescription math and the two spots that were already
-         freqScale-aware; changing stall-streak's threshold behavior is a
-         distinct decision this task didn't ask for. */
-      const deliveredThis = deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks);
+      /* Same call-then-divide pattern as reachedCeiling a few lines above:
+         deliveredWeekly is called WITH freqScale so it reflects what
+         prescribe() is actually delivering at the athlete's real frequency
+         (not a hypothetical "at 4x/week" figure), then divided by freqScale
+         to convert that into a true-weekly rate comparable to `mav`.
+         This call site used to be left deliberately unscaled — that was
+         defensible ONLY while prescribe() itself ignored frequency, since an
+         unscaled deliveredWeekly then matched reality at any cadence. Now
+         that prescribe() scales its own ramped-accessory output, leaving
+         this one call unscaled would silently reintroduce the same staleness
+         bug the rest of that fix closed everywhere else — comparing a
+         hypothetical per-rotation count against a true-weekly landmark. */
+      const deliveredThis = deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale;
       const volumeAtMav = deliveredThis >= program.landmarks[p].mav;
       if (volumeAtMav && fatigueComfortable && !reachedCeiling) {
         stallStreaks[p] = (stallStreaks[p] || 0) + 1;
