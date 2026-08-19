@@ -95,9 +95,16 @@ function checkPrescribe(rep, session, program, rx) {
     if (bad(it.reps) || it.reps <= 0) rep.add("reps-bad", session, `${tag} reps=${it.reps}`);
     // rpe sane (clampRpe keeps 6..10)
     if (bad(it.rpe) || it.rpe < 6 || it.rpe > 10) rep.add("rpe-out-of-range", session, `${tag} rpe=${it.rpe}`);
-    // topLoad finite and non-negative (0 allowed for pullup repOnly/assist)
-    if (bad(it.topLoad) || it.topLoad < 0) rep.add("topLoad-bad", session, `${tag} topLoad=${it.topLoad}`);
-    if (bad(it.backoffLoad) || it.backoffLoad < 0) rep.add("backoffLoad-bad", session, `${tag} backoffLoad=${it.backoffLoad}`);
+    /* topLoad finite, and non-negative EXCEPT on an assisted bodyweight lift,
+       where a negative value is the prescribed assistance magnitude (see the
+       bodyweight branch in prescribe — it used to discard this and emit 0). */
+    if (bad(it.topLoad) || (it.topLoad < 0 && !(it.bodyweight && it.assistanceNeeded)))
+      rep.add("topLoad-bad", session, `${tag} topLoad=${it.topLoad}`);
+    /* Same exemption as topLoad: for accessories backoffLoad is just an echo of
+       topLoad (a distinct backoff weight is only meaningful for mains), so an
+       assisted bodyweight lift carries the same negative assistance magnitude. */
+    if (bad(it.backoffLoad) || (it.backoffLoad < 0 && !(it.bodyweight && it.assistanceNeeded)))
+      rep.add("backoffLoad-bad", session, `${tag} backoffLoad=${it.backoffLoad}`);
     // topSetCount + backoffSetCount === sets (for mains)
     if (it.isMain && it.topSetCount + it.backoffSetCount !== it.sets)
       rep.add("set-split-mismatch", session, `${tag} top=${it.topSetCount} backoff=${it.backoffSetCount} sets=${it.sets}`);
@@ -110,10 +117,22 @@ function checkPrescribe(rep, session, program, rx) {
 
     // pull-up / bodyweight fallback must be coherent
     if (it.bodyweight) {
-      const states = [it.assistanceNeeded, it.repOnly, it.topLoad > 0].filter(Boolean).length;
-      if ((it.assistanceNeeded || it.repOnly) && it.topLoad !== 0)
-        rep.add("pullup-fallback-load", session, `${tag} assist=${it.assistanceNeeded} repOnly=${it.repOnly} topLoad=${it.topLoad}`);
+      // repOnly means literally unloaded; assisted means a negative (assistance) load
+      if (it.repOnly && it.topLoad !== 0)
+        rep.add("pullup-fallback-load", session, `${tag} repOnly topLoad=${it.topLoad}`);
+      if (it.assistanceNeeded && !(it.topLoad < 0))
+        rep.add("pullup-assist-no-magnitude", session, `${tag} assist topLoad=${it.topLoad} (expected negative)`);
       if (bad(it.topLoad)) rep.add("pullup-nan", session, `${tag} topLoad=${it.topLoad}`);
+      /* PLAUSIBILITY (the gap that let the unguarded-bodyweight bug through):
+         system load = bodyweight + added can never exceed the lift's own e1RM,
+         since load = e1rm * pct and pct <= 1. Without this, a lost/zeroed
+         bodyweight prescribed the entire system load as ADDED belt weight and
+         nothing caught it — every existing check passed. */
+      const bw = program.bodyweight;
+      const e1 = program.lifts[it.key]?.e1rm;
+      if (bw > 0 && e1 > 0 && it.topLoad > 0 && bw + it.topLoad > e1 * 1.001)
+        rep.add("pullup-system-load-exceeds-e1rm", session,
+          `${tag} bw=${bw} + added=${it.topLoad} = ${bw + it.topLoad} > e1rm=${e1.toFixed(1)}`);
     }
 
     // warmup ramp checks
@@ -121,9 +140,15 @@ function checkPrescribe(rep, session, program, rx) {
       const w = it.warmup;
       const wsets = w.sets || [];
       if (w.type !== "feeler") {
-        // ramp array length must always match its own type label
-        if (wsets.length !== RAMP_LEN[w.type])
-          rep.add("ramp-length-mismatch", session, `${tag} type=${w.type} len=${wsets.length} expected=${RAMP_LEN[w.type]}`);
+        /* Ramp array must never be LONGER than its tier, and must be non-empty.
+           It may be SHORTER: steps are floored at the bar and deduped, so a
+           light top set legitimately yields fewer loadable steps than the tier
+           nominally specifies (see buildRamp). Relabelling to a shorter tier
+           isn't possible in general — collapsing can leave 3 steps and the
+           tiers are 4/2/1 — so the label describes the tier the %1RM earned
+           and the array describes what's actually loadable. */
+        if (wsets.length === 0 || wsets.length > RAMP_LEN[w.type])
+          rep.add("ramp-length-mismatch", session, `${tag} type=${w.type} len=${wsets.length} allowed=1..${RAMP_LEN[w.type]}`);
         // tier must be driven by %1RM (not block phase): either the base tier
         // for this top set's %1RM, or exactly one step down from it (the
         // earlier-primed reduction) — never higher, never more than one step lower
@@ -144,6 +169,12 @@ function checkPrescribe(rep, session, program, rx) {
         if (s.weight < prev) rep.add("warmup-not-ascending", session, `${tag} ${prev}->${s.weight}`);
         prev = s.weight;
         if (it.barbell && !plateValid(s.weight, bar)) rep.add("bad-plate-warmup", session, `${tag} warm=${s.weight} bar=${bar}`);
+        /* A barbell warmup step below the bar isn't loadable. plateValid alone
+           can't catch this — it short-circuits `weight <= bar` to true as
+           "empty bar", so sub-bar steps passed silently before buildRamp
+           started flooring them. */
+        if (it.barbell && s.weight < bar)
+          rep.add("warmup-below-bar", session, `${tag} warm=${s.weight} bar=${bar} top=${it.topLoad}`);
       }
     }
   }
