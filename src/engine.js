@@ -47,22 +47,51 @@ function e1rmFrom(weight, reps, rpe) {
   if (!weight || !reps) return 0;
   return weight / rpePct(reps, rpe);
 }
+/* Inverse of rpePct: the rep count at which a set of `targetPct` of e1RM sits
+   at the given RPE. Used by the bodyweight branch in prescribe() when the
+   athlete's own bodyweight is HEAVIER than the prescribed system load — the
+   load can't be dialled down on a pull-up, so the REP target moves instead
+   (fewer reps at the same intended effort) rather than silently leaving the
+   athlete a set that's harder than the RPE it's labelled with.
+   Scans the table's integer rep rows rather than interpolating: RPE_TABLE is
+   the empirical ground truth and its rows are integers, so the nearest row is
+   the answer. Ties resolve to the lower rep count (the harder-per-rep read),
+   which is the conservative direction for a set that's already heavier than
+   asked for. */
+function repsAtPct(targetPct, rpe) {
+  let best = 1, bestErr = Infinity;
+  for (let r = 1; r <= 12; r++) {
+    const err = Math.abs(rpePct(r, rpe) - targetPct);
+    if (err < bestErr) { bestErr = err; best = r; }
+  }
+  return best;
+}
 /* Applying RPE_TABLE unmodified to unilateral work (repTier:"unilateral", e.g.
    bsplit): the underlying Helms/Zourdos data was validated on bilateral
    barbell compounds, not stability-limited single-leg/arm movements, so this
    is a judgment call, not a proven fit — but a defensible one, and no numeric
-   offset is applied. Reasoning: e1rmFrom/loadFor never compare this e1rm
-   against another exercise's — every read (e1rmFrom) and every prescription
-   (loadFor) round-trips through the SAME per-exercise e1rm, so the table only
-   needs to be a reasonable model of how THIS lift's own %-of-max decays across
-   reps/RPE, not an absolute cross-exercise truth. A flat offset (shifting RPE
-   or scaling load) would only be justified by evidence that the CURVE's shape
-   — not its anchor — differs for unilateral work; no such exercise-specific
-   data exists to size an offset from, and inventing one would be exactly the
-   unjustified fudge factor this was flagged against. If balance/coordination
-   fatigue causes systematic RPE under-reporting relative to true mechanical
-   effort, that shows up as a slower measured e1RM climb, which the existing
-   EWMA/slope machinery already absorbs — no separate correction needed. */
+   offset is applied.
+   THE DEFENSE IS THE NARROW REP WINDOW, not a round-trip argument. An earlier
+   version of this comment argued that because every read (e1rmFrom) and every
+   prescription (loadFor) passes through the SAME per-exercise e1rm, the table
+   only has to model this lift's own decay curve. That defends against error in
+   the curve's ANCHOR, which does cancel — but not against error in its SHAPE,
+   which doesn't, and shape error is real: reps-achievable-at-a-given-%1RM
+   varies substantially by exercise (Hoeger 1990; Richens & Cleather 2014).
+   What actually makes it safe here is that bsplit is prescribed at 7-8 reps in
+   every block (ACC_REP_TIERS.unilateral), traversing ~2 percentage points of
+   the curve where the full 1-12 table spans ~30. Over a two-rep window, even a
+   materially wrong curve shape moves the prescription very little. If a
+   unilateral movement ever gets a wide rep range, this reasoning expires.
+   Note also the direction of the residual risk, which the earlier comment had
+   BACKWARDS. e1rmFrom = weight / rpePct(reps, rpe), and rpePct falls as RPE
+   falls, so dividing by a smaller number yields a LARGER e1rm: systematically
+   under-reported RPE INFLATES the stored e1RM (100 lb x 8 reads as 127 lb at
+   RPE 10 but 141 lb at RPE 7), and loadFor then prescribes correspondingly
+   HEAVIER — a self-reinforcing drift upward, not the "slower measured e1RM
+   climb" the old comment claimed the EWMA would absorb. The EWMA smooths noise
+   around the trend; it does not correct a biased trend. This is a live reason
+   to keep the rep window narrow, not a solved problem. */
 /* ---- bodyweight lifts: e1rm tracked as SYSTEM load (bodyweight + added) ----
    added may be 0 (bodyweight-only) or negative (band/machine assistance),
    so unlike e1rmFrom() we can't gate on truthy weight — only reps + a
@@ -277,7 +306,13 @@ const LIB = {
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "calfraise", "triext", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "cablerow", "pullup", "inclinebench", "dbshoulderpress", "reversepecdeck", "lateralraise"] },
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "curl", "row", "shrug", "calfraise", "reversepecdeck"] },
+  /* row precedes curl: Barbell Row is a compound pull that depends on the
+     elbow flexors as a link in the chain, so training biceps to a hard RPE
+     first pre-fatigues the weakest link and caps the row before the lats do.
+     Order within a day is otherwise free — the only index-sensitive logic is
+     the earlierPrimed warmup check, which keys off volumeGroup (pulldown
+     already primes 'back' ahead of row either way). */
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "row", "curl", "shrug", "calfraise", "reversepecdeck"] },
   { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
 ];
 const ROT = ROTATION.length;
@@ -775,11 +810,30 @@ const READSUPP_EWMA_ALPHA = 0.3;
 const FULL_RAMP = [{ pct: 0.40, reps: 5 }, { pct: 0.60, reps: 3 }, { pct: 0.75, reps: 2 }, { pct: 0.90, reps: 1 }];
 const SHORT_RAMP = [{ pct: 0.60, reps: 3 }, { pct: 0.90, reps: 1 }];
 const MINIMAL_RAMP = [{ pct: 0.60, reps: 3 }];
+/* Build the loadable warmup steps for a barbell top set.
+   Each step is floored at barWeight: a percentage step below an empty bar is
+   not a weight the athlete can actually load (FULL_RAMP's 40% step on a 95 lb
+   top set is 40 lb — lighter than the 45 lb bar holding it). Steps that floor
+   into the same weight collapse to one, and any step that reaches the work
+   weight is dropped, so the returned array can be SHORTER than the tier's
+   nominal length. The `type` label continues to describe the tier the top
+   set's %1RM earned (see the prescribe() warmup block); the array describes
+   what is actually loadable underneath it. The stress suite's ramp-length
+   invariant is correspondingly "never longer than the tier", not "exactly the
+   tier" — deliberately chosen over relabelling, because collapsing can leave
+   3 steps and there is no 3-step tier to relabel to. */
 function buildRamp(topLoad, ramp, unit, barWeight) {
   // top-set weight itself too light for a ramp to make sense (e.g. deload-week loads near an empty bar)
   if (topLoad <= barWeight) return null;
   const step = unit === "kg" ? 2.5 : 5;
-  return ramp.map(({ pct, reps }) => ({ weight: Math.max(0, Math.round((topLoad * pct) / step) * step), reps }));
+  const out = [];
+  for (const { pct, reps } of ramp) {
+    const weight = Math.max(barWeight, Math.round((topLoad * pct) / step) * step);
+    if (weight >= topLoad) continue;                                  // collapsed into the work set
+    if (out.length && out[out.length - 1].weight === weight) continue; // collapsed into the previous step
+    out.push({ weight, reps });
+  }
+  return out.length ? out : null;
 }
 function buildFeeler(topLoad, reps, bodyweight, unit) {
   if (bodyweight) return { type: "feeler", sets: [], note: "single light set — reduced range/tempo" };
@@ -815,6 +869,18 @@ const VOLUME_DAY_RPE_CAP = 8;
    reps climb from here to the tier's rep target; hitting the target earns one
    load step and resets reps (see the isolation branch in prescribe). */
 const DP_MIN_REPS = 8;
+/* Bodyweight-lift fallback threshold (see the L.bodyweight branch in
+   prescribe). When the prescribed system load lands BELOW the athlete's
+   bodyweight, unloaded reps are still the sensible prescription as long as
+   the gap is small; below this fraction of bodyweight the set is genuinely
+   too heavy and assistance is prescribed instead. 0.85 means "within ~15% of
+   bodyweight" — a band narrow enough that the rep adjustment in that branch
+   (repsAtPct) stays inside the RPE table's validated 1-12 rep range rather
+   than running off its end, and wide enough that a lifter hovering near their
+   first unassisted rep isn't flipped onto a band for a rounding wobble. Not a
+   research-derived constant: it is a UI/prescription-shape choice about when
+   to switch modes, and the mode it selects is always the safer of the two. */
+const BW_REPONLY_FLOOR = 0.85;
 
 function prescribe(program, readiness) {
   const day = ROTATION[program.cycleIndex % ROT];
@@ -874,14 +940,43 @@ function prescribe(program, readiness) {
 
     const effE1rm = lift.e1rm * layoffFactor;
     const step = unit === "kg" ? 2.5 : 5;
-    let topLoad, assistanceNeeded = false, repOnly = false;
+    let topLoad, assistanceNeeded = false, repOnly = false, bodyweightUnknown = false;
     if (L.bodyweight) {
-      const bw = program.bodyweight || 0;
-      const rawSys = effE1rm * rpePct(reps, rpe);
-      const addedRaw = rawSys - bw;
-      if (addedRaw >= 0) topLoad = Math.round(addedRaw / step) * step;
-      else if (rawSys >= bw * 0.85) { topLoad = 0; repOnly = true; }
-      else { topLoad = 0; assistanceNeeded = true; }
+      const bw = program.bodyweight;
+      if (!(bw > 0)) {
+        /* Bodyweight missing, zero, or non-finite (unset at onboarding, or lost
+           in a migration). EVERY branch below is a comparison against bw, so
+           without it there is no honest answer — and the dangerous failure is
+           silent: `bw || 0` used to make addedRaw = rawSys - 0 >= 0, taking the
+           "added weight" path and prescribing the athlete's ENTIRE system load
+           as weight hung off a belt (a 240 lb pull-up e1RM prescribing +175 lb).
+           Fall back to the one prescription that needs no bodyweight to be
+           safe: unloaded reps. */
+        topLoad = 0; repOnly = true; bodyweightUnknown = true;
+      } else {
+        const rawSys = effE1rm * rpePct(reps, rpe);
+        const addedRaw = rawSys - bw;
+        if (addedRaw >= 0) topLoad = Math.round(addedRaw / step) * step;
+        else if (rawSys >= bw * BW_REPONLY_FLOOR) {
+          /* Bodyweight alone is HEAVIER than the prescribed system load, but
+             close enough that unloaded reps are still the right call. The load
+             can't be reduced, so hold the RPE and move the REP target instead:
+             solve for the rep count at which bodyweight sits at this RPE.
+             Leaving `reps` untouched (the old behaviour) shipped a set up to
+             1/BW_REPONLY_FLOOR ≈ 18% heavier than the RPE label claimed. */
+          topLoad = 0; repOnly = true;
+          reps = clampReps(repsAtPct(bw / effE1rm, rpe));
+        }
+        else {
+          /* Bodyweight alone is too heavy — the athlete needs assistance. The
+             magnitude is already known here (bw - rawSys), so emit it as a
+             NEGATIVE added load rather than discarding it and leaving the
+             athlete to guess a band. This is the same sign convention
+             e1rmFromBW() already documents and accepts on the ingest side. */
+          topLoad = -(Math.round((bw - rawSys) / step) * step);
+          assistanceNeeded = true;
+        }
+      }
     } else if (L.repTier === "isolation" && lift.last?.w > 0) {
       /* Double progression for isolation accessories: at these low absolute
          loads one 5 lb / 2.5 kg plate step is a 15-25% jump, so re-deriving
@@ -930,7 +1025,7 @@ function prescribe(program, readiness) {
     // isolation non-barbell accessories: no warmup (working sets are light enough)
 
     return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
-      bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly,
+      bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup };
   });
@@ -1339,13 +1434,13 @@ function plateText(weight, bar = 45) {
 }
 
 export {
-  RPE_TABLE, clampReps, clampRpe, rpePct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
+  RPE_TABLE, clampReps, clampRpe, rpePct, repsAtPct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
-  VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS,
+  VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS, BW_REPONLY_FLOOR,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,

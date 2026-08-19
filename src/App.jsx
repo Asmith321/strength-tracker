@@ -193,7 +193,14 @@ function Onboarding({ onDone }) {
 function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const [open, setOpen] = useState(it.isMain);
   const [warmupOpen, setWarmupOpen] = useState(false);
-  const bwScheme = it.assistanceNeeded ? "assistance needed" : it.repOnly ? "bodyweight only"
+  /* assistanceNeeded now carries the magnitude as a NEGATIVE topLoad (see the
+     bodyweight branch in prescribe) — show it rather than leaving the athlete
+     to guess which band to grab. bodyweightUnknown means the engine couldn't
+     do bodyweight math at all and fell back to unloaded reps; say so, since
+     the fix is for the athlete to set their bodyweight in Settings. */
+  const bwScheme = it.bodyweightUnknown ? "bodyweight only — set your bodyweight in Settings"
+    : it.assistanceNeeded ? `assisted — about ${Math.abs(it.topLoad)} lb help`
+    : it.repOnly ? "bodyweight only"
     : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
   const loadScheme = it.bodyweight ? bwScheme
     : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`

@@ -7,7 +7,8 @@
 import {
   freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience,
-  BLOCKS, ROTATION, ROT, LIB, PATTERNS,
+  BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS,
+  buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
 } from "./src/engine.js";
@@ -519,12 +520,20 @@ console.log("\n== Frequency scaling changes real prescribe()-driven transition t
 
 console.log("\n== CRITICAL VERIFICATION 1: prescribe() output is byte-identical at freqScale=1 ==");
 {
-  /* Snapshot captured from the PRE-this-fix engine (git-stashed and run
-     directly) across 3 cycles × all 4 rotation days — every exercise's sets/
-     topLoad/reps. If threading freqScale through weeklyTarget/rampedSlotSets
-     changed anything at the default freqScale=1 (no avgSessionGapDays), a
-     single value in this table would differ. */
-  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":0,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":3,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":0,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":3,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":0,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
+  /* Snapshot across 3 cycles x all 4 rotation days — every exercise's sets/
+     topLoad/reps. Originally captured from the pre-freqScale engine to prove
+     that threading freqScale through weeklyTarget/rampedSlotSets changed
+     nothing at the default freqScale=1; it still serves that purpose.
+     REBASELINED for the Tier 1 audit fixes, which deliberately change two
+     values here and nothing else (each diff was enumerated and confirmed
+     intended before regenerating):
+       - pullup topLoad 0 -> -55 on Bench day: assisted bodyweight lifts now
+         carry the assistance MAGNITUDE as a negative load instead of
+         discarding it (audit 1.4). sets/reps unchanged.
+       - curl and row swap positions on Deadlift day: row now precedes curl so
+         the compound isn't capped by pre-fatigued elbow flexors (audit 1.7).
+         Both exercises' own sets/reps/loads are unchanged — order only. */
+  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":3,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":3,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -561,6 +570,104 @@ console.log("\n== CRITICAL VERIFICATION 2: deliveredWeekly does not double-apply
         ratio > 0.7 && ratio < 1.3);
     }
   }
+}
+
+console.log("\n== AUDIT 1.1: bodyweight lift refuses to guess when bodyweight is missing ==");
+{
+  /* The dangerous pre-fix path: `program.bodyweight || 0` made addedRaw =
+     rawSys - 0 >= 0, so the "added weight" branch prescribed the athlete's
+     ENTIRE system load as weight hung off a belt. Every existing invariant
+     passed — it's finite, non-negative, plate-valid — which is why the stress
+     suite never caught it. */
+  const mk = (bw) => {
+    const p = fresh();
+    p.bodyweight = bw;            // simulate loss AFTER e1rm was established
+    p.lifts.pullup.e1rm = 240;    // athlete really does BW200 + ~40
+    p.cycleIndex = 1;             // Bench day carries pullup
+    return prescribe(p, green).items.find((i) => i.key === "pullup");
+  };
+  const good = mk(200);
+  check(`sane bodyweight still prescribes normally (topLoad=${good.topLoad}, assist=${good.assistanceNeeded}, repOnly=${good.repOnly})`,
+    !good.bodyweightUnknown && good.topLoad <= 0);
+  for (const bad of [0, null, undefined, NaN, -10]) {
+    const it = mk(bad);
+    check(`bodyweight=${String(bad)}: falls back to unloaded reps, never prescribes added load (topLoad=${it.topLoad})`,
+      it.topLoad === 0 && it.repOnly === true && it.bodyweightUnknown === true);
+  }
+  // the specific pre-fix failure, asserted directly
+  const zero = mk(0);
+  check("bodyweight=0 does NOT prescribe the full system load as added weight (was 175 lb)", zero.topLoad !== 175);
+}
+
+console.log("\n== AUDIT 1.2: warmup ramp steps are loadable (never below the bar) ==");
+{
+  for (const [top, bar] of [[95, 45], [105, 45], [50, 45], [135, 45], [225, 45]]) {
+    const r = buildRamp(top, FULL_RAMP, "lb", bar);
+    if (!r) { check(`topLoad=${top} bar=${bar}: no ramp (top too light)`, top <= bar); continue; }
+    const weights = r.map((s) => s.weight);
+    check(`topLoad=${top} bar=${bar}: every step >= bar [${weights.join(",")}]`, weights.every((w) => w >= bar));
+    check(`topLoad=${top} bar=${bar}: every step < topLoad`, weights.every((w) => w < top));
+    check(`topLoad=${top} bar=${bar}: strictly ascending (no collapsed duplicates)`,
+      weights.every((w, i) => i === 0 || w > weights[i - 1]));
+    check(`topLoad=${top} bar=${bar}: never longer than the tier (${weights.length} <= ${FULL_RAMP.length})`,
+      weights.length >= 1 && weights.length <= FULL_RAMP.length);
+  }
+  // the specific pre-fix failure
+  const r95 = buildRamp(95, FULL_RAMP, "lb", 45);
+  check("topLoad=95 no longer emits a 40 lb step under a 45 lb bar", !r95.some((s) => s.weight === 40));
+}
+
+console.log("\n== AUDIT 1.3: repOnly moves the REP target instead of shipping a heavier-than-labelled set ==");
+{
+  const p = fresh();
+  p.bodyweight = 200;
+  p.lifts.pullup.e1rm = 240;   // rawSys ~173.5 -> inside the repOnly band (>= 0.85*200)
+  p.cycleIndex = 1;
+  const it = prescribe(p, green).items.find((i) => i.key === "pullup");
+  check(`lands in the repOnly band (repOnly=${it.repOnly}, topLoad=${it.topLoad})`, it.repOnly && it.topLoad === 0);
+  /* The athlete's actual load is their bodyweight (200), heavier than the
+     ~173.5 the RPE math asked for. Holding the prescribed 8 reps would ship a
+     set ~15% heavier than its RPE label. The rep target must come DOWN. */
+  const accumTierReps = ACC_REP_TIERS.accumulation.compound.reps;
+  check(`reps reduced below the tier default (${it.reps} < ${accumTierReps}) so the set matches its RPE label`,
+    it.reps < accumTierReps);
+  // and the reduced rep count should be the table's best match for bw/e1rm
+  const want = repsAtPct(200 / 240, it.rpe);
+  check(`reps equals the inverted-table answer for bw/e1rm (${it.reps} === ${want})`, it.reps === want);
+}
+
+console.log("\n== AUDIT 1.4: assistanceNeeded carries the magnitude ==");
+{
+  const p = fresh();
+  p.bodyweight = 200;
+  p.lifts.pullup.e1rm = 200;   // rawSys well under 0.85*bw -> assistance
+  p.cycleIndex = 1;
+  const it = prescribe(p, green).items.find((i) => i.key === "pullup");
+  check(`assistance is flagged (assist=${it.assistanceNeeded})`, it.assistanceNeeded === true);
+  check(`magnitude surfaced as a negative load (topLoad=${it.topLoad}), not discarded as 0`, it.topLoad < 0);
+  /* It should equal bodyweight minus the prescribed system load, rounded to
+     the loading step — i.e. exactly how much help the athlete needs. */
+  const rawSys = 200 * rpePct(it.reps, it.rpe);
+  const expected = -(Math.round((200 - rawSys) / 5) * 5);
+  check(`magnitude equals -(bw - prescribed system load) = ${expected}`, it.topLoad === expected);
+  check("sign convention matches e1rmFromBW's documented negative-added input",
+    e1rmFromBW(200, it.topLoad, it.reps, it.rpe) > 0);
+}
+
+console.log("\n== AUDIT 1.7: row precedes curl on Deadlift day ==");
+{
+  const day = ROTATION.find((d) => d.name === "Deadlift");
+  const iRow = day.items.indexOf("row"), iCurl = day.items.indexOf("curl");
+  check(`row (${iRow}) comes before curl (${iCurl}) — compound before its own weak link`, iRow < iCurl);
+  check("both still present exactly once", day.items.filter((k) => k === "row").length === 1 && day.items.filter((k) => k === "curl").length === 1);
+  // the reorder must not perturb either exercise's own prescription
+  const p = fresh(); p.cycleIndex = 2;
+  const items = prescribe(p, green).items;
+  const row = items.find((i) => i.key === "row"), curl = items.find((i) => i.key === "curl");
+  check(`row unchanged (sets=${row.sets} reps=${row.reps} load=${row.topLoad} warmup=${row.warmup?.type})`,
+    row.reps === 8 && row.topLoad === 150 && row.warmup?.type === "minimal");
+  check(`curl unchanged (sets=${curl.sets} reps=${curl.reps} load=${curl.topLoad})`,
+    curl.reps === 12 && curl.topLoad === 60 && !curl.warmup);
 }
 
 Date.now = RealNow;
