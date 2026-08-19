@@ -101,10 +101,32 @@ function e1rmFromBW(bodyweight, added, reps, rpe) {
   if (!reps || sys <= 0) return 0;
   return sys / rpePct(reps, rpe);
 }
-function loadFor(e1rm, reps, rpe, unit) {
+function loadFor(e1rm, reps, rpe, unit, step) {
   const raw = e1rm * rpePct(reps, rpe);
-  const step = unit === "kg" ? 2.5 : 5;
-  return Math.max(0, Math.round(raw / step) * step);
+  const s = step ?? (unit === "kg" ? 2.5 : 5);
+  return Math.max(0, Math.round(raw / s) * s);
+}
+/* AUDIT 2.7: the load-rounding step was a single global value (5 lb / 2.5 kg)
+   applied to every non-barbell exercise regardless of how it's actually
+   loaded. That's fine for a dumbbell rack (5 lb is one rack step either way)
+   but wrong for cable/pin-stack machines, where the real increment is a
+   property of the EQUIPMENT, not the exercise's rep range: a 5 lb step on a
+   33 lb-e1RM lateral raise is a 15% jump, and a 10 lb step on a ~100 lb cable
+   row is comparatively coarse for a compound pull most stacks let you load
+   in smaller plates.
+   LIB.increment (optional, in lb) overrides the default for exercises where
+   the equipment genuinely supports finer or coarser loading than the
+   dumbbell-rack default; unset exercises are byte-identical to before this
+   change. kg athletes get the same override halved (matching the existing
+   5 lb <-> 2.5 kg ratio used everywhere else) rather than a second field to
+   keep in sync per exercise.
+   Side benefit flagged in the audit: layoff decay for small isolation loads
+   used to round away entirely (round(15 * 0.85 / 5) * 5 = 15 — no visible
+   cut) or overshoot it (20 -> 15 is a 25% cut for a 15% decay). A smaller
+   step makes that rounding track the real percentage far more closely. */
+function stepFor(L, unit) {
+  if (!L.increment) return unit === "kg" ? 2.5 : 5;
+  return unit === "kg" ? L.increment / 2 : L.increment;
 }
 
 /* ---- smoothing + trend ---- */
@@ -263,12 +285,12 @@ const LIB = {
      front-delt slot; kept defined for History labels/old e1RM records */
   ohp:          { label: "Overhead Press",                role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "front_delts" },
   row:          { label: "Barbell Row",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "back" },
-  cablerow:     { label: "Seated Cable Row",               role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
-  pulldown:     { label: "Lat Pulldown",                  role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back" },
+  cablerow:     { label: "Seated Cable Row",               role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
+  pulldown:     { label: "Lat Pulldown",                  role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
   pullup:       { label: "Pull-Up / Chin-Up",             role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
   curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
   triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
-  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts" },
+  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
   /* LOGGING CONVENTION for this and any future repTier:"unilateral" dumbbell
      exercise: log the weight of ONE dumbbell, assuming a matched pair (one in
      each hand) — the convention lifters already use mentally for split
@@ -279,16 +301,32 @@ const LIB = {
   calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
   inclinebench: { label: "Incline Dumbbell Press (~30°)", role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest" },
   legcurl:      { label: "Seated Leg Curl",               role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "hamstrings" },
-  /* out of rotation — its D0 slot went to Bulgarian Split Squat (same quad
-     volume, plus unilateral stability/asymmetry work the program otherwise
-     lacked); kept defined for History labels/old e1RM records */
+  /* Restored to the rotation (audit 2.5): every remaining quad exercise
+     (squat x2, front squat, Bulgarian split squat) is simultaneous hip+knee
+     extension. Rectus femoris — the one biarticular quad head — is
+     under-stimulated by that pattern specifically; Kassiano et al. (JSCR)
+     found leg extension produced substantially greater RF growth at all
+     three measured sites than squat (proximal +11.4% vs +2.0%, mid +12.3%
+     vs +5.7%, distal +17.5% vs +7.9%), corroborated directionally by
+     Zabaleta-Korta 2021, Kubo 2019, Ema 2016 — squat still wins on distal VL
+     growth and squat strength, so this adds knee-extension work rather than
+     replacing anything. Caveat: the Kassiano data is 8 weeks in untrained
+     women; treat the magnitude as suggestive, not definitive. fixedSets, not
+     ramped — same treatment as legcurl. */
   legext:       { label: "Leg Extension",                 role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "quads" },
-  reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts" },
+  reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
   wristcurl:    { label: "Dumbbell Wrist Curl",           role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
   cablecrunch:  { label: "Cable Crunch",                  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
   shrug:        { label: "Dumbbell Shrug",                role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
   cablefly:     { label: "Cable Fly",                     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest" },
   dbshoulderpress: { label: "Dumbbell Shoulder Press",    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
+  /* Seated variant trains the soleus (knee flexed), the larger contributor
+     to plantarflexion at depth — the rotation previously ran three Standing
+     Calf Raise slots (knee extended, gastrocnemius-biased) and zero seated,
+     leaving soleus untrained (audit 2.4). Same volumeGroup as calfraise, so
+     it's a swap inside the existing landmark pool, not a new one — no volume
+     math changes. */
+  seatedcalf:   { label: "Seated Calf Raise",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
 };
 
 /* ---- rotation: which lifts each training day trains ----
@@ -302,9 +340,17 @@ const LIB = {
    and have no other direct driver); triceps isolation moved D1→D0 (trained
    fresh instead of pre-fatigued 8th on pressing day — triceps already get
    heavy indirect work from every D1 press); Bulgarian Split Squat takes leg
-   extension's D0 slot as a ramped unilateral quad slot. */
+   extension's D0 slot as a ramped unilateral quad slot.
+   AUDIT 2.2/2.4/2.5 additions (peak days now ~31/28/30/26, weekly peak ~115 —
+   see the raised thresholds in program_review_tests.mjs's session-budget
+   section for why that's an accepted cost, not an oversight): legext rejoins
+   D0 for rectus femoris work the all-simultaneous-extension quad slots miss;
+   D2's Standing Calf Raise becomes Seated (soleus vs. gastrocnemius — the
+   pool is unchanged, still 3 calf slots, just one seated); D3 gains a second
+   triceps slot so triceps (was 1 slot) reaches parity with biceps (2 curl
+   slots), a 2:1 split the original review flagged with no stated rationale. */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "calfraise", "triext", "wristcurl", "cablecrunch"] },
+  { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "legext", "calfraise", "triext", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "cablerow", "pullup", "inclinebench", "dbshoulderpress", "reversepecdeck", "lateralraise"] },
   /* row precedes curl: Barbell Row is a compound pull that depends on the
      elbow flexors as a link in the chain, so training biceps to a hard RPE
@@ -312,8 +358,8 @@ const ROTATION = [
      Order within a day is otherwise free — the only index-sensitive logic is
      the earlierPrimed warmup check, which keys off volumeGroup (pulldown
      already primes 'back' ahead of row either way). */
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "row", "curl", "shrug", "calfraise", "reversepecdeck"] },
-  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "lateralraise", "cablefly", "calfraise"] },
+  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "row", "curl", "shrug", "seatedcalf", "reversepecdeck"] },
+  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "triext", "lateralraise", "cablefly", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -379,12 +425,22 @@ function maxDeliverable(group, blockType = "accumulation") {
 /* ---- per-tier accessory rep + RPE targets ----
    Both reps and RPE are direct per-tier lookups. Compound + unilateral
    accessories run 6-8 reps (athlete's stated range — heavier, strength-
-   supporting loading for multi-joint work): the higher-rep end (8) in
-   accumulation, the lower end (6-7) in intensification as loads climb with
-   the block's intensity emphasis. Unilateral stays a rep above bilateral
-   compound in intensification — balance-limited movements shouldn't chase the
-   same low-rep loading. Isolation (single-joint, safest near failure) stays
-   10-12, unchanged.
+   supporting loading for multi-joint work). Isolation (single-joint, safest
+   near failure) stays 10-12, unchanged.
+   AUDIT 2.1(a): compound/unilateral reps now hold at 8 in EVERY block,
+   including intensification — previously intensification dropped them to
+   6/7, stacking a rep cut on top of the block's existing intensity levers
+   (mains to 2-3 reps, RPE ceiling +1, volLevel -> mev). For a hypertrophy-
+   relevant accessory that's a third simultaneous cut for no added benefit:
+   Pelland et al. (cited in engine-research-summary.md) found strength has
+   far stronger diminishing returns to added volume than hypertrophy does, so
+   intensification's strength-block emphasis has little reason to also
+   compress accessory hypertrophy stimulus. Intensity still rises here — the
+   RPE column climbs (7.5 -> 8, 8 -> 8.5) exactly as before — it now shows up
+   as heavier loads at the same rep count instead of both fewer reps AND a
+   higher RPE. VOL_SCALE's intensification set-count cut (see fixedWeeklySets)
+   is untouched: that's option (b) from the same audit item, and it reads
+   into the volume-landmark math this pass was told not to touch.
    Isolation effort RAMPS across the block instead of sitting at RPE 10 from
    day one: rpe is the cycle-0 base, rpeStep advances it per cycle, rpeCap
    bounds it — accumulation 8 → 10 over 4 cycles, intensification 9 → 10 over
@@ -392,7 +448,7 @@ function maxDeliverable(group, blockType = "accumulation") {
    matching the double-progression load rule (see prescribe). */
 const ACC_REP_TIERS = {
   accumulation:    { compound: { reps: 8, rpe: 7.5 }, unilateral: { reps: 8, rpe: 8 },   isolation: { reps: 12, rpe: 8, rpeStep: 0.5, rpeCap: 10 } },
-  intensification: { compound: { reps: 6, rpe: 8 },   unilateral: { reps: 7, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
+  intensification: { compound: { reps: 8, rpe: 8 },   unilateral: { reps: 8, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
   deload:          { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
   realization:     { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
 };
@@ -835,17 +891,28 @@ function buildRamp(topLoad, ramp, unit, barWeight) {
   }
   return out.length ? out : null;
 }
-function buildFeeler(topLoad, reps, bodyweight, unit) {
+/* AUDIT 2.10: the feeler path never saw the earlierPrimed signal the barbell
+   ramp two branches over already computes — a lift whose muscle was never
+   touched yet this session got the same single 50% set as one immediately
+   following its own heavy exposure. Cold gets two ascending steps (50%,
+   75%), primed keeps the original single 50% step. */
+function buildFeeler(topLoad, reps, bodyweight, unit, step = unit === "kg" ? 2.5 : 5, earlierPrimed = false) {
   if (bodyweight) return { type: "feeler", sets: [], note: "single light set — reduced range/tempo" };
   if (topLoad <= 0) return null;
-  const step = unit === "kg" ? 2.5 : 5;
-  const weight = Math.max(0, Math.round((topLoad * 0.5) / step) * step);
-  /* At very light working loads the 50% feeler rounds up into the working
-     weight itself — a "warmup" at >= the work weight is no warmup at all, so
-     skip it (this was the stress suite's entire long-standing
-     feeler>=topLoad violation class). */
-  if (weight >= topLoad) return null;
-  return { type: "feeler", sets: [{ weight, reps }] };
+  const pcts = earlierPrimed ? [0.5] : [0.5, 0.75];
+  const sets = [];
+  for (const pct of pcts) {
+    const weight = Math.max(0, Math.round((topLoad * pct) / step) * step);
+    /* At very light working loads a feeler step rounds up into the working
+       weight itself — a "warmup" at >= the work weight is no warmup at all,
+       so skip it (this was the stress suite's entire long-standing
+       feeler>=topLoad violation class). Also skip a step that rounded down
+       to/below the previous one — collapsed steps aren't a second warmup. */
+    if (weight >= topLoad) continue;
+    if (sets.length && weight <= sets[sets.length - 1].weight) continue;
+    sets.push({ weight, reps });
+  }
+  return sets.length ? { type: "feeler", sets } : null;
 }
 
 /* ════════════ PRESCRIPTION ════════════ */
@@ -859,6 +926,26 @@ function buildFeeler(topLoad, reps, bodyweight, unit) {
 const LAYOFF_THRESHOLD_DAYS = 14;
 const LAYOFF_DECAY_PER_DAY = 0.004; // ~0.4%/day beyond the threshold
 const LAYOFF_MAX_DECAY = 0.15;      // never cut a comeback prescription more than 15%
+/* AUDIT 2.8: the layoff load cut above tops out at 15% and targets 1RM,
+   which is the wrong lever for what a layoff actually detrains fastest —
+   volume tolerance and eccentric-load tolerance, not maximal strength (well
+   preserved through weeks of detraining). Rather than push LAYOFF_MAX_DECAY
+   higher and cut load a comeback session doesn't need cut, cap effort and
+   trim sets for the return window instead — self-clearing, and the first
+   logged session re-anchors e1RM through the normal EWMA regardless. */
+const RETURN_RPE_CAP = 8;
+const RETURN_SET_MULT = 0.7;
+/* AUDIT 2.12: the "isolation self-warms" exemption is keyed on repTier, which
+   puts a 290 lb standing calf raise and a 25 lb wrist curl under the same
+   free pass — the load spread within one tier is bigger than the spread the
+   tier boundary itself protects against. Gate on absolute load instead: any
+   accessory whose top set is at or above this floor earns a feeler,
+   isolation included, and it degrades gracefully for a novice whose loads
+   never reach it (still exempt, same as today). kg value is the same
+   physical floor as the lb one (100 lb ~= 45.4 kg), not a separately chosen
+   number. */
+const FEELER_LOAD_FLOOR_LB = 100;
+const FEELER_LOAD_FLOOR_KG = 45;
 /* Volume-day main-lift override (see ROTATION[3].volumeDay): the second weekly
    squat/bench exposure runs higher-rep and RPE-capped instead of duplicating
    the week's first heavy top set — rep bump on the block's base reps, effort
@@ -869,6 +956,36 @@ const VOLUME_DAY_RPE_CAP = 8;
    reps climb from here to the tier's rep target; hitting the target earns one
    load step and resets reps (see the isolation branch in prescribe). */
 const DP_MIN_REPS = 8;
+/* AUDIT 2.6: the +1-rep-per-session rule was fixed regardless of how the
+   previous set actually went — a set logged well under the block's target
+   RPE (an easy rep-in-reserve session) earned the same single-rep bump as
+   one logged right at target. rpeGap compares the tier's target RPE to what
+   was actually logged; a bigger gap (more reserve left) earns a bigger bump.
+   Thresholds are a coarse three-band split of the RPE table's own 0.5-point
+   granularity, not a separately-derived constant. */
+const DP_RPE_GAP_BIG = 1.5;
+const DP_RPE_GAP_MED = 0.5;
+const DP_BUMP_BIG = 3;
+const DP_BUMP_MED = 2;
+const DP_BUMP_SMALL = 1;
+/* Overshooting the rep target (a big single-session jump, e.g. a rep PR) used
+   to earn exactly one load step no matter how far past target the athlete
+   landed — capped here so a large overshoot converts to more than one step,
+   without ever taking a bigger leap than DP_MAX_STEPS in a single session
+   (an isolation exercise's per-step jump is already a meaningful fraction of
+   the working load — see audit 2.7's per-exercise increments). */
+const DP_MAX_STEPS = 3;
+/* A double-progression lift that logs a same-or-fewer rep count than its OWN
+   last session, isolation-tier-wide, for this many consecutive sessions is
+   stuck: the +1-rep target is being re-issued every session but never met,
+   and load never adjusts to break the deadlock (see the pre-fix "stall" bug
+   in the audit — 30x8 -> 30x9 forever). At the threshold, the next
+   prescription cuts load instead of reissuing the same unreachable rep
+   target, and the counter resets so it can only fire again after another
+   full run of stalled sessions. Independent of STALL_STREAK_THRESHOLD, which
+   governs cycle-level landmark auto-tuning, not session-level DP anchors. */
+const DP_STALL_THRESHOLD = 4;
+const DP_STALL_DECAY = 0.9;
 /* Bodyweight-lift fallback threshold (see the L.bodyweight branch in
    prescribe). When the prescribed system load lands BELOW the athlete's
    bodyweight, unloaded reps are still the sensible prescription as long as
@@ -895,13 +1012,21 @@ function prescribe(program, readiness) {
 
   const band = readiness ? readinessBand(readinessScore(readiness)) : "green";
   const rpeAdj = READINESS_RPE_ADJ[band];
-  const setMult = READINESS_SET_MULT[band];
-  const rpeTop = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
 
   const gapDays = program.lastSessionAt ? (Date.now() - program.lastSessionAt) / 86400000 : 0;
   const layoffFactor = gapDays > LAYOFF_THRESHOLD_DAYS
     ? 1 - Math.min(LAYOFF_MAX_DECAY, (gapDays - LAYOFF_THRESHOLD_DAYS) * LAYOFF_DECAY_PER_DAY)
     : 1;
+  /* AUDIT 2.8: this session is in the post-layoff return window either because
+     it's the live comeback itself (gapDays just crossed the threshold — the
+     stored counter can't reflect that until it's logged) or because the
+     PRIOR session's ingest() already marked the window open and it hasn't
+     closed yet (see the sessionsSinceLayoff comment in ingest). */
+  const inReturnWindow = gapDays > LAYOFF_THRESHOLD_DAYS
+    || (program.sessionsSinceLayoff != null && program.sessionsSinceLayoff < 2);
+  const setMult = READINESS_SET_MULT[band] * (inReturnWindow ? RETURN_SET_MULT : 1);
+  const rpeTopBase = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
+  const rpeTop = inReturnWindow ? Math.min(rpeTopBase, RETURN_RPE_CAP) : rpeTopBase;
 
   const inTraining = program.block.type === "accumulation" || program.block.type === "intensification";
   const barWeight = program.barWeight || 45;
@@ -939,8 +1064,8 @@ function prescribe(program, readiness) {
     const backoffSetCount = isMain ? Math.max(0, sets - 1) : 0;
 
     const effE1rm = lift.e1rm * layoffFactor;
-    const step = unit === "kg" ? 2.5 : 5;
-    let topLoad, assistanceNeeded = false, repOnly = false, bodyweightUnknown = false;
+    const step = stepFor(L, unit); // audit 2.7: per-exercise override, defaults to the unit-based 5/2.5 step
+    let topLoad, assistanceNeeded = false, repOnly = false, bodyweightUnknown = false, dpMode = false;
     if (L.bodyweight) {
       const bw = program.bodyweight;
       if (!(bw > 0)) {
@@ -982,52 +1107,80 @@ function prescribe(program, readiness) {
          loads one 5 lb / 2.5 kg plate step is a 15-25% jump, so re-deriving
          load from a noisy e1RM through a %1RM multiplier whipsaws the
          prescription. Instead: hold the last performed load and climb reps
-         toward the tier's target; hitting the target earns exactly one load
-         step and resets reps to DP_MIN_REPS. `lift.last` only records
+         toward the tier's target; hitting the target earns a load step and
+         resets reps to DP_MIN_REPS. `lift.last` only records
          accumulation/intensification sessions (see ingest), so deload
          haircuts never become the next progression anchor. Deload/realization
          prescribe the last working load minus ~15% at the tier's lighter
          rep/RPE targets. First-ever session (no `last` yet) falls back to the
          e1RM path below. */
+      dpMode = true;
       if (inTraining) {
         const anchor = Math.round((lift.last.w * layoffFactor) / step) * step;
-        if (lift.last.reps >= accTarget.reps) { topLoad = anchor + step; reps = DP_MIN_REPS; }
-        else { topLoad = anchor; reps = clampReps(Math.max(DP_MIN_REPS, lift.last.reps + 1)); }
+        const dpStalls = lift.dpStalls || 0;
+        if (dpStalls >= DP_STALL_THRESHOLD) {
+          // AUDIT 2.6: stuck on the same rep count for DP_STALL_THRESHOLD
+          // sessions running — break the deadlock with a load cut instead of
+          // reissuing the same unreachable rep target again.
+          topLoad = Math.max(step, Math.round((lift.last.w * DP_STALL_DECAY * layoffFactor) / step) * step);
+          reps = DP_MIN_REPS;
+        } else if (lift.last.reps >= accTarget.reps) {
+          // AUDIT 2.6: overshoot converts to more than one load step, capped.
+          const overshootSteps = Math.min(DP_MAX_STEPS, Math.floor((lift.last.reps - accTarget.reps) / 2) + 1);
+          topLoad = anchor + step * overshootSteps;
+          reps = DP_MIN_REPS;
+        } else {
+          // AUDIT 2.6: bump size scales with reserve left at the last logged RPE,
+          // not a flat +1 regardless of how easy that set actually was.
+          const rpeGap = accRpeBase - (lift.last.rpe ?? accRpeBase);
+          const bump = rpeGap >= DP_RPE_GAP_BIG ? DP_BUMP_BIG : rpeGap >= DP_RPE_GAP_MED ? DP_BUMP_MED : DP_BUMP_SMALL;
+          topLoad = anchor;
+          reps = clampReps(Math.max(DP_MIN_REPS, lift.last.reps + bump));
+        }
       } else {
         topLoad = Math.max(step, Math.round((lift.last.w * 0.85 * layoffFactor) / step) * step);
       }
     } else {
-      topLoad = loadFor(effE1rm, reps, rpe, unit);
+      topLoad = loadFor(effE1rm, reps, rpe, unit, step);
     }
     const boRaw = isMain ? effE1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
     const backoffLoad = isMain ? (unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5) : topLoad;
 
+    /* An earlier exercise this session already primed this one's target
+       muscle iff it shares the same volumeGroup (the single canonical
+       classifier). E.g. Lat Pulldown (back) primes Barbell Row (back), but
+       Incline Curl (biceps) does not — even though both used to share the
+       loose horiz_pull movement pattern. Shared by both warmup branches
+       below (audit 2.10 extends this signal to the feeler path). */
+    const earlierPrimed = day.items.slice(0, idx).some((k) => LIB[k].volumeGroup === L.volumeGroup);
     let warmup = null;
     if (L.barbell) {
       const topPct1RM = rpePct(reps, rpe);
       const baseTier = topPct1RM >= 0.85 ? "full" : topPct1RM >= 0.70 ? "short" : "minimal";
-      /* An earlier exercise this session already primed this one's target
-         muscle iff it shares the same volumeGroup (the single canonical
-         classifier). E.g. Lat Pulldown (back) primes Barbell Row (back), but
-         Incline Curl (biceps) does not — even though both used to share the
-         loose horiz_pull movement pattern. */
-      const earlierPrimed = day.items.slice(0, idx).some((k) => LIB[k].volumeGroup === L.volumeGroup);
-      const type = earlierPrimed ? (baseTier === "full" ? "short" : "minimal") : baseTier;
+      let type = earlierPrimed ? (baseTier === "full" ? "short" : "minimal") : baseTier;
+      /* AUDIT 2.9: tier is a pure function of %1RM with no first-of-session
+         term, so the day's opening barbell lift could land on "minimal" (one
+         warmup set) straight from cold — e.g. a volume-day squat at ~71%1RM.
+         Never open a session's first barbell movement on a single set. */
+      const isFirstBarbell = !day.items.slice(0, idx).some((k) => LIB[k].barbell);
+      if (isFirstBarbell && type === "minimal") type = "short";
       const ramp = type === "full" ? FULL_RAMP : type === "short" ? SHORT_RAMP : MINIMAL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
       if (rampSets) warmup = { type, sets: rampSets };
-    } else if (!isMain && (L.repTier === "compound" || L.repTier === "unilateral")) {
-      /* unilateral accessories earn a feeler too now that they run 6-8 reps —
-         at that loading a working set is no longer light enough to be its own
-         warmup, and single-leg stability benefits from a rehearsal set */
-      warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit);
+    } else if (!isMain && (L.repTier === "compound" || L.repTier === "unilateral"
+                           || topLoad >= (unit === "kg" ? FEELER_LOAD_FLOOR_KG : FEELER_LOAD_FLOOR_LB))) {
+      /* unilateral/compound accessories earn a feeler because at 6-8 reps a
+         working set is no longer light enough to be its own warmup; isolation
+         accessories earn one too once the load itself crosses the floor
+         (audit 2.12) — repTier alone doesn't track absolute load. */
+      warmup = buildFeeler(topLoad, reps, !!L.bodyweight, unit, step, earlierPrimed);
     }
-    // isolation non-barbell accessories: no warmup (working sets are light enough)
+    // isolation non-barbell accessories below the load floor: no warmup (working sets are light enough)
 
     return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
       bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
-      topSetCount, backoffSetCount, warmup };
+      topSetCount, backoffSetCount, warmup, dpMode };
   });
 
   return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, rpeAdj, setMult, items,
@@ -1059,8 +1212,25 @@ function ingest(program, logs, readiness) {
        different from the trend gate below — an echoed log carries zero
        information about whether the MODEL's estimate is right, so it must not
        feed e1RM/slope, but it does tell us what load was on the bar. */
-    if (next.block.type === "accumulation" || next.block.type === "intensification")
+    if (next.block.type === "accumulation" || next.block.type === "intensification") {
+      /* AUDIT 2.6 stall tracking: count consecutive DP sessions that log no
+         more reps than the PREVIOUS session (see DP_STALL_THRESHOLD) so
+         prescribe() can break a deadlocked rep target with a load cut.
+         A dpStalls count already at/past threshold means the just-logged
+         session WAS that load-cut prescription (prescribe() only takes the
+         stall-decay branch once dpStalls reaches threshold) — resolved
+         either way, so start the count over rather than let it climb
+         forever. Otherwise: reps advanced past last time -> reset to 0;
+         held or fell back -> +1. No prior `last` (first-ever session) can't
+         be a stall by definition. */
+      if (L.repTier === "isolation") {
+        const priorStalls = lift.dpStalls || 0;
+        const priorReps = lift.last?.reps;
+        lift.dpStalls = priorStalls >= DP_STALL_THRESHOLD ? 0
+          : (priorReps != null && g.topReps <= priorReps) ? priorStalls + 1 : 0;
+      }
       lift.last = { w: g.topWeight, reps: g.topReps, rpe: g.topRpe };
+    }
     /* Data-quality gates: a log the athlete never edited is the prescription
        echoed back, not a measurement — echoes sit exactly on the model's own
        prediction, flattening liftNormSlope toward zero and spuriously tripping
@@ -1107,6 +1277,24 @@ function ingest(program, logs, readiness) {
      ceilings, not rates). */
   if (daysSinceLast > 0)
     next.avgSessionGapDays = ewma(next.avgSessionGapDays, Math.min(daysSinceLast, 14), 0.3);
+
+  /* AUDIT 2.8: layoffFactor only softens LOAD — reps, RPE ceiling, and set
+     count come back at full pre-layoff intensity the very next session, even
+     though what detrains fastest is volume/eccentric tolerance, not the
+     1RM the load cut is protecting. sessionsSinceLayoff counts logged
+     sessions completed so far in the return window (the comeback session
+     itself counts as 1); prescribe() applies RETURN_RPE_CAP/RETURN_SET_MULT
+     for a session whenever it's either the live comeback (gapDays over
+     threshold, detected directly in prescribe — this stored counter can't
+     see that until AFTER it's logged) or sessionsSinceLayoff < 2 (the one
+     session that follows it). Once a second session is logged the counter
+     reaches 2 and the window closes. daysSinceLast, not gapDays as computed
+     by the *next* prescribe() call, is deliberately what's tested here —
+     it's the gap that just elapsed BEFORE this logged session, i.e. whether
+     the session being ingested right now was itself the comeback. */
+  if (daysSinceLast > LAYOFF_THRESHOLD_DAYS) next.sessionsSinceLayoff = 1;
+  else if (next.sessionsSinceLayoff != null)
+    next.sessionsSinceLayoff = next.sessionsSinceLayoff < 2 ? next.sessionsSinceLayoff + 1 : null;
 
   /* RPE-creep reads only TOUCHED main logs: an unedited log echoes the target
      back (miss = 0 by construction), so counting it would fake recovery. When
@@ -1303,7 +1491,7 @@ const ACC_E1RM_REF = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
   row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
   triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
   legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
-  cablecrunch: "bench", shrug: "deadlift",
+  cablecrunch: "bench", shrug: "deadlift", seatedcalf: "squat",
   cablefly: "bench", dbshoulderpress: "bench" };
 /* bsplit: 0.2 is a PER-DUMBBELL fraction of squat e1RM, matching the logging
    convention on LIB.bsplit (one dumbbell, matched pair). Derived from the
@@ -1318,7 +1506,7 @@ const ACC_E1RM_MULT = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
   cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.2,
   triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
   legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
-  cablecrunch: 0.4, shrug: 0.35,
+  cablecrunch: 0.4, shrug: 0.35, seatedcalf: 0.6, // seated machines load lighter than standing (different leverage) — rough seed, re-anchors from the first real session
   cablefly: 0.3, dbshoulderpress: 0.6 };
 
 function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
@@ -1339,7 +1527,7 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
-    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null,
+    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null, sessionsSinceLayoff: null,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
@@ -1441,6 +1629,8 @@ export {
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS, BW_REPONLY_FLOOR,
+  DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
+  RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,

@@ -6,7 +6,7 @@
 import {
   freshProgram, prescribe, ingest, migrateProgram, liftSlopeInfo,
   LIB, ROTATION, PATTERNS, PATTERN_FREQ, PATTERN_RAMPED_ACC, ACC_REP_TIERS,
-  deliveredWeekly, rampedSlotSets, effectiveCeiling, landmarksForExperience, buildFeeler,
+  deliveredWeekly, fixedWeeklySets, rampedSlotSets, effectiveCeiling, landmarksForExperience, buildFeeler,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -27,10 +27,13 @@ console.log("\n== Athlete mandates ==");
   const lm = landmarksForExperience("intermediate");
   check("DB Shoulder Press absorbs the full residual up to the slot cap (4 late-block)",
     rampedSlotSets("front_delts", "accumulation", 5, lm) === 4);
-  check(`compound accessories at 6-8 reps (accum ${ACC_REP_TIERS.accumulation.compound.reps}, intens ${ACC_REP_TIERS.intensification.compound.reps})`,
-    ACC_REP_TIERS.accumulation.compound.reps === 8 && ACC_REP_TIERS.intensification.compound.reps === 6);
-  check(`unilateral accessories at 6-8 reps (accum ${ACC_REP_TIERS.accumulation.unilateral.reps}, intens ${ACC_REP_TIERS.intensification.unilateral.reps})`,
-    [8, 7].every((v, i) => [ACC_REP_TIERS.accumulation.unilateral.reps, ACC_REP_TIERS.intensification.unilateral.reps][i] === v));
+  // AUDIT 2.1(a): intensification no longer cuts compound/unilateral accessory reps
+  // (was 6/7) — they hold at 8 in every block; RPE still climbs to mark the block's
+  // added intensity instead of stacking a reps cut on top of it.
+  check(`compound accessories hold at 8 reps in every block (accum ${ACC_REP_TIERS.accumulation.compound.reps}, intens ${ACC_REP_TIERS.intensification.compound.reps})`,
+    ACC_REP_TIERS.accumulation.compound.reps === 8 && ACC_REP_TIERS.intensification.compound.reps === 8);
+  check(`unilateral accessories hold at 8 reps in every block (accum ${ACC_REP_TIERS.accumulation.unilateral.reps}, intens ${ACC_REP_TIERS.intensification.unilateral.reps})`,
+    ACC_REP_TIERS.accumulation.unilateral.reps === 8 && ACC_REP_TIERS.intensification.unilateral.reps === 8);
   check("isolation stays 10-12 (untouched)", ACC_REP_TIERS.accumulation.isolation.reps === 12 && ACC_REP_TIERS.deload.isolation.reps === 10);
   check("main-lift reps stay sub-6 in training blocks", ["accumulation", "intensification"].every((b) =>
     Object.values({ squat: 1, bench: 1, deadlift: 1 }).every(() => true) &&
@@ -43,8 +46,13 @@ console.log("\n== Unilateral tier is real again ==");
   check("bsplit participates in the quads pool (freq 2 with front squat)", PATTERN_FREQ.quads === 2 && LIB.bsplit.volumeGroup === "quads");
   const lm = landmarksForExperience("intermediate");
   const ramp = [0, 1, 2, 3, 4, 5].map((c) => deliveredWeekly("quads", "accumulation", c, lm));
-  check(`quads delivered ceiling rose with the second slot (16, was 15) [${ramp.join(",")}]`,
-    Math.max(...ramp) === 16 && effectiveCeiling("quads", "accumulation", lm) === 16);
+  const ceil = effectiveCeiling("quads", "accumulation", lm);
+  // ceiling value itself is derived (not re-hardcoded) since audit 2.5 (legext
+  // rejoining the rotation) raised quads' fixed contribution and, with it,
+  // maxDeliverable/effectiveCeiling — the property under test (the ramp
+  // actually reaches its own ceiling) is unaffected by that shift.
+  check(`quads delivered ramp reaches its own ceiling (${ceil}) [${ramp.join(",")}]`,
+    Math.max(...ramp) === ceil);
   const p = fresh(); // bsplit on day 0
   const it = prescribe(p, green).items.find((i) => i.key === "bsplit");
   check("bsplit gets a feeler warmup at 6-8-rep loading", it && it.warmup?.type === "feeler");
@@ -110,10 +118,18 @@ console.log("\n== Session budget (ground rule: no unchecked growth) ==");
       totals[cyc].push(prescribe(p, green).items.reduce((s, i) => s + i.sets, 0));
     }
   }
-  check(`no session exceeds 30 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 30);
-  check(`Bench day peak rebalanced to ≤28 (was 31)`, totals[5][1] <= 28);
-  check(`weekly peak total ≤110 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 110);
-  check(`early-block sessions stay 18-22 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 22));
+  /* Thresholds raised for audit 2.2/2.4/2.5 (+3 sets each on Squat day
+     [legext] and Volume day [triext]; Deadlift day's swap is a like-for-like
+     label change with no set-count effect). Each addition is individually
+     justified — see the ROTATION comment — and the two together are a known,
+     accepted cost, not an oversight: peak day 31 (was 28) still sits below
+     Deadlift day's own 30, and 115 sets/week over 4 sessions (~29/day
+     average) stays in normal upper-intermediate territory. Ceilings still
+     exist so a FUTURE unplanned addition doesn't silently keep growing this. */
+  check(`no session exceeds 31 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 31);
+  check(`Bench day untouched by the audit 2.2/2.4/2.5 additions (still ≤28)`, totals[5][1] <= 28);
+  check(`weekly peak total ≤116 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 116);
+  check(`early-block sessions stay 18-25 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 25));
 }
 
 console.log("\n== Feeler sanity (root cause of the old 160-violation baseline) ==");
@@ -161,6 +177,46 @@ console.log("\n== bsplit load-logging convention (per-dumbbell, matched pair) ==
   const pNoSeed = freshProgram({ seeds: {}, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 180 });
   const noSeedLoad = prescribe(pNoSeed, green).items.find((i) => i.key === "bsplit").topLoad;
   check(`no-seed fallback bsplit load (${noSeedLoad} lb) is light but non-zero`, noSeedLoad >= 5 && noSeedLoad <= 30);
+}
+
+console.log("\n== AUDIT 2.4: seated calf raise trains the soleus, standing pool unchanged ==");
+{
+  check("seatedcalf exists and shares the calves pool", LIB.seatedcalf?.volumeGroup === "calves");
+  check("seatedcalf is in the rotation (Deadlift day)", inRotation.has("seatedcalf"));
+  check("still exactly 3 calf slots total (1 seated + 2 standing)", PATTERN_FREQ.calves === 3);
+  const day = ROTATION.find((d) => d.name === "Deadlift");
+  check("standing calfraise is off Deadlift day (moved to seated)", !day.items.includes("calfraise"));
+  check("calfraise still trains Squat + Volume days", ROTATION.filter((d) => d.items.includes("calfraise")).length === 2);
+  // migration: an old save has no seatedcalf lift record at all
+  const old = fresh(); delete old.lifts.seatedcalf;
+  const m = migrateProgram(old);
+  check("migrateProgram backfills seatedcalf for an old-schema save", m.lifts.seatedcalf?.e1rm > 0);
+  let crashed = false;
+  try { const p = structuredClone(m); p.cycleIndex = 2; prescribe(p, green); } catch { crashed = true; }
+  check("prescribe() runs Deadlift day on the migrated program without crashing", !crashed);
+}
+
+console.log("\n== AUDIT 2.5: leg extension restores rectus femoris work ==");
+{
+  check("legext is back in the rotation (Squat day)", inRotation.has("legext"));
+  check("legext stays a fixedSets accessory, not ramped", LIB.legext.fixedSets === 3);
+  check("legext participates in the quads pool alongside bsplit/squat", LIB.legext.volumeGroup === "quads");
+  const before = fixedWeeklySets("hamstrings", "accumulation"); // unrelated pool, sanity control
+  const quadsFixed = fixedWeeklySets("quads", "accumulation");
+  check(`quads fixedWeeklySets rose to include legext (${quadsFixed} >= 11)`, quadsFixed >= 11);
+  check("unrelated pool (hamstrings) unaffected", before === fixedWeeklySets("hamstrings", "accumulation"));
+  const old = fresh(); delete old.lifts.legext;
+  const m = migrateProgram(old);
+  check("migrateProgram backfills legext for an old-schema save", m.lifts.legext?.e1rm > 0);
+}
+
+console.log("\n== AUDIT 2.2: triceps reach parity with biceps (2 slots each) ==");
+{
+  const triSlots = ROTATION.reduce((n, d) => n + d.items.filter((k) => k === "triext").length, 0);
+  const bicSlots = ROTATION.reduce((n, d) => n + d.items.filter((k) => k === "curl").length, 0);
+  check(`triceps now has ${triSlots} slot(s), matching biceps' ${bicSlots}`, triSlots === bicSlots && triSlots === 2);
+  const day = ROTATION.find((d) => d.volumeDay);
+  check("Volume day carries the new triceps slot alongside its existing curl", day.items.includes("triext") && day.items.includes("curl"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
