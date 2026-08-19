@@ -210,10 +210,17 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
   /* Unambiguous total-set breakdown for mains: `sets` is the FULL working-set
      count, never top-sets-plus-extra-backoff — see prescribe(). Only the
      first set is at topLoad; the rest (if any) are at the lower backoffLoad. */
+  /* AUDIT 2.6: double-progression sets hold a fixed load and climb reps —
+     the load is never derived from the shown RPE the way a normal accessory's
+     is, so leading with "RPE X ·" implies a precision that isn't there. Lead
+     with the load (what's actually prescribed) and show RPE as a target
+     effort to aim for, not a computed value. */
   const scheme = it.isMain
     ? (it.backoffSetCount > 0
         ? `${it.topSetCount} ${setWord(it.topSetCount)} @ ${it.topLoad} lb, then ${it.backoffSetCount} ${setWord(it.backoffSetCount)} @ ${it.backoffLoad} lb (${it.reps} reps · RPE ${it.rpe})`
         : `${it.sets} ${setWord(it.sets)} of ${it.reps} @ ${it.topLoad} lb (RPE ${it.rpe})`)
+    : it.dpMode
+    ? `${it.sets} × ${it.reps} @ ${loadScheme} (aim RPE ${it.rpe})`
     : `${it.sets} × ${it.reps} @ RPE ${it.rpe} · ${loadScheme}`;
   return (
     <div className="exer">

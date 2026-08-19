@@ -151,10 +151,15 @@ function checkPrescribe(rep, session, program, rx) {
           rep.add("ramp-length-mismatch", session, `${tag} type=${w.type} len=${wsets.length} allowed=1..${RAMP_LEN[w.type]}`);
         // tier must be driven by %1RM (not block phase): either the base tier
         // for this top set's %1RM, or exactly one step down from it (the
-        // earlier-primed reduction) — never higher, never more than one step lower
+        // earlier-primed reduction) — never higher, never more than one step lower.
+        // AUDIT 2.9 exception: the day's first barbell lift gets one step UP
+        // from "minimal" to "short" (never opens cold on a single warmup set).
         const pct1rm = rpePct(it.reps, it.rpe);
         const baseTier = tierFromPct(pct1rm);
         const allowed = new Set([baseTier, oneStepDown(baseTier)]);
+        const itIdx = rx.items.indexOf(it);
+        const isFirstBarbell = it.barbell && !rx.items.slice(0, itIdx).some((o) => o.barbell);
+        if (isFirstBarbell && baseTier === "minimal") allowed.add("short");
         if (!allowed.has(w.type))
           rep.add("ramp-tier-mismatch", session, `${tag} pct1rm=${(pct1rm * 100).toFixed(1)}% baseTier=${baseTier} actualType=${w.type}`);
       }

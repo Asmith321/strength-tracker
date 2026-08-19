@@ -11,6 +11,8 @@ import {
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
+  DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
+  FEELER_LOAD_FLOOR_LB,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -100,15 +102,19 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
 
      A test run at the SAME mrv as the freqScale=1 test above can't actually
      distinguish "correctly ignores freqScale" from "accidentally scaled but
-     it happened not to matter here": that setup starts at mrv=20, capA=16,
-     so mrv+1=21 already exceeds capA before any scaling is even in play —
-     dividing capA by freqScale (16/1.333≈12) still blocks the raise, so a
-     buggy scaled version and the correct unscaled version give the identical
-     answer and the bug would ship invisibly. Closing that blind spot needs a
-     landmark value where scaled vs. unscaled DISAGREE: with capA=16 and
-     freqScale≈1.333, mrv=12 puts mrv+1=13, which is <= capA=16 (unscaled:
-     raise allowed) but > capA/freqScale≈12 (a scaled gate would wrongly
-     block it) — so this only passes if capA truly stays unscaled. */
+     it happened not to matter here": that setup starts at mrv=20, capA=19
+     (quads' fixed contribution rose to 11 sets after audit 2.5 restored
+     legext), so mrv+1=21 already exceeds capA before any scaling is even in
+     play — dividing capA by freqScale (19/1.333≈14.25) still blocks the
+     raise, so a buggy scaled version and the correct unscaled version give
+     the identical answer and the bug would ship invisibly. Closing that
+     blind spot needs a landmark value where scaled vs. unscaled DISAGREE:
+     with capA=19 and freqScale≈1.333, mrv=14 puts mrv+1=15, which is
+     <= capA=19 (unscaled: raise allowed) but > capA/freqScale≈14.25 (a
+     scaled gate would wrongly block it) — so this only passes if capA truly
+     stays unscaled. capA and the straddle point are derived at runtime
+     below rather than hardcoded a second time, so this stays correct if the
+     rotation's quad accounting changes again. */
   const p = fresh();
   p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
   p.lifts.squat.e1rm = 312;
@@ -117,17 +123,18 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   check(`sanity: this program's freqScale is not 1 (got ${scale.toFixed(3)})`, Math.abs(scale - 1) > 1e-9);
 
   const capA = maxDeliverable("quads", "accumulation");
-  p.landmarks.quads.mrv = 12; // mrv+1=13 straddles capA (16) and capA/scale (~12) — see comment above
-  p.landmarks.quads.mav = 11; // keep mav < mrv so the range clamp doesn't interfere
-  check(`sanity: mrv+1 (13) is <= capA (${capA}) but > capA/scale (${(capA / scale).toFixed(2)}) — the two paths must disagree`,
-    13 <= capA && 13 > capA / scale);
+  const straddleMrv = Math.floor(capA / scale); // mrv+1 lands just above capA/scale, still under capA
+  p.landmarks.quads.mrv = straddleMrv;
+  p.landmarks.quads.mav = straddleMrv - 1; // keep mav < mrv so the range clamp doesn't interfere
+  check(`sanity: mrv+1 (${straddleMrv + 1}) is <= capA (${capA}) but > capA/scale (${(capA / scale).toFixed(2)}) — the two paths must disagree`,
+    straddleMrv + 1 <= capA && straddleMrv + 1 > capA / scale);
 
   const { adjustments } = adjustLandmarks(p);
   const adj = adjustments.quads;
 
   check(`quads adjustment exists at freqScale≈${scale.toFixed(3)} (growth strong)`, !!adj);
   check(`capA used unscaled: MRV DOES raise here (${p.landmarks.quads.mrv} -> ${adj?.after.mrv}) — would be blocked if capA were divided by freqScale`,
-    adj && adj.dMrv === 1 && adj.after.mrv === 13);
+    adj && adj.dMrv === 1 && adj.after.mrv === straddleMrv + 1);
   check(`signal reflects a normal (non-capacity-gated) raise ("${adj?.signal}")`,
     adj?.signal === "growth strong, fatigue in check");
 
@@ -138,8 +145,8 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   p1.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
   p1.lifts.squat.e1rm = 312;
   p1.avgSessionGapDays = null; // freqScale = 1
-  p1.landmarks.quads.mrv = 12;
-  p1.landmarks.quads.mav = 11;
+  p1.landmarks.quads.mrv = straddleMrv;
+  p1.landmarks.quads.mav = straddleMrv - 1;
   const adj1 = adjustLandmarks(p1).adjustments.quads;
   check(`freqScale=1 companion case: byte-identical dMrv/after.mrv/signal (${adj1?.dMrv},${adj1?.after.mrv},"${adj1?.signal}")`,
     adj1 && adj1.dMrv === adj.dMrv && adj1.after.mrv === adj.after.mrv && adj1.signal === adj.signal);
@@ -272,22 +279,23 @@ console.log("\n== Stall notice: volumeAtMav now uses the same call-then-divide f
 
   // 2. freqScale != 1: a case constructed so the OLD unscaled deliveredThis
   //    and the NEW scaled-then-divided deliveredThis land on OPPOSITE sides
-  //    of mav — not a case where both happen to agree. At freqScale=1.333
-  //    (7/3-day gap), quads at cyc0: old(unscaled)=10, new(scaled/freqScale)=9.
-  //    mav=9.5 sits strictly between them.
+  //    of mav — not a case where both happen to agree. Computed at runtime
+  //    (not hardcoded) so this stays correct if quad accounting shifts again;
+  //    mav is set to the midpoint, guaranteed to sit strictly between them.
+  const fs733 = weeklyFreqScale(7 / 3);
+  const oldValCyc0 = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"));
+  const newValCyc0 = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"), fs733) / fs733;
+  const straddleMav = (oldValCyc0 + newValCyc0) / 2;
   {
-    const fs733 = weeklyFreqScale(7 / 3);
-    const oldVal = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"));
-    const newVal = deliveredWeekly("quads", "accumulation", 0, landmarksForExperience("intermediate"), fs733) / fs733;
-    check(`sanity: old (${oldVal}) and new (${newVal.toFixed(2)}) deliveredThis land on opposite sides of mav=9.5`,
-      oldVal >= 9.5 && newVal < 9.5);
+    check(`sanity: old (${oldValCyc0}) and new (${newValCyc0.toFixed(2)}) deliveredThis land on opposite sides of mav=${straddleMav.toFixed(2)}`,
+      oldValCyc0 !== newValCyc0);
 
     const flatHist = () => [300, 300, 300].map((r) => ({ e: r, raw: r, b: "accumulation" }));
     const p = fresh();
     p.lifts.squat.hist = flatHist(); p.lifts.squat.e1rm = 300;
     p.fatigue.index = 0.3;
     p.avgSessionGapDays = 7 / 3; // freqScale ≈ 1.333
-    p.landmarks.quads.mav = 9.5; // between old=10 and new=9.00
+    p.landmarks.quads.mav = straddleMav; // midpoint of old/new — see above
     const { stallStreaks } = adjustLandmarks(p);
     // "leave the streak unchanged" from a never-touched {} means the key stays
     // absent (undefined), not 0 — asserting undefined here, not === 0, is the
@@ -380,8 +388,10 @@ console.log("\n== P1.6: double progression for isolation accessories ==");
     return prescribe(p, green).items.find((i) => i.key === "lateralraise");
   };
   const hit = rx({ w: 30, reps: 12, rpe: 10 });
+  // audit 2.7: lateralraise now carries increment: 2.5 (cable-stack pin spacing), so the
+  // DP load step is 30 -> 32.5, not the old unit-default 5 lb step (30 -> 35).
   check(`top-of-range last session earns one load step (30 -> ${hit.topLoad}) and resets reps to ${DP_MIN_REPS}`,
-    hit.topLoad === 35 && hit.reps === DP_MIN_REPS);
+    hit.topLoad === 32.5 && hit.reps === DP_MIN_REPS);
   const mid = rx({ w: 30, reps: 9, rpe: 9 });
   check(`mid-range last session holds load (${mid.topLoad}) and climbs reps (9 -> ${mid.reps})`,
     mid.topLoad === 30 && mid.reps === 10);
@@ -407,6 +417,39 @@ console.log("\n== P2.1: layoffs gate the comeback prescription ==");
   check(`20-day comeback load is reduced (${sq(back20)} < ${sq(normal)})`, sq(back20) < sq(normal));
   check(`decay is capped at ${LAYOFF_MAX_DECAY * 100}% (60-day factor ${back60.layoff?.factor})`, back60.layoff?.factor === 1 - LAYOFF_MAX_DECAY);
   check("stored e1RM itself is not mutated by prescribing", mk(60).lifts.squat.e1rm === fresh().lifts.squat.e1rm);
+}
+
+console.log("\n== AUDIT 2.8: layoff caps effort/volume for the return window, not just load ==");
+{
+  // pre-fix a 45-day layoff returning into intensification prescribed full reps/RPE/sets —
+  // only the load itself was cut. Intensification: mainSets=4, rpeBase=8.5 (cyc0).
+  const intens = { type: "intensification", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+  const mk = (daysAgo, sessionsSinceLayoff) => { const p = fresh(); p.cycleIndex = 0; p.block = intens;
+    if (daysAgo != null) p.lastSessionAt = Date.now() - daysAgo * 86400000;
+    if (sessionsSinceLayoff !== undefined) p.sessionsSinceLayoff = sessionsSinceLayoff;
+    return p; };
+  const baseline = prescribe(mk(2), green);
+  const comeback = prescribe(mk(45), green);
+  const sq = (rx) => rx.items.find((i) => i.key === "squat");
+  check(`baseline (no layoff) runs the block's full RPE ceiling (${baseline.rpeTop})`, baseline.rpeTop > RETURN_RPE_CAP);
+  check(`live comeback session caps RPE at RETURN_RPE_CAP (${comeback.rpeTop} <= ${RETURN_RPE_CAP})`, comeback.rpeTop === RETURN_RPE_CAP);
+  check(`live comeback session cuts sets by RETURN_SET_MULT (${sq(baseline).sets} -> ${sq(comeback).sets})`,
+    sq(comeback).sets === Math.max(1, Math.round(sq(baseline).sets * RETURN_SET_MULT)));
+  // stored counter carries the cap into the session AFTER the live comeback, then clears
+  const second = prescribe(mk(2, 1), green); // recent gap, but still session 2 of the return window
+  check(`stored sessionsSinceLayoff=1 still caps the FOLLOWING session (${second.rpeTop} <= ${RETURN_RPE_CAP})`, second.rpeTop === RETURN_RPE_CAP);
+  const third = prescribe(mk(2, 2), green); // window closed
+  check(`sessionsSinceLayoff=2 closes the window — full RPE ceiling returns (${third.rpeTop})`, third.rpeTop === baseline.rpeTop);
+
+  // ingest state machine: comeback -> 1, next session -> 2, session after that -> cleared
+  let p = fresh(); p.lastSessionAt = Date.now() - 45 * 86400000;
+  const log = () => [{ key: "squat", topWeight: 300, topReps: 3, topRpe: 8, targetRpe: 8, missedSets: 0 }];
+  let r = ingest(p, log(), green);
+  check(`comeback session sets sessionsSinceLayoff=1 (got ${r.next.sessionsSinceLayoff})`, r.next.sessionsSinceLayoff === 1);
+  r = ingest(r.next, log(), green);
+  check(`second session advances it to 2 (got ${r.next.sessionsSinceLayoff})`, r.next.sessionsSinceLayoff === 2);
+  r = ingest(r.next, log(), green);
+  check(`third session clears it (got ${r.next.sessionsSinceLayoff})`, r.next.sessionsSinceLayoff == null);
 }
 
 console.log("\n== P2.2: inter-session gap is tracked for the rotation≈week assumption ==");
@@ -521,19 +564,29 @@ console.log("\n== Frequency scaling changes real prescribe()-driven transition t
 console.log("\n== CRITICAL VERIFICATION 1: prescribe() output is byte-identical at freqScale=1 ==");
 {
   /* Snapshot across 3 cycles x all 4 rotation days — every exercise's sets/
-     topLoad/reps. Originally captured from the pre-freqScale engine to prove
-     that threading freqScale through weeklyTarget/rampedSlotSets changed
-     nothing at the default freqScale=1; it still serves that purpose.
-     REBASELINED for the Tier 1 audit fixes, which deliberately change two
-     values here and nothing else (each diff was enumerated and confirmed
-     intended before regenerating):
-       - pullup topLoad 0 -> -55 on Bench day: assisted bodyweight lifts now
-         carry the assistance MAGNITUDE as a negative load instead of
-         discarding it (audit 1.4). sets/reps unchanged.
-       - curl and row swap positions on Deadlift day: row now precedes curl so
-         the compound isn't capped by pre-fatigued elbow flexors (audit 1.7).
-         Both exercises' own sets/reps/loads are unchanged — order only. */
-  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":3,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":3,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":20,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":30,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"lateralraise","sets":4,"topLoad":25,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
+     topLoad/reps. Originally captured to prove freqScale=1 is a no-op for
+     weeklyTarget/rampedSlotSets, then rebaselined once for the Tier 1 audit
+     fixes (see git history for that diff).
+     REBASELINED AGAIN for Tier 2 audit changes 2.2/2.4/2.5, which touch
+     prescribe()'s real output directly — each diff enumerated and confirmed
+     intended before regenerating:
+       - legext rejoins the D0 rotation (2.5): new row on Squat day, and the
+         quad ramped-slot residual (bsplit/frontsquat) shrinks because
+         fixedWeeklySets(quads) rose 8 -> 11 — this is the exact mechanism
+         flagged when the change was proposed, not a bug.
+       - D2's calfraise -> seatedcalf (2.4): same pool, one row swaps label
+         and its (rougher, unanchored) seed load.
+       - D3 gains a second triceps slot, triext (2.2): new row on Volume day.
+     REBASELINED A THIRD TIME for audit 2.7 (per-exercise load increments):
+     lateralraise/reversepecdeck now carry increment: 2.5, so their rounding
+     step changes from the unit-default 5 lb to 2.5 lb. Diffed old vs. new —
+     only those two exercises' topLoad moved (8 of 96 rows, all later cycles
+     where the finer step actually changes the rounded value), sets/reps
+     untouched. cablerow/pulldown (increment: 10) never differ here because
+     5 already divides 10 evenly. Block type is "accumulation" throughout
+     this snapshot, so audit 2.1(a) (intensification rep-tier change) has no
+     surface here — it's covered by its own dedicated test instead. */
+  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"legext","sets":3,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"seatedcalf","sets":3,"topLoad":145,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"legext","sets":3,"topLoad":165,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"seatedcalf","sets":4,"topLoad":150,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"legext","sets":3,"topLoad":170,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"seatedcalf","sets":4,"topLoad":160,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -668,6 +721,158 @@ console.log("\n== AUDIT 1.7: row precedes curl on Deadlift day ==");
     row.reps === 8 && row.topLoad === 150 && row.warmup?.type === "minimal");
   check(`curl unchanged (sets=${curl.sets} reps=${curl.reps} load=${curl.topLoad})`,
     curl.reps === 12 && curl.topLoad === 60 && !curl.warmup);
+}
+
+console.log("\n== AUDIT 2.1(a): compound/unilateral accessory reps hold at 8 through intensification ==");
+{
+  // pre-fix intensification dropped compound accessories to 6 reps, unilateral to 7 —
+  // stacking a rep cut on the block's existing mains-reps/RPE/volLevel intensity levers.
+  const rowDay = (block, reps) => { const p = fresh(); p.cycleIndex = 1; p.block = block; return prescribe(p, green).items.find(reps); };
+  const cablerow = rowDay({ type: "intensification", cycle: 0, sessionsInBlock: 0, nextAfter: null }, (i) => i.key === "cablerow");
+  check(`intensification compound accessory (cablerow) holds 8 reps (got ${cablerow.reps}), RPE still climbs to 8 (got ${cablerow.rpe})`,
+    cablerow.reps === 8 && cablerow.rpe === 8);
+  const squatDay = (block) => { const p = fresh(); p.cycleIndex = 0; p.block = block; return prescribe(p, green).items.find((i) => i.key === "bsplit"); };
+  const bsplit = squatDay({ type: "intensification", cycle: 0, sessionsInBlock: 0, nextAfter: null });
+  check(`intensification unilateral accessory (bsplit) holds 8 reps (got ${bsplit.reps}), RPE still climbs to 8.5 (got ${bsplit.rpe})`,
+    bsplit.reps === 8 && bsplit.rpe === 8.5);
+}
+
+console.log("\n== AUDIT 2.7: per-exercise load increments override the unit-default rounding step ==");
+{
+  // late-block loads where the finer step actually changes the rounded value vs. the old 5 lb default
+  const p = fresh(); p.cycleIndex = 1;
+  p.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
+  const items = prescribe(p, green).items;
+  const cablerow = items.find((i) => i.key === "cablerow");
+  const lateralraise = items.find((i) => i.key === "lateralraise");
+  const reversepecdeck = items.find((i) => i.key === "reversepecdeck");
+  check(`cablerow (increment: 10) rounds to a multiple of 10 (got ${cablerow.topLoad})`, cablerow.topLoad % 10 === 0);
+  check(`lateralraise (increment: 2.5) lands on a non-5-multiple value the old step couldn't produce (got ${lateralraise.topLoad})`,
+    lateralraise.topLoad === 22.5 && lateralraise.topLoad % 5 !== 0);
+  check(`reversepecdeck (increment: 2.5) lands on a non-5-multiple value the old step couldn't produce (got ${reversepecdeck.topLoad})`,
+    reversepecdeck.topLoad === 27.5 && reversepecdeck.topLoad % 5 !== 0);
+  // exercises without an `increment` still use the old unit-based step
+  const bench = items.find((i) => i.key === "bench");
+  check(`bench (no increment set) still rounds to the unit-default 5 lb step (got ${bench.topLoad})`, bench.topLoad % 5 === 0);
+}
+
+console.log("\n== AUDIT 2.6: RPE-aware double-progression rep bump ==");
+{
+  // accumulation cyc1 isolation target: rpe = min(10, 8 + 0.5*1) = 8.5, rep target 12
+  const rx = (last) => { const p = fresh(); p.cycleIndex = 3; p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
+    p.lifts.lateralraise.last = last; return prescribe(p, green).items.find((i) => i.key === "lateralraise"); };
+  const big = rx({ w: 30, reps: 9, rpe: 6 });     // gap 8.5-6=2.5 >= 1.5 -> bump 3
+  check(`big RPE reserve earns a 3-rep bump (9 -> ${big.reps})`, big.reps === 12 && big.topLoad === 30);
+  const med = rx({ w: 30, reps: 9, rpe: 7.7 });   // gap 0.8 -> bump 2
+  check(`medium RPE reserve earns a 2-rep bump (9 -> ${med.reps})`, med.reps === 11);
+  const small = rx({ w: 30, reps: 9, rpe: 9.5 }); // gap -1 -> bump 1
+  check(`set logged above target RPE earns only the old flat 1-rep bump (9 -> ${small.reps})`, small.reps === 10);
+}
+
+console.log("\n== AUDIT 2.6: overshoot converts to more than one load step, capped ==");
+{
+  const p = fresh(); p.cycleIndex = 3; p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
+  p.lifts.lateralraise.last = { w: 30, reps: 20, rpe: 10 }; // target 12, overshoot 8 -> floor(8/2)+1=5, capped at DP_MAX_STEPS
+  const hit = prescribe(p, green).items.find((i) => i.key === "lateralraise");
+  check(`overshoot steps clamp at DP_MAX_STEPS (${DP_MAX_STEPS}) instead of jumping 5 steps (30 -> ${hit.topLoad}) and resets reps to ${DP_MIN_REPS}`,
+    hit.topLoad === 30 + 2.5 * DP_MAX_STEPS && hit.reps === DP_MIN_REPS);
+}
+
+console.log("\n== AUDIT 2.6: stall-break cuts load after repeated non-advancing sessions ==");
+{
+  // athlete logs the exact same reps every session — the pre-fix engine reissues
+  // "9 -> 10" forever with the load frozen; dpStalls should climb then trigger a cut.
+  // The FIRST log has no prior `last` to compare against, so it can't count as a
+  // stall by definition — reaching the threshold takes DP_STALL_THRESHOLD+1 sessions.
+  let p = fresh();
+  p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
+  const log = (reps) => [{ key: "lateralraise", topWeight: 30, topReps: reps, topRpe: 8, targetRpe: 8, missedSets: 0 }];
+  for (let i = 0; i < DP_STALL_THRESHOLD + 1; i++) { const r = ingest(p, log(9), green); p = r.next; }
+  check(`dpStalls reaches the threshold after ${DP_STALL_THRESHOLD} non-advancing sessions (got ${p.lifts.lateralraise.dpStalls})`,
+    p.lifts.lateralraise.dpStalls === DP_STALL_THRESHOLD);
+  const rxAt = prescribe({ ...p, cycleIndex: 3 }, green).items.find((i) => i.key === "lateralraise");
+  check(`load cuts by DP_STALL_DECAY once the threshold is hit (30 -> ${rxAt.topLoad}) and reps reset to ${DP_MIN_REPS}`,
+    rxAt.topLoad === Math.round((30 * DP_STALL_DECAY) / 2.5) * 2.5 && rxAt.reps === DP_MIN_REPS);
+  // logging that stall-break session resets the counter rather than letting it climb forever
+  const r2 = ingest(p, log(9), green);
+  check(`dpStalls resets after the stall-break session is served (got ${r2.next.lifts.lateralraise.dpStalls})`, r2.next.lifts.lateralraise.dpStalls === 0);
+}
+
+console.log("\n== AUDIT 2.6: honest RPE display flag ==");
+{
+  const p = fresh(); p.cycleIndex = 3; p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
+  p.lifts.lateralraise.last = { w: 30, reps: 9, rpe: 8 };
+  const items = prescribe(p, green).items;
+  check("DP-mode isolation item is flagged dpMode:true", items.find((i) => i.key === "lateralraise").dpMode === true);
+  check("isolation item with no DP history (first-ever session) is not flagged", items.find((i) => i.key === "triext").dpMode === false);
+  check("non-isolation item (main lift) is not flagged", items.find((i) => i.key === "squat").dpMode === false);
+}
+
+console.log("\n== AUDIT 2.9: the session's first barbell lift never opens on a single warmup set ==");
+{
+  /* No combination of reps/RPE reachable through the real block schedule
+     (BLOCKS' mainReps/rpeBase/rpeStep, clamped at RPE>=6 by clampRpe) drives
+     a MAIN lift's %1RM below the 70% "minimal" boundary — every real block
+     already lands mains at "short" or "full" from cold. That's exactly why
+     this floor is cheap insurance rather than a live bug today: it's still
+     correct to add, but proving it end-to-end needs a %1RM the real block
+     table can't produce. rpePct(8,6)=0.68 (< the 0.70 boundary) is reachable
+     with an 8-rep/RPE6 main set, so a synthetic block config (never used by
+     ROTATION/BLOCKS) drives that combination through the real prescribe()
+     path to confirm the floor logic itself, not just its current
+     reachability. */
+  BLOCKS.__test29 = { label: "Test", emphasis: "volume", mainReps: { squat: 8 }, mainSets: 4,
+    rpeBase: 6, rpeStep: 0, rpeCap: 6, backoffDrop: 0.06, backoffRpeCap: 6, volLevel: "mev", minCycles: 1, maxCycles: 1 };
+  ACC_REP_TIERS.__test29 = ACC_REP_TIERS.accumulation;
+  const p = fresh(); p.cycleIndex = 0; p.block = { type: "__test29", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+  const squat = prescribe(p, green).items.find((i) => i.key === "squat");
+  check(`baseTier without the floor would be "minimal" (pct=${rpePct(squat.reps, squat.rpe).toFixed(3)} < 0.70)`,
+    rpePct(squat.reps, squat.rpe) < 0.70);
+  check(`first-barbell floor bumps it to short instead (type=${squat.warmup?.type}, ${squat.warmup?.sets?.length} sets)`,
+    squat.warmup?.type === "short" && squat.warmup.sets.length === 2);
+  delete BLOCKS.__test29;
+  delete ACC_REP_TIERS.__test29;
+
+  // in the REAL rotation, the day's later barbell lifts are never floored — verify the floor
+  // doesn't leak past the first exercise on a normal accumulation-block session.
+  const p2 = fresh(); p2.cycleIndex = 3; p2.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+  const items = prescribe(p2, green).items;
+  const squatReal = items.find((i) => i.key === "squat"), bench = items.find((i) => i.key === "bench");
+  check(`real volume-day squat (idx0) is unaffected either way (type=${squatReal.warmup?.type}, already >= short)`, squatReal.warmup?.type === "short");
+  check(`bench (idx1, not the day's first barbell lift) keeps its own unmodified tier (type=${bench.warmup?.type})`, bench.warmup?.type != null);
+}
+
+console.log("\n== AUDIT 2.10: feeler steps track priming — cold gets 2, primed gets 1 ==");
+{
+  const p = fresh(); p.cycleIndex = 1; p.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+  const items = prescribe(p, green).items;
+  const cablerow = items.find((i) => i.key === "cablerow");         // back, nothing primes it before idx1
+  const inclinebench = items.find((i) => i.key === "inclinebench"); // chest, primed by bench at idx0
+  const dbshoulderpress = items.find((i) => i.key === "dbshoulderpress"); // front_delts, cold
+  check(`cold accessory (cablerow) gets a 2-step feeler (${cablerow.warmup?.sets?.length} steps: ${JSON.stringify(cablerow.warmup?.sets)})`,
+    cablerow.warmup?.sets?.length === 2 && cablerow.warmup.sets[0].weight < cablerow.warmup.sets[1].weight);
+  check(`primed accessory (inclinebench) keeps the original 1-step feeler (${inclinebench.warmup?.sets?.length} steps)`,
+    inclinebench.warmup?.sets?.length === 1);
+  check(`another cold accessory (dbshoulderpress) also gets 2 steps (${dbshoulderpress.warmup?.sets?.length} steps)`,
+    dbshoulderpress.warmup?.sets?.length === 2);
+  // every feeler step must still land strictly below the working load
+  for (const it of [cablerow, inclinebench, dbshoulderpress])
+    check(`${it.key}: every feeler step < topLoad (${it.warmup.sets.map((s) => s.weight)} < ${it.topLoad})`,
+      it.warmup.sets.every((s) => s.weight < it.topLoad));
+}
+
+console.log("\n== AUDIT 2.12: isolation accessories earn a feeler once load crosses the absolute floor ==");
+{
+  const p = fresh(); p.cycleIndex = 0; p.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+  const items = prescribe(p, green).items;
+  const legcurl = items.find((i) => i.key === "legcurl");     // 125 lb >= floor
+  const calfraise = items.find((i) => i.key === "calfraise"); // 290 lb >= floor
+  const triext = items.find((i) => i.key === "triext");       // 80 lb < floor
+  const wristcurl = items.find((i) => i.key === "wristcurl"); // 25 lb < floor
+  check(`legcurl (${legcurl.topLoad} lb, >= ${FEELER_LOAD_FLOOR_LB}) now earns a feeler`, legcurl.warmup?.type === "feeler");
+  check(`calfraise (${calfraise.topLoad} lb, >= ${FEELER_LOAD_FLOOR_LB}) now earns a feeler`, calfraise.warmup?.type === "feeler");
+  check(`triext (${triext.topLoad} lb, < ${FEELER_LOAD_FLOOR_LB}) stays exempt (self-warms)`, triext.warmup == null);
+  check(`wristcurl (${wristcurl.topLoad} lb, < ${FEELER_LOAD_FLOOR_LB}) stays exempt (self-warms)`, wristcurl.warmup == null);
 }
 
 Date.now = RealNow;
