@@ -263,6 +263,33 @@ const EXPERIENCE_TIERS = {
   intermediate: { label: "Intermediate", blurb: "~1–3 yrs, steady progression", mev: 1.0, mrv: 1.0 },
   advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mrv: 1.3 },
 };
+/* INVESTIGATED (post-3.11), NOT A BUG: schedule capacity (ACC_SET_CAP,
+   PATTERN_FREQ, fixedSets) doesn't scale by tier the way MEV/MRV above do,
+   which looks at first glance like advanced athletes are proportionally
+   MORE capacity-starved than beginners — measured at a fixed 4x/week
+   cadence, capA/MRV is 123% for beginner, 94% intermediate, only 72%
+   advanced. But that measurement assumes a fixed 4x/week frequency, and the
+   schedule doesn't actually assume that: weeklyFreqScale already converts
+   real logged cadence into a true-weekly rate, and fixedWeeklySets/
+   ACC_SET_CAP being deliberately UNSCALED by freqScale (see weeklyTarget's
+   comment) means an athlete who trains MORE often gets MORE true-weekly
+   volume automatically — the same 4-day rotation just cycles faster,
+   delivering each fixed/ramped contribution more times per real week.
+   Verified end-to-end through prescribe(): an advanced-tier athlete at
+   6x/week reaches chest's MRV (was short 9 sets/week at 4x/week) and comes
+   within half a set of quads' MRV. This is also the mechanism the volume/
+   frequency literature actually supports for reaching higher volume targets
+   — RP's own numbers suggest the productive PER-SESSION set range narrows
+   for advanced lifters, not widens, so the fix is more sessions, not a
+   higher per-exposure cap; raising ACC_SET_CAP further by tier would have
+   been the wrong lever. The one thing frequency genuinely can't fix:
+   front/side/rear delts have zero fixed contribution and only 1-2 ramped
+   slots, so even at the freqScale clamp's ceiling (0.6) they cap out well
+   under an advanced MRV — a slot-count limit, not a frequency one. Left
+   alone deliberately: these are exactly the muscles RP's own landmarks say
+   need the least direct volume (see the front_delts/rear_delts comments on
+   PATTERNS), so under-delivering their MRV specifically isn't the same kind
+   of problem as under-delivering back's or chest's. */
 function landmarksForExperience(tier) {
   const s = EXPERIENCE_TIERS[tier] || EXPERIENCE_TIERS.intermediate;
   const mavFactor = (s.mev + s.mrv) / 2;
