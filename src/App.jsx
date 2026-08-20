@@ -193,6 +193,15 @@ function Onboarding({ onDone }) {
 function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const [open, setOpen] = useState(it.isMain);
   const [warmupOpen, setWarmupOpen] = useState(false);
+  /* Six loggable fields (weight/reps/RPE/missed/backoff reps/backoff RPE)
+     each feed a distinct engine calculation — none are removable without
+     losing real data the engine uses. `log` already defaults to exactly
+     what was prescribed, so a session logged as-written needs zero edits;
+     showing all six as open steppers regardless punishes the common case.
+     `editing` gates that: closed shows a compact summary of the CURRENT
+     log values (tap to reveal the full stepper set), same progressive-
+     disclosure principle the card itself already uses for accessories. */
+  const [editing, setEditing] = useState(false);
   /* assistanceNeeded now carries the magnitude as a NEGATIVE topLoad (see the
      bodyweight branch in prescribe) — show it rather than leaving the athlete
      to guess which band to grab. bodyweightUnknown means the engine couldn't
@@ -222,6 +231,20 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     : it.dpMode
     ? `${it.sets} × ${it.reps} @ ${loadScheme} (aim RPE ${it.rpe})`
     : `${it.sets} × ${it.reps} @ RPE ${it.rpe} · ${loadScheme}`;
+  // Same load-display logic as loadScheme above, applied to the LOGGED weight
+  // instead of the prescribed one — mode (bodyweight/assisted/repOnly) still
+  // comes from `it` since editing a number doesn't change which mode it's in.
+  const logLoadScheme = it.bodyweightUnknown ? "bodyweight only"
+    : it.bodyweight ? (log.topWeight < 0 ? `assisted — about ${Math.abs(log.topWeight)} lb help` : log.topWeight === 0 ? "bodyweight only" : `BW${log.topWeight >= 0 ? "+" : ""}${log.topWeight} lb`)
+    : it.barbell ? `${log.topWeight} lb`
+    : it.unilateral ? `${log.topWeight} lb/dumbbell`
+    : `${log.topWeight} lb`;
+  const logSummary = (it.isMain
+    ? `${it.sets} ${setWord(it.sets)} of ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
+    : it.dpMode
+    ? `${it.sets} × ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
+    : `${it.sets} × ${log.topReps} @ RPE ${log.topRpe} · ${logLoadScheme}`)
+    + (log.missedSets > 0 ? ` · ${log.missedSets} missed` : "");
   return (
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
@@ -260,19 +283,28 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
               )}
             </div>
           )}
-          <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
-          <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
-          <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
-          <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
-          {it.isMain && it.backoffSetCount > 0 && (
+          {!editing ? (
+            <button type="button" className="logsummary mono" onClick={() => setEditing(true)}>
+              <span>{logSummary}</span>
+              <span className="logsummary-edit">EDIT</span>
+            </button>
+          ) : (
             <>
-              <label className="fieldrow sm"><span>Backoff sets — reps (avg)</span><Stepper value={log.backoffReps} set={(v) => update({ backoffReps: v })} min={1} max={20} /></label>
-              <label className="fieldrow sm"><span>Backoff sets — RPE (avg)</span><Stepper value={log.backoffRpe} set={(v) => update({ backoffRpe: v })} min={5} max={10} step={0.5} /></label>
+              <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
+              <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
+              <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
+              <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
+              {it.isMain && it.backoffSetCount > 0 && (
+                <>
+                  <label className="fieldrow sm"><span>Backoff sets — reps (avg)</span><Stepper value={log.backoffReps} set={(v) => update({ backoffReps: v })} min={1} max={20} /></label>
+                  <label className="fieldrow sm"><span>Backoff sets — RPE (avg)</span><Stepper value={log.backoffRpe} set={(v) => update({ backoffRpe: v })} min={5} max={10} step={0.5} /></label>
+                </>
+              )}
+              {it.bodyweight && <div className="est mono">negative = assistance used</div>}
+              {Math.abs(log.topRpe - it.rpe) >= 1 && (
+                <div className="warn mono">{log.topRpe > it.rpe ? "harder than target — engine notes fatigue" : "easier than target — e1RM will rise"}</div>
+              )}
             </>
-          )}
-          {it.bodyweight && <div className="est mono">negative = assistance used</div>}
-          {Math.abs(log.topRpe - it.rpe) >= 1 && (
-            <div className="warn mono">{log.topRpe > it.rpe ? "harder than target — engine notes fatigue" : "easier than target — e1RM will rise"}</div>
           )}
           <button className="restbtn mono" onClick={() => onRest(it)}><Timer size={13} /> REST {it.isMain ? "3:00" : "1:30"}</button>
         </div>
@@ -780,6 +812,10 @@ const CSS = `
 .fieldrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px;}
 .panel .fieldrow:last-child{border-bottom:none;}
 .fieldrow.sm{padding:6px 0;font-size:13px;}
+.logsummary{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;padding:12px 0;
+  background:none;border:none;border-bottom:1px solid var(--line);font-size:13px;color:var(--text);cursor:pointer;
+  text-align:left;font-family:inherit;}
+.logsummary-edit{color:#E8C547;font-size:10.5px;letter-spacing:.1em;flex-shrink:0;}
 .est{font-size:11.5px;color:var(--dim);padding:2px 0 10px;}
 .textinput{width:100%;padding:12px 13px;border-radius:10px;border:1px solid var(--line);background:var(--surface2);color:var(--text);font-size:14.5px;height:44px;}
 .textinput:focus{outline:none;border-color:#D7443E;}
