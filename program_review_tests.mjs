@@ -146,8 +146,11 @@ console.log("\n== Session budget (ground rule: no unchecked growth) ==");
      was chosen (see that constant's comment: cap=6 was picked specifically
      to keep peak growth to +10 sets over the pre-3.11 number rather than the
      +14 a full RP-ceiling cap=7 would have cost). */
-  check(`no session exceeds 40 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 40);
-  check(`weekly peak total ≤145 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 145);
+  /* AUDIT 3.13: tightened back down from 40/145 — the same-day group cap
+     (SAME_DAY_GROUP_CAP) trims back's stacked same-session volume on Bench
+     and Deadlift days, so real peak numbers dropped to 38/141. */
+  check(`no session exceeds 38 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 38);
+  check(`weekly peak total ≤141 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 141);
   check(`early-block sessions stay 15-25 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 25));
 }
 
