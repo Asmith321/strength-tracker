@@ -1092,6 +1092,24 @@ const RETURN_SET_MULT = 0.7;
    number. */
 const FEELER_LOAD_FLOOR_LB = 100;
 const FEELER_LOAD_FLOOR_KG = 45;
+/* AUDIT 3.13: session-level cap on same-muscle RAMPED volume. ACC_SET_CAP
+   bounds each ramped slot's OWN set count, but back is the one group in
+   ROTATION with two ramped slots landing on the SAME day, twice a week
+   (Cable Row + Pull-Up on Bench day; Lat Pulldown + Barbell Row on Deadlift
+   day — see the ROTATION comment) — so raising ACC_SET_CAP (audit 3.11)
+   raised same-SESSION back volume by 2x the cap, not just weekly volume.
+   By late block that reached 12 sets of back work — two compound pulling
+   movements — in a single session, above even the per-session ceiling
+   (~8-12 sets/muscle, audit 3.11's own research) this program otherwise
+   respects. 10 was chosen by checking the alternative: 8 would also cap the
+   single session correctly but drags back's WEEKLY total below its own MAV
+   by late block (16 vs MAV 18); 10 keeps weekly total at MAV (20, still
+   short of MRV 25 — already true before this fix, just by a slightly wider
+   margin) while bounding any one session. Scoped to RAMPED sets only —
+   fixedSets accessories are a deliberately stable floor, not something this
+   should compress, and no group currently stacks a fixedSets item on top of
+   already-capped ramped volume for the same muscle on the same day. */
+const SAME_DAY_GROUP_CAP = 10;
 /* Volume-day main-lift override (see ROTATION[3].volumeDay): the second weekly
    squat/bench exposure runs higher-rep and RPE-capped instead of duplicating
    the week's first heavy top set — rep bump on the block's base reps, effort
@@ -1331,6 +1349,25 @@ function prescribe(program, readiness) {
       bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup, dpMode };
+  });
+
+  /* AUDIT 3.13: if this day stacks more than one RAMPED slot for the same
+     muscle (only back does, today — see SAME_DAY_GROUP_CAP), scale those
+     items down proportionally so the day's total for that muscle never
+     exceeds the same-session ceiling, rather than letting ACC_SET_CAP's
+     per-slot bound multiply by however many of that muscle's slots happen
+     to land on one day. A no-op for every group that doesn't stack. */
+  const rampedByGroup = {};
+  items.forEach((it, idx) => {
+    if (it.isMain || LIB[it.key].fixedSets) return;
+    (rampedByGroup[it.volumeGroup] = rampedByGroup[it.volumeGroup] || []).push(idx);
+  });
+  Object.values(rampedByGroup).forEach((idxs) => {
+    if (idxs.length < 2) return;
+    const total = idxs.reduce((s, i) => s + items[i].sets, 0);
+    if (total <= SAME_DAY_GROUP_CAP) return;
+    const scale = SAME_DAY_GROUP_CAP / total;
+    idxs.forEach((i) => { items[i] = { ...items[i], sets: Math.max(1, Math.round(items[i].sets * scale)) }; });
   });
 
   return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, rpeAdj, setMult, items,
@@ -1839,7 +1876,7 @@ export {
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS, BW_REPONLY_FLOOR,
   DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
-  RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG,
+  RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,
