@@ -51,10 +51,28 @@ console.log("\n== P0: volume ramp is real and reaches its ceiling ==");
 
 console.log("\n== P0: atVolCeiling transition actually fires ==");
 {
-  // Steadily-improving athlete, green readiness, RPE on target: no stall, no
-  // fatigue spike — the ONLY trigger available before maxCycles is the volume
-  // ceiling. Pre-fix this ran to "max accumulation length reached" at cyc 6.
+  /* Steadily-improving athlete, green readiness, RPE on target: no stall, no
+     fatigue spike — the ONLY trigger available before maxCycles is the volume
+     ceiling.
+     AUDIT 3.11: at the plain ~3.5x/week cadence this test used pre-3.11
+     (CLOCK += 2 days/session, no pinning), quads/hamstrings are no longer
+     capacity-frozen at all (the whole point of the capacity fix) and chest's
+     capacity-driven saturation point now lands so close to its own ramp
+     endpoint that it coincides with maxCycles by construction — weeklyTarget
+     is a straight line from MEV at cyc 0 to MRV at cyc (maxCycles-1), so
+     absent a capacity ceiling BELOW that line, "reached the ceiling" and
+     "hit max block length" happen in the same session, and the code reports
+     maxedTime (checked first). Demonstrating the ceiling trigger fires
+     independently now needs a frequency where a still-capacity-frozen group
+     (chest) saturates meaningfully before the ramp's own endpoint: pinning
+     avgSessionGapDays to 2.2 (~3.2x/week, freqScale 1.257) puts chest's true
+     weekly capacity at 15.9 — above its MAV of 14 (below MAV would trip the
+     3.6 fix's "capacity saturation isn't ceiling evidence" gate) and below
+     its MRV of 22 — so it saturates by cyc 3 and holds through cyc 5,
+     firing one full cycle before maxCycles=6. */
   let p = fresh();
+  const pinnedGap = 2.2;
+  p.avgSessionGapDays = pinnedGap;
   let transition = null, sessions = 0;
   const gains = {};
   while (!transition && sessions < 40) {
@@ -65,8 +83,9 @@ console.log("\n== P0: atVolCeiling transition actually fires ==");
         topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0,
         backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: Math.min(it.rpe, it.backoffRpeCap), backoffRpeCap: it.backoffRpeCap };
     });
-    CLOCK += 2 * 86400000;
+    CLOCK += pinnedGap * 86400000;
     const r = ingest(p, logs, green);
+    r.next.avgSessionGapDays = pinnedGap; // keep pinned so the cadence stays exactly what the math above assumes
     p = r.next; transition = r.transition; sessions++;
   }
   check("accumulation ends via a transition", !!transition, "none fired in 40 sessions");
@@ -76,16 +95,21 @@ console.log("\n== P0: atVolCeiling transition actually fires ==");
 
 console.log("\n== P0: auto-tune won't drift MRV past deliverable capacity ==");
 {
+  /* AUDIT 3.11: quads is no longer capacity-frozen at intermediate defaults
+     (RP-aligned MRV 18 <= the ACC_SET_CAP=6 capacity of 23) — the whole point
+     of that fix. chest still is (MRV 22 > capA 20), so this test moved to
+     chest/bench, the same pattern (a PATTERN_MAIN-driven group with a clean
+     growth signal on its main lift) applied to a group the fix didn't reach. */
   const p = fresh();
-  // strong same-block growth signal on squat (quads driver), low fatigue
-  p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
-  p.lifts.squat.e1rm = 312;
+  p.lifts.bench.hist = [225, 227, 229, 231].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+  p.lifts.bench.e1rm = 231;
   const { adjustments } = adjustLandmarks(p);
-  const adj = adjustments.quads;
-  const capA = maxDeliverable("quads", "accumulation");
-  check(`quads adjustment exists (growth strong)`, !!adj);
-  check(`MRV not raised past schedule capacity (mrv ${adj?.after.mrv} stays ${p.landmarks.quads.mrv}, capA=${capA})`,
-    adj && adj.dMrv === 0 && adj.after.mrv === p.landmarks.quads.mrv);
+  const adj = adjustments.chest;
+  const capA = maxDeliverable("chest", "accumulation");
+  check(`chest adjustment exists (growth strong)`, !!adj);
+  check(`sanity: chest really is still capacity-frozen post-3.11 (capA=${capA} < mrv=${p.landmarks.chest.mrv})`, capA < p.landmarks.chest.mrv);
+  check(`MRV not raised past schedule capacity (mrv ${adj?.after.mrv} stays ${p.landmarks.chest.mrv}, capA=${capA})`,
+    adj && adj.dMrv === 0 && adj.after.mrv === p.landmarks.chest.mrv);
   check(`MEV still allowed to rise (${adj?.before.mev} -> ${adj?.after.mev})`, adj && adj.dMev === 1);
   check(`signal explains the capacity gate ("${adj?.signal}")`, /capacity/.test(adj?.signal || ""));
 }
@@ -547,27 +571,25 @@ console.log("\n== Frequency scaling changes real prescribe()-driven transition t
     return fired;
   };
   const c3 = runCadence(7 / 3), c4 = runCadence(7 / 4), c5 = runCadence(7 / 5);
-  /* REVISED AGAIN BY AUDIT 3.6. The block above described the pre-3.6
-     behaviour accurately: at low frequency prescribe() needed more sets per
-     rotation to hit the same weekly rate, saturated the unscaled ACC_SET_CAP
-     sooner, and so tripped "weekly volume reached its ceiling" EARLIER in raw
-     cycle terms (3x/week fired at cyc 3 vs 4x/week at cyc 5).
-     That early firing was the bug, not the feature. Saturating a per-exposure
-     schedule cap is a CAPACITY limit; reporting it as "reached its volume
-     ceiling" told a 3x/week athlete they had accumulated volume tolerance
-     while they were still training near MEV — measured at ~2.2x/week,
-     hamstrings sat at 6.1 sets/week (MEV 6, MRV 16) flat from cycle 0 and
-     fired the trigger from cycle 2, truncating every accumulation block to
-     minCycles. ceilingHit now requires the reachable ceiling to be at least
-     MAV, so saturation alone no longer ends the block and the low-frequency
-     athlete gets the same block length as everyone else. */
-  check(`3x/week no longer terminates early on a capacity artifact (cyc ${c3?.cyc}, "${c3?.reason}")`,
+  /* REVISED AGAIN BY AUDIT 3.6, then AGAIN BY 3.11. The 3.6 pass established
+     that capacity saturation below MAV must never masquerade as "reached its
+     volume ceiling" (see ceilingHit's MAV floor). 3.11 then raised
+     ACC_SET_CAP and corrected the landmark table to RP's published numbers,
+     which pushed true schedule capacity well past MRV for several groups —
+     including the 4x/week and 5x/week cases here, which now run the FULL
+     accumulation length with no early ceiling at all (verified by direct
+     sweep from 2x to 6x/week: only the frequency extremes, 3x/week and
+     6x/week, still saturate a still-capacity-frozen group — chest — early;
+     everything from 2x through 5x/week now runs the full block). 3x/week
+     remains a useful case precisely because chest (capA 20, MRV 22) is still
+     capacity-frozen post-3.11 — see the "P0: atVolCeiling transition
+     actually fires" test above for the same mechanism at a nearby frequency
+     (gap 2.2, chosen to land capacity between chest's MAV and MRV). */
+  check(`3x/week still fires the ceiling early via a still-capacity-frozen group (cyc ${c3?.cyc}, "${c3?.reason}")`,
     c3?.cyc === 5 && /ceiling/.test(c3?.reason || ""));
-  check(`4x/week (freqScale=1): unchanged baseline — reaches the ceiling at cyc ${c4?.cyc} ("${c4?.reason}")`,
-    c4?.cyc === 5 && /ceiling/.test(c4?.reason || ""));
-  check(`3x/week now matches 4x/week rather than firing SOONER (${c3?.cyc} === ${c4?.cyc}) — pre-3.6 this was 3 < 5`,
-    c3.cyc === c4.cyc);
-  check(`5x/week: the fix changes real behavior here too — no longer reaches "ceiling" within the block at all (cyc ${c5?.cyc}, "${c5?.reason}"); runs the full accumulation length instead`,
+  check(`4x/week (freqScale=1): post-3.11 capacity now covers the full ramp — runs to maxCycles (cyc ${c4?.cyc}, "${c4?.reason}")`,
+    c4?.cyc === 6 && /max accumulation length/.test(c4?.reason || ""));
+  check(`5x/week: also runs the full accumulation length now (cyc ${c5?.cyc}, "${c5?.reason}")`,
     c5?.cyc === 6 && /max accumulation length/.test(c5?.reason || ""));
 
   // control: with no frequency info the OLD (pre-fix, per-rotation-only) behavior is preserved
@@ -600,8 +622,19 @@ console.log("\n== CRITICAL VERIFICATION 1: prescribe() output is byte-identical 
      untouched. cablerow/pulldown (increment: 10) never differ here because
      5 already divides 10 evenly. Block type is "accumulation" throughout
      this snapshot, so audit 2.1(a) (intensification rep-tier change) has no
-     surface here — it's covered by its own dedicated test instead. */
-  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"legext","sets":3,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":3,"topLoad":150,"reps":8},{"key":"pullup","sets":3,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":3,"topLoad":140,"reps":8},{"key":"row","sets":3,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"seatedcalf","sets":3,"topLoad":145,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":3,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"legext","sets":3,"topLoad":165,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":3,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"seatedcalf","sets":4,"topLoad":150,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":3,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":4,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"legext","sets":3,"topLoad":170,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":4,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"seatedcalf","sets":4,"topLoad":160,"reps":12},{"key":"reversepecdeck","sets":4,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":4,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":315,"reps":12}]];
+     surface here — it's covered by its own dedicated test instead.
+     REBASELINED A FOURTH TIME for audit 3.11 (RP-aligned landmarks,
+     ACC_SET_CAP 4->6, second RDL exposure on Volume day). Diffed old vs.
+     new: every topLoad/reps value is untouched (nothing about load-rounding
+     or rep targets changed); the only diffs are (a) sets counts moving —
+     down at cyc0 for several fixedSets/early-ramp accessories (lower MEV
+     baseline shrinks the block's starting point) and up at cyc5 to the new
+     ACC_SET_CAP=6 ceiling for groups that were previously capacity-capped
+     at 4, and (b) a new `rdl` row on the three Volume-day sessions (cyc
+     0/2/5 index 3) from the added second hamstrings exposure. No exercise
+     lost a row, no topLoad/reps moved outside that pattern — confirmed by
+     enumerating all 30 diffs individually before accepting this snapshot. */
+  const EXPECTED = [[{"key":"squat","sets":4,"topLoad":305,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":125,"reps":12},{"key":"legext","sets":3,"topLoad":160,"reps":12},{"key":"calfraise","sets":2,"topLoad":290,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":220,"reps":5},{"key":"cablerow","sets":2,"topLoad":150,"reps":8},{"key":"pullup","sets":2,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":1,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":405,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":2,"topLoad":140,"reps":8},{"key":"row","sets":2,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"shrug","sets":3,"topLoad":110,"reps":12},{"key":"seatedcalf","sets":2,"topLoad":145,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":25,"reps":12}],[{"key":"squat","sets":4,"topLoad":275,"reps":8},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bench","sets":4,"topLoad":195,"reps":8},{"key":"curl","sets":3,"topLoad":60,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":3,"topLoad":20,"reps":12},{"key":"cablefly","sets":1,"topLoad":50,"reps":12},{"key":"calfraise","sets":2,"topLoad":290,"reps":12}],[{"key":"squat","sets":4,"topLoad":315,"reps":5},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":130,"reps":12},{"key":"legext","sets":3,"topLoad":165,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"bench","sets":4,"topLoad":225,"reps":5},{"key":"cablerow","sets":4,"topLoad":150,"reps":8},{"key":"pullup","sets":4,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":2,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":6,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":5,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":6,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":420,"reps":4},{"key":"frontsquat","sets":1,"topLoad":225,"reps":8},{"key":"pulldown","sets":4,"topLoad":140,"reps":8},{"key":"row","sets":4,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":115,"reps":12},{"key":"seatedcalf","sets":4,"topLoad":150,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"rdl","sets":1,"topLoad":305,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"lateralraise","sets":6,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":2,"topLoad":55,"reps":12},{"key":"calfraise","sets":4,"topLoad":305,"reps":12}],[{"key":"squat","sets":4,"topLoad":320,"reps":5},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bsplit","sets":4,"topLoad":55,"reps":8},{"key":"legcurl","sets":3,"topLoad":135,"reps":12},{"key":"legext","sets":3,"topLoad":170,"reps":12},{"key":"calfraise","sets":6,"topLoad":315,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"bench","sets":4,"topLoad":230,"reps":5},{"key":"cablerow","sets":6,"topLoad":150,"reps":8},{"key":"pullup","sets":6,"topLoad":-55,"reps":8},{"key":"inclinebench","sets":6,"topLoad":110,"reps":8},{"key":"dbshoulderpress","sets":6,"topLoad":120,"reps":8},{"key":"reversepecdeck","sets":6,"topLoad":27.5,"reps":12},{"key":"lateralraise","sets":6,"topLoad":22.5,"reps":12}],[{"key":"deadlift","sets":4,"topLoad":425,"reps":4},{"key":"frontsquat","sets":4,"topLoad":225,"reps":8},{"key":"pulldown","sets":6,"topLoad":140,"reps":8},{"key":"row","sets":6,"topLoad":150,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"shrug","sets":3,"topLoad":120,"reps":12},{"key":"seatedcalf","sets":6,"topLoad":160,"reps":12},{"key":"reversepecdeck","sets":6,"topLoad":27.5,"reps":12}],[{"key":"squat","sets":4,"topLoad":285,"reps":8},{"key":"rdl","sets":3,"topLoad":305,"reps":8},{"key":"bench","sets":4,"topLoad":205,"reps":8},{"key":"curl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":85,"reps":12},{"key":"lateralraise","sets":6,"topLoad":22.5,"reps":12},{"key":"cablefly","sets":6,"topLoad":55,"reps":12},{"key":"calfraise","sets":6,"topLoad":315,"reps":12}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -1041,32 +1074,36 @@ console.log("\n== AUDIT 3.4: fatigue channels can reach their nominal weights (r
 
 console.log("\n== AUDIT 3.5: MEV cannot ratchet past MAV ==");
 {
+  /* AUDIT 3.11: quads is no longer capacity-frozen (RP-aligned MRV 18 <=
+     the ACC_SET_CAP=6 capacity of 23) — moved to chest/bench, still frozen
+     post-3.11 (capA 20 < MRV 22), same pattern as the P0 test above. */
   const mk = () => { const p = fresh();
-    p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
-    p.lifts.squat.e1rm = 312; return p; };
+    p.lifts.bench.hist = [225, 227, 229, 231].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+    p.lifts.bench.e1rm = 231; return p; };
   // headroom case: MEV well below MAV still raises normally
-  const below = adjustLandmarks(mk()).adjustments.quads;
+  const below = adjustLandmarks(mk()).adjustments.chest;
   check(`MEV still raises when it sits below MAV (${below?.before.mev} -> ${below?.after.mev})`, below && below.dMev === 1);
   // at-MAV case: the new guard blocks it
-  const p2 = mk(); p2.landmarks.quads.mev = p2.landmarks.quads.mav; // 14/14
-  const atMav = adjustLandmarks(p2).adjustments.quads;
-  check(`MEV at MAV (${p2.landmarks.quads.mev}/${p2.landmarks.quads.mav}) is NOT raised further (adjustment: ${atMav ? `dMev ${atMav.dMev}` : "none"})`,
+  const p2 = mk(); p2.landmarks.chest.mev = p2.landmarks.chest.mav; // 14/14
+  const atMav = adjustLandmarks(p2).adjustments.chest;
+  check(`MEV at MAV (${p2.landmarks.chest.mev}/${p2.landmarks.chest.mav}) is NOT raised further (adjustment: ${atMav ? `dMev ${atMav.dMev}` : "none"})`,
     !atMav || atMav.dMev === 0);
-  /* the ratchet this prevents: MRV is frozen by schedule capacity for every
-     group at intermediate defaults (maxDeliverable < MRV for 8/8), so +MEV
-     was the only reachable adjustment and nothing bounded it. */
-  check("sanity: quads MRV really is capacity-frozen (maxDeliverable < MRV), which is what made the ratchet one-way",
-    maxDeliverable("quads", "accumulation") < landmarksForExperience("intermediate").quads.mrv);
+  /* the ratchet this prevents: several groups still have MRV frozen by
+     schedule capacity even after 3.11's capacity increase — chest is one. */
+  check("sanity: chest MRV really is still capacity-frozen post-3.11 (maxDeliverable < MRV)",
+    maxDeliverable("chest", "accumulation") < landmarksForExperience("intermediate").chest.mrv);
 }
 
 console.log("\n== AUDIT 3.6/3.8: capacity saturation is not mistaken for volume evidence ==");
 {
   const lm = landmarksForExperience("intermediate");
-  /* 3.6: hamstrings can deliver at most 11 sets/wk against a MAV of 12, so a
-     saturated hamstrings ramp must NOT be reported as "reached its ceiling". */
-  const hamCap = maxDeliverable("hamstrings", "accumulation");
-  check(`hamstrings' reachable ceiling (${hamCap}) is below its MAV (${lm.hamstrings.mav}) — saturation there is a capacity limit, not volume tolerance`,
-    hamCap < lm.hamstrings.mav);
+  /* 3.6: AUDIT 3.11 raised capacity enough that hamstrings is no longer the
+     MAV-starved example (it now clears its own MAV comfortably) — front_delts
+     is the one group still short of MAV post-3.11 (capA 6 < MAV 7), so a
+     saturated front_delts ramp must NOT be reported as "reached its ceiling". */
+  const fdCap = maxDeliverable("front_delts", "accumulation");
+  check(`front_delts' reachable ceiling (${fdCap}) is below its MAV (${lm.front_delts.mav}) — saturation there is a capacity limit, not volume tolerance`,
+    fdCap < lm.front_delts.mav);
   /* 3.8 is documented as a KNOWN LIMITATION rather than fixed — this locks in
      WHY, so the inert repair isn't attempted again. Substituting
      min(mav, capW) for mav in the stall gate changes the gate's value but
@@ -1083,8 +1120,14 @@ console.log("\n== AUDIT 3.6/3.8: capacity saturation is not mistaken for volume 
       if ((oldGate && !reached) !== (newGate && !reached)) streakDiffers++;
     }
   }
+  /* AUDIT 3.11: the capacity fix closed this gap for all but front_delts —
+     still worth locking in as a KNOWN LIMITATION (not silently "fixed") for
+     the one group it didn't reach, and the no-op proof below (the obvious
+     min(mav,capW) repair changes the gate but never the streak outcome)
+     is a structural property of reachedCeiling's math, unaffected by how
+     many groups happen to be short. */
   check(`${unreachable} of ${Object.keys(lm).length} groups have MAV above what the schedule can deliver — the gate is unsatisfiable for them`,
-    unreachable >= 6);
+    unreachable === 1);
   check(`the obvious min(mav,capW) repair changes the gate in ${gateDiffers} cases but the streak outcome in ${streakDiffers} — it is a no-op, so the real blocker is reachedCeiling, not this gate`,
     gateDiffers > 0 && streakDiffers === 0);
 }

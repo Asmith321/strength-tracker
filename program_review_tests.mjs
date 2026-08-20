@@ -25,8 +25,9 @@ console.log("\n== Athlete mandates ==");
   check("ohp stays defined in LIB (history labels)", !!LIB.ohp);
   check("DB Shoulder Press is the sole front-delt slot (freq 1)", PATTERN_FREQ.front_delts === 1);
   const lm = landmarksForExperience("intermediate");
-  check("DB Shoulder Press absorbs the full residual up to the slot cap (4 late-block)",
-    rampedSlotSets("front_delts", "accumulation", 5, lm) === 4);
+  // AUDIT 3.11: ACC_SET_CAP raised 4 -> 6.
+  check("DB Shoulder Press absorbs the full residual up to the slot cap (6 late-block)",
+    rampedSlotSets("front_delts", "accumulation", 5, lm) === 6);
   // AUDIT 2.1(a): intensification no longer cuts compound/unilateral accessory reps
   // (was 6/7) — they hold at 8 in every block; RPE still climbs to mark the block's
   // added intensity instead of stacking a reps cut on top of it.
@@ -51,8 +52,17 @@ console.log("\n== Unilateral tier is real again ==");
   // rejoining the rotation) raised quads' fixed contribution and, with it,
   // maxDeliverable/effectiveCeiling — the property under test (the ramp
   // actually reaches its own ceiling) is unaffected by that shift.
-  check(`quads delivered ramp reaches its own ceiling (${ceil}) [${ramp.join(",")}]`,
-    Math.max(...ramp) === ceil);
+  /* AUDIT 3.11: quads is no longer capacity-frozen (ACC_SET_CAP 4->6 pushed
+     capA past MRV for this group), so its ramp is no longer clamped to
+     exactly capA by construction — it now approaches MRV via weeklyTarget's
+     smooth mev->mrv line, split across PATTERN_FREQ.quads=2 ramped slots by
+     round(residual/2). That rounding can overshoot the nominal ceiling by
+     up to 1 set (verified: cyc5 target=18 exactly, residual/2=3.5 rounds to
+     4, delivering 11+4*2=19) — allow that documented slop rather than assert
+     exact equality against a mechanism (hard capacity clamping) this group
+     no longer goes through. */
+  check(`quads delivered ramp reaches (within rounding of) its own ceiling (${ceil}) [${ramp.join(",")}]`,
+    Math.max(...ramp) >= ceil && Math.max(...ramp) <= ceil + 1);
   const p = fresh(); // bsplit on day 0
   const it = prescribe(p, green).items.find((i) => i.key === "bsplit");
   check("bsplit gets a feeler warmup at 6-8-rep loading", it && it.warmup?.type === "feeler");
@@ -69,7 +79,10 @@ console.log("\n== Side/rear delt split ==");
   check(`rear delts keep two slots (freq ${PATTERN_FREQ.rear_delts})`, PATTERN_FREQ.rear_delts === 2);
   const lm = landmarksForExperience("intermediate");
   const side = [0, 2, 5].map((c) => deliveredWeekly("side_delts", "accumulation", c, lm));
-  check(`side-delt volume ramps 6→8 [${side.join(",")}] (single capped slot of 4 before)`, side[0] === 6 && side[2] === 8);
+  // AUDIT 3.11: ACC_SET_CAP 4->6 raised the 2-slot capacity ceiling 8->12; side_delts
+  // is still capacity-frozen (capA 12 < MRV 18) so the ramp now plateaus at 12, reached by cyc2.
+  check(`side-delt volume ramps 6→12, plateauing at the raised capacity ceiling [${side.join(",")}]`,
+    side[0] === 6 && side[1] === 12 && side[2] === 12);
 }
 
 console.log("\n== Old-schema migration (combined pool, missing lifts) ==");
@@ -118,18 +131,24 @@ console.log("\n== Session budget (ground rule: no unchecked growth) ==");
       totals[cyc].push(prescribe(p, green).items.reduce((s, i) => s + i.sets, 0));
     }
   }
-  /* Thresholds raised for audit 2.2/2.4/2.5 (+3 sets each on Squat day
-     [legext] and Volume day [triext]; Deadlift day's swap is a like-for-like
-     label change with no set-count effect). Each addition is individually
-     justified — see the ROTATION comment — and the two together are a known,
-     accepted cost, not an oversight: peak day 31 (was 28) still sits below
-     Deadlift day's own 30, and 115 sets/week over 4 sessions (~29/day
-     average) stays in normal upper-intermediate territory. Ceilings still
-     exist so a FUTURE unplanned addition doesn't silently keep growing this. */
-  check(`no session exceeds 31 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 31);
-  check(`Bench day untouched by the audit 2.2/2.4/2.5 additions (still ≤28)`, totals[5][1] <= 28);
-  check(`weekly peak total ≤116 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 116);
-  check(`early-block sessions stay 18-25 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 25));
+  /* Thresholds raised AGAIN for audit 3.11 (ACC_SET_CAP 4->6, part of the
+     schedule-capacity fix — see the constant's own comment for the research
+     and the session-length tradeoff that picked 6 over 5 or 7). Unlike prior
+     rounds, this one touches every session, not just the days a specific
+     exercise was added to: raising the per-exposure cap lifts every ramped
+     slot's LATE-BLOCK ceiling everywhere at once. Peak day moves from
+     Bench(31, previously the lightest, explicitly guarded as "untouched") to
+     Bench(40) — Bench carries the most ramped-only, low-fixed-contribution
+     groups (front/side/rear delts, chest, back), so it absorbs the largest
+     share of the raised cap. That regression guard is retired: this pass
+     legitimately touches every day, including Bench, by design. Accepted
+     per the explicit session-budget tradeoff already made when ACC_SET_CAP
+     was chosen (see that constant's comment: cap=6 was picked specifically
+     to keep peak growth to +10 sets over the pre-3.11 number rather than the
+     +14 a full RP-ceiling cap=7 would have cost). */
+  check(`no session exceeds 40 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 40);
+  check(`weekly peak total ≤145 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 145);
+  check(`early-block sessions stay 15-25 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 25));
 }
 
 console.log("\n== Feeler sanity (root cause of the old 160-violation baseline) ==");
