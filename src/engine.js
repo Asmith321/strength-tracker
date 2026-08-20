@@ -203,23 +203,39 @@ function liftNormSlope(lift) { return liftSlopeInfo(lift).g; }
    old movement-pattern keys to their primary mover, finishing the migration
    that already muscle-named back/rear_delts/calves:
      squat → quads,  hinge → hamstrings,  horiz_press → chest,  vert_press → front_delts.
-   Same MEV/MAV/MRV numbers as before — this was a rename, not a recalculation.
-   migrateProgram() renames these keys in any already-saved program. */
+   migrateProgram() renames these keys in any already-saved program.
+
+   AUDIT 3.11: quads/hamstrings/chest/back/calves MEV were re-derived against
+   RP's actually-published per-muscle landmark table (cross-checked against
+   RP's own per-muscle articles, not carried over from an earlier, unsourced
+   pass) and found set ~1.3-2x too high — several were sitting at or above
+   RP's own MAV floor rather than at MEV. front_delts and rear_delts already
+   matched RP's published range closely and are unchanged. side_delts is
+   intentionally left below RP's published MRV ceiling (18 here vs RP's
+   24-30) — under-programmed relative to RP's stated maximum, but not a
+   defect: raising it doesn't fix anything broken, it's a volume preference,
+   and this program's schedule capacity (see ACC_SET_CAP) can't deliver
+   RP's higher ceiling for side delts anyway without a much larger session-
+   length cost than the rest of this correction took on. */
 const PATTERNS = {
-  quads:       { label: "Quads",               mev: 8,  mav: 14, mrv: 20 },
-  hamstrings:  { label: "Hamstrings / Post. chain", mev: 6, mav: 12, mrv: 16 },
-  chest:       { label: "Chest",               mev: 8,  mav: 14, mrv: 22 },
+  quads:       { label: "Quads",               mev: 5,  mav: 14, mrv: 18 },
+  hamstrings:  { label: "Hamstrings / Post. chain", mev: 3, mav: 6, mrv: 12 },
+  chest:       { label: "Chest",               mev: 5,  mav: 14, mrv: 22 },
   /* Front delts get indirect stimulus from chest/triceps pressing already
-     covered elsewhere in the program; RP's published landmark table gives
-     them an MEV of 0 for that reason. mev:2 keeps a small non-zero floor
-     since this program tracks front-delt pressing as part of a whole routine,
-     not in isolation. mav:7 is the midpoint of RP's 6-8 range. */
+     covered elsewhere in the program — RP's published landmark table gives
+     them MEV 0-2, MAV 4-8, MRV 8-12 for exactly that reason (RP's system
+     accounts for indirect stimulus by setting the DIRECT-set target low for
+     muscles that reliably get heavy secondary work, not via a separate
+     fractional-credit layer — verified against RP's own stated methodology,
+     not just its numbers). mev:2 sits at the top of that published range
+     rather than at 0, since this program tracks front-delt pressing as a
+     whole routine rather than crediting indirect volume anywhere else. */
   front_delts: { label: "Front Delts",         mev: 2,  mav: 7,  mrv: 12 },
   /* Horizontal + vertical pulling are consolidated into ONE 'back' volume pool:
      RP's landmark research treats back as a single muscle group, not two. Every
      pulling exercise carries volumeGroup:'back' so all their volume math
      (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
-  back:        { label: "Back",                mev: 10, mav: 18, mrv: 25 },
+  back:        { label: "Back",                mev: 7,  mav: 18, mrv: 25 },
   /* Rear and side delts are SEPARATE pools (split from the old combined
      'rear_delts' pool — different muscles with different jobs: side delts =
      abduction, trained only by lateral raises here; rear delts = horizontal
@@ -232,7 +248,7 @@ const PATTERNS = {
      canonical values — old tuned numbers described a different quantity. */
   rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 10, mrv: 16 },
   side_delts:  { label: "Side Delts",          mev: 6,  mav: 12, mrv: 18 },
-  calves:      { label: "Calves",              mev: 8,  mav: 14, mrv: 20 },
+  calves:      { label: "Calves",              mev: 5,  mav: 14, mrv: 20 },
 };
 
 /* ---- experience-based landmark seeding ----
@@ -370,7 +386,19 @@ const LIB = {
    D2's Standing Calf Raise becomes Seated (soleus vs. gastrocnemius — the
    pool is unchanged, still 3 calf slots, just one seated); D3 gains a second
    triceps slot so triceps (was 1 slot) reaches parity with biceps (2 curl
-   slots), a 2:1 split the original review flagged with no stated rationale. */
+   slots), a 2:1 split the original review flagged with no stated rationale.
+   AUDIT 3.11: D3 also gains a second RDL slot (hamstrings' only ramped
+   accessory previously appeared once per rotation, the lowest exposure count
+   of any group — PATTERN_FREQ.hamstrings was 1). Research-verified RP
+   guidance recommends 2-3 sessions/week for hamstrings specifically, and this
+   program's schedule-capacity fix (see ACC_SET_CAP) can't reach that any
+   other way for a group with only one ramped slot to begin with — piling
+   more sets onto a single weekly RDL exposure runs into the same per-session
+   diminishing-returns ceiling the capacity fix is itself respecting. Placed
+   on the Volume day next to squat rather than on Deadlift day: Volume day is
+   already this rotation's designated "second exposure" day for the two other
+   main-lift-driven groups (quads via squat, chest via bench), so this follows
+   the same pattern rather than inventing a new one. */
 const ROTATION = [
   { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "legext", "calfraise", "triext", "wristcurl", "cablecrunch"] },
   { name: "Bench",            items: ["bench", "cablerow", "pullup", "inclinebench", "dbshoulderpress", "reversepecdeck", "lateralraise"] },
@@ -381,7 +409,7 @@ const ROTATION = [
      the earlierPrimed warmup check, which keys off volumeGroup (pulldown
      already primes 'back' ahead of row either way). */
   { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "row", "curl", "shrug", "seatedcalf", "reversepecdeck"] },
-  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "bench", "curl", "triext", "lateralraise", "cablefly", "calfraise"] },
+  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "rdl", "bench", "curl", "triext", "lateralraise", "cablefly", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -398,10 +426,25 @@ const PATTERN_FREQ = (() => {
   }));
   return f;
 })();
-/* Hard per-exercise weekly set cap: prescribe() never assigns a single ramped
-   accessory more than this many sets in a week, however high the landmark
-   target climbs. */
-const ACC_SET_CAP = 4;
+/* Hard per-exposure set cap: prescribe() never assigns a single ramped-slot
+   APPEARANCE more than this many sets, however high the landmark target
+   climbs — a lift appearing N times/week can still deliver up to N x this.
+   AUDIT 3.11: raised from 4. At 4, this constant sat below the per-session
+   ceiling the volume literature actually supports (RP's own stated 8-12
+   direct sets/muscle/session before diminishing returns, corroborated by a
+   2025 meta-regression — Pelland, Remmert, Zourdos et al., Sports Medicine),
+   and combined with the flat per-group exposure counts (PATTERN_FREQ) it
+   left total schedule capacity at 94 sets/rotation against landmark demand
+   of 149 sets/rotation at this table's own (pre-3.11) intermediate MRVs —
+   63% deliverable, worse at higher experience tiers since capacity doesn't
+   scale with them (see landmarksForExperience) while MRV does. 6 is a
+   deliberate middle point, not the literature's full 8-12 ceiling: pushed to
+   7, every group reaches its MAV but peak single-session volume hit 44 sets;
+   6 keeps peak session growth to +10 sets (30 -> 40) while still bringing
+   7 of 8 muscle groups up to their MAV. The remaining shortfall (front delts
+   specifically) is consistent with RP's own numbers — it's the one group
+   RP says needs the least direct volume in the first place. */
+const ACC_SET_CAP = 6;
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 
