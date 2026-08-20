@@ -8,7 +8,7 @@ import {
   freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience, rampedSlotSets,
   rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
-  FATIGUE_FLOOR_FRAC,
+  FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
@@ -443,14 +443,43 @@ console.log("\n== P1.3: slope window doesn't straddle block boundaries, uses raw
   check("legacy hist entries without block tag still produce a slope", s2 > 0);
 }
 
-console.log("\n== P1.4: backoff RPE drift feeds the fatigue index ==");
+console.log("\n== P1.4: backoff RPE drift feeds the fatigue index (DORMANT path) ==");
 {
+  /* AREA 5 — read the heading before trusting this block. These assertions
+     exercise a code path the CURRENT program can never reach. Since the
+     hypertrophy rebuild nothing is assigned backoff sets: measured across 12
+     real sessions, no prescribed item has backoffSetCount > 0 and backoffDrift
+     is 0 every session. The logs below are hand-built with backoffSetCount: 3,
+     which prescribe() does not produce.
+     Kept rather than deleted — the machinery is real, RPE_CREEP_FULL_SCALE's
+     comment depends on knowing it contributes nothing today, and if backoff
+     sets are ever reintroduced this is the test that says the channel still
+     works. But it must not be read as evidence that the fatigue system has a
+     live backoff-drift input: it does not, and the divisor was retuned from
+     1.5 to 1.0 precisely because this term is structurally zero.
+     The assertion below pins that dormancy so it cannot change unnoticed in
+     either direction. */
   const mk = (backoffRpe) => [{ key: "squat", topWeight: 315, topReps: 5, topRpe: 7.5, targetRpe: 7.5, missedSets: 0,
     backoffSetCount: 3, backoffReps: 5, backoffRpe, backoffRpeCap: 8, touched: true }];
   const drift = ingest(fresh(), mk(9.5), green).next.fatigue;
   const ctrl = ingest(fresh(), mk(8), green).next.fatigue;
   check(`backoff drift raises rpeCreep (${drift.rpeCreep.toFixed(3)} > ${ctrl.rpeCreep.toFixed(3)})`, drift.rpeCreep > ctrl.rpeCreep);
   check("backoffDrift is surfaced on the fatigue state", drift.backoffDrift > 0 && ctrl.backoffDrift === 0);
+  // the dormancy claim itself, measured against what prescribe() actually emits
+  {
+    let p = fresh(), everAssigned = false;
+    for (let s = 0; s < ROT * 2; s++) {
+      const rx = prescribe(p, green);
+      rx.items.forEach((it) => { if ((it.backoffSetCount ?? 0) > 0) everAssigned = true; });
+      p = ingest(p, rx.items.map((it) => ({
+        key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+        missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      })), green).next;
+    }
+    check("...and prescribe() assigns NO backoff sets in the current program, so the two assertions above test dormant machinery",
+      !everAssigned);
+  }
 }
 
 console.log("\n== P1.5: isolation effort RAMPS across the block instead of starting at failure ==");
@@ -1296,18 +1325,51 @@ console.log("\n== AUDIT 3.12 (re-derived): true-weekly volume is frequency-INDEP
   const last = BLOCKS.accumulation.maxCycles - 1;
   const trueWeekly = (g, gap) => { const fs = wfs(gap); return deliveredWeekly(g, "accumulation", last, lm, fs) / fs; };
   const cadences = [7 / 3, 1.75, 7 / 5, 7 / 6]; // 3x .. 6x per week
+  /* AREA 5 REWRITE. This block used to assert one thing per group — that the
+     spread of true-weekly volume across 3x-6x cadence was <= 8 — with a comment
+     justifying the tolerance as headroom for ROUNDING ("rampedSlotSets rounds
+     to whole sets per slot... 8 is ~1 set per slot per rotation").
+     That justification was wrong, and measuring it is what exposed it. Back's
+     spread is 7.5 of an allowed 8, and none of it is rounding: at the advanced
+     tier ALL FOUR of these groups are capacity-limited at 3x/week (each
+     delivers exactly its per-rotation capacity, 15.0, rather than its MAV), and
+     back and biceps are still capacity-limited at 4x/week. The tolerance was
+     sized for a phenomenon that wasn't causing the spread, and was wide enough
+     to swallow the one that was — a test that passes for a reason its own
+     comment misstates is not constraining anything.
+     Split into the two properties that are actually true, each asserted where
+     it applies:
+       (a) where the schedule CAN deliver MAV, weekly volume is frequency
+           independent to within genuine rounding (<= 2 sets, not 8);
+       (b) where it cannot, delivered volume equals capacity exactly — which is
+           the honest statement of what a capacity limit does, and is a much
+           stronger claim than "within 8".
+     Both are tighter than the assertion they replace. */
   for (const g of ["chest", "back", "quads", "biceps"]) {
-    const rates = cadences.map((c) => trueWeekly(g, c));
-    const spread = Math.max(...rates) - Math.min(...rates);
-    /* Tolerance, not equality: freqScale's two halves are exact inverses only
-       before rounding, and rampedSlotSets rounds to whole sets per slot, so a
-       group with 4 slots can drift a few sets either way. 8 is ~1 set per slot
-       per rotation — enough headroom for that rounding, tight enough that a
-       real regression to frequency-dependent volume would break it. */
-    check(`${g}: true-weekly volume is stable across 3x-6x cadence (${rates.map((r) => r.toFixed(1)).join(", ")}; spread ${spread.toFixed(1)} <= 8)`,
-      spread <= 8);
-    check(`${g}: every cadence still delivers at least MEV (${lm[g].mev})`, rates.every((r) => r >= lm[g].mev));
+    const free = [], limited = [];
+    for (const c of cadences) {
+      const fs = wfs(c);
+      const capW = maxDeliverable(g, "accumulation") / fs;
+      (capW < lm[g].mav ? limited : free).push({ c, fs, capW, rate: trueWeekly(g, c) });
+    }
+    if (free.length > 1) {
+      const rates = free.map((f) => f.rate);
+      const spread = Math.max(...rates) - Math.min(...rates);
+      check(`${g}: where capacity allows MAV, weekly volume is frequency-independent to within rounding (${rates.map((r) => r.toFixed(1)).join(", ")}; spread ${spread.toFixed(1)} <= 2)`,
+        spread <= 2);
+    }
+    limited.forEach(({ c, capW, rate }) => {
+      check(`${g}: at ${(7 / c).toFixed(0)}x/week the schedule caps below MAV, and delivery equals that cap exactly (${rate.toFixed(1)} == ${capW.toFixed(1)})`,
+        Math.abs(rate - capW) < 0.01);
+    });
+    check(`${g}: every cadence still delivers at least MEV (${lm[g].mev})`, cadences.every((c) => trueWeekly(g, c) >= lm[g].mev));
   }
+  /* Guard the split itself: if capacity ever rose enough that nothing is
+     capacity-limited, the (b) assertions would silently vanish and this block
+     would quietly test less than it claims to. */
+  check("sanity: at least one group/cadence pair really is capacity-limited, so the second assertion above is not vacuous",
+    ["chest", "back", "quads", "biceps"].some((g) => cadences.some((c) =>
+      maxDeliverable(g, "accumulation") / wfs(c) < lm[g].mav)));
   /* PHASE 4 (T1-1): this previously asserted capacity >= MAV for EVERY group at
      the advanced tier. That passed only because maxDeliverable was overstating
      capacity by ignoring SAME_DAY_GROUP_CAP; the real per-rotation capacity for
@@ -1734,8 +1796,17 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     mg.fatigue.index = 0.2;
     mg.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
     const adj = adjustLandmarks(mg).adjustments.quads;
+    /* AREA 5: assert the adjustment EXISTS before asserting a property of it.
+       Written as a bare `!adj || ...` this passes vacuously if the growth block
+       ever stops producing an adjustment for quads — the test would go green
+       while testing nothing, which is the failure mode this whole pass is
+       looking for. (The sibling case at the MEV-at-MAV guard above uses the
+       same `!x ||` shape but is rescued by the assertion immediately after it,
+       which requires the object to exist; this one had no such partner.) */
+    check("sanity: the migrated program does produce a quads adjustment, so the next assertion is not vacuous",
+      adj != null);
     check("...so no growth block ever reports a volume CUT labelled 'growth strong'",
-      !adj || !(adj.dMev < 0 && /growth strong/.test(adj.signal)));
+      adj != null && !(adj.dMev < 0 && /growth strong/.test(adj.signal)));
   }
 
   // T2-5: effectiveCeiling is the single definition, and is frequency-aware
@@ -1768,6 +1839,186 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
       q.fatigue.slope !== 0);
     check("deadlift is NOT in the rotation, so nothing untrained can feed that signal",
       !trained.has("deadlift"));
+  }
+}
+
+/* ===========================================================================
+   AREA 5 — gaps found by MUTATION TESTING, not by reading.
+   193 single-operator mutations were applied to the engine's core math; 109
+   changed nothing observable (equivalent mutants), 84 changed real behaviour,
+   and the suite caught 56 of those — a 66.7% kill rate. The blocks below close
+   the most serious of the 28 that survived. Each assertion is written against
+   the specific mutation that escaped, and was verified by re-applying that
+   mutation and confirming this test then fails.
+   =========================================================================== */
+{
+  console.log("\n== AREA 5.1: the DELOAD block is pinned (it was entirely untested) ==");
+  /* The largest single gap. Mutating the deload volume multiplier from 0.5 to
+     1.5 — tripling deload volume, which stops it being a deload at all — was
+     caught by NOTHING, and neither were its three rep targets. The whole suite
+     exercised accumulation and never pinned the block the program relies on for
+     recovery. */
+  const lm = landmarksForExperience("intermediate");
+  Object.keys(lm).forEach((g) => {
+    const del = weeklyTarget(g, "deload", 0, lm, 1);
+    check(`${g}: deload volume target is half MEV (${del} == round(${lm[g].mev} * 0.5))`,
+      del === Math.round(lm[g].mev * 0.5));
+    check(`${g}: deload delivers strictly less than the accumulation MEV cycle`,
+      deliveredWeekly(g, "deload", 0, lm, 1) < deliveredWeekly(g, "accumulation", 0, lm, 1));
+  });
+  check(`deload VOL_SCALE is a genuine reduction (${VOL_SCALE.half} < ${VOL_SCALE.mev} < ${VOL_SCALE.ramp})`,
+    VOL_SCALE.half < VOL_SCALE.mev && VOL_SCALE.mev < VOL_SCALE.ramp);
+  // deload rep targets, per tier, straight off a real prescribe()
+  {
+    const p = fresh();
+    p.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+    const seen = {};
+    for (let d = 0; d < ROT; d++) {
+      p.cycleIndex = d;
+      prescribe(p, green).items.forEach((it) => { seen[LIB[it.key].repTier] = it.reps; });
+    }
+    /* LITERAL values, deliberately. Written as `seen[tier] === ACC_REP_TIERS
+       .deload[tier].reps` this compares prescribe()'s output against the very
+       table prescribe() read it from — both sides move together under any
+       mutation of that table, and the assertion is vacuous. That is the exact
+       self-consistency failure this whole area-5 pass is about, and my first
+       attempt at this test had it: mutating the deload compound rep target
+       from 8 to 9 passed all 429 assertions. Pinning the numbers means a change
+       to the deload prescription has to be made deliberately, here. */
+    const DELOAD_REPS = { compound: 8, unilateral: 10, isolation: 12 };
+    Object.entries(DELOAD_REPS).forEach(([tier, reps]) => {
+      if (seen[tier] === undefined) return;
+      check(`deload ${tier} reps are ${reps} (prescribed ${seen[tier]})`, seen[tier] === reps);
+    });
+    check("deload RPE never exceeds the deload cap on any exercise", (() => {
+      const q = fresh(); q.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+      for (let d = 0; d < ROT; d++) {
+        q.cycleIndex = d;
+        for (const it of prescribe(q, green).items)
+          if (it.rpe > (ACC_REP_TIERS.deload[LIB[it.key].repTier]?.rpe ?? 10)) return false;
+      }
+      return true;
+    })());
+  }
+}
+
+{
+  console.log("\n== AREA 5.2: the auto-tune's conjunctions and gate boundaries ==");
+  /* Four surviving mutations lived here. Two turned an && into an ||, which
+     means landmarks would rise on a block that grew OR felt fine rather than
+     one that did both — i.e. volume climbing through a fatigued block. Two
+     moved a raise gate's boundary by one, which silently shifts when the
+     program is willing to add volume. All four passed the whole suite. */
+  const mk = () => {
+    const p = fresh();
+    Object.values(p.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 104, raw: 104 }, { e: 108, raw: 108 }]; });
+    p.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
+    return p;
+  };
+  // growth branch requires BOTH growth and comfortable fatigue, not either
+  const grewAndCalm = mk(); grewAndCalm.fatigue.index = 0.2;
+  const grewButFried = mk(); grewButFried.fatigue.index = 0.95;
+  const aCalm = adjustLandmarks(grewAndCalm).adjustments;
+  const aFried = adjustLandmarks(grewButFried).adjustments;
+  const raised = (adj) => Object.values(adj).some((a) => a.dMav > 0 || a.dMrv > 0);
+  check("growth + comfortable fatigue DOES raise landmarks", raised(aCalm));
+  check("growth + HIGH fatigue does NOT raise landmarks (the gate is AND, not OR)", !raised(aFried));
+  // flat growth + comfortable fatigue must also not raise
+  const flatCalm = fresh();
+  Object.values(flatCalm.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+  flatCalm.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
+  flatCalm.fatigue.index = 0.2;
+  check("flat growth + comfortable fatigue does NOT raise landmarks either (both conjuncts required)",
+    !raised(adjustLandmarks(flatCalm).adjustments));
+  /* Gate boundaries. A group sitting exactly one set below capacity must be
+     allowed to take that last set; one sitting AT capacity must not. This pins
+     `+ 1 <=` against both `+ 1 <` and `+ 2 <=`. */
+  {
+    const atEdge = mk(); atEdge.fatigue.index = 0.2;
+    const g = "quads", capA = maxDeliverable(g, "accumulation");
+    atEdge.landmarks[g] = { ...atEdge.landmarks[g], mrv: capA - 1, mav: capA - 2, mev: 4 };
+    const eAdj = adjustLandmarks(atEdge).adjustments[g];
+    check(`a group exactly one set below capacity is allowed the last raise (mrv ${capA - 1} -> ${eAdj ? eAdj.after.mrv : "none"})`,
+      eAdj && eAdj.dMrv === 1);
+    const atCap = mk(); atCap.fatigue.index = 0.2;
+    atCap.landmarks[g] = { ...atCap.landmarks[g], mrv: capA, mav: capA - 1, mev: 4 };
+    const cAdj = adjustLandmarks(atCap).adjustments[g];
+    check(`a group already AT capacity is refused an MRV raise (dMrv ${cAdj ? cAdj.dMrv : 0})`,
+      !cAdj || cAdj.dMrv <= 0);
+  }
+}
+
+{
+  console.log("\n== AREA 5.3: EWMA smoothing factors are valid, and two of my own tests were too loose ==");
+  /* Mutating an EWMA alpha to 1.34 (outside (0,1], so the filter overshoots its
+     input rather than smoothing toward it) survived the whole suite. Alphas are
+     never asserted anywhere, so any of them could drift out of range unnoticed. */
+  const alphas = { READSUPP_EWMA_ALPHA };
+  Object.entries(alphas).forEach(([n, v]) => {
+    check(`${n} is a valid EWMA factor in (0, 1] (${v})`, v > 0 && v <= 1);
+  });
+  /* Behavioural check on the alphas that are inline constants rather than named
+     exports: an EWMA must never move PAST its target in one step. Feeding a
+     constant input, the smoothed value must approach it monotonically from
+     below and never exceed it. */
+  {
+    let p = fresh();
+    const prev = [];
+    for (let s = 0; s < 10; s++) {
+      const rx = prescribe(p, { trainingReadiness: 40 });
+      p = ingest(p, rx.items.map((it) => ({
+        key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+        missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      })), { trainingReadiness: 40 }).next;
+      prev.push(p.fatigue.readSupp);
+    }
+    const target = 1 - 0.4; // readiness 40 -> score 0.4 -> suppression 0.6
+    check(`readSupp EWMA converges toward its target without overshooting (${prev[prev.length - 1].toFixed(3)} <= ${target})`,
+      prev.every((v) => v <= target + 1e-9));
+    check("readSupp EWMA is monotonic toward the target (no oscillation)",
+      prev.every((v, i) => i === 0 || v >= prev[i - 1] - 1e-9));
+  }
+  /* The e1RM smoothing alphas (0.34 compound / 0.20 isolation) are INLINE
+     constants in ingest, not exported, so the readSupp check above does not
+     cover them — mutating 0.34 to 1.34 survived my first attempt at this
+     block. An alpha in (0,1] means the smoothed value must land strictly
+     BETWEEN the old estimate and the new reading; an alpha above 1 overshoots
+     past the reading. Asserted behaviourally, which needs no export. */
+  {
+    const p = fresh();
+    const before = { ...p.lifts };
+    const rx = prescribe(p, green);
+    // log a big honest jump so the reading is far above the seeded estimate
+    const logs = rx.items.map((it) => ({
+      key: it.key, topWeight: it.bodyweight ? it.topLoad + 40 : it.topLoad + 40, topReps: it.reps,
+      topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+      backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+      backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+    }));
+    const after = ingest(p, logs, green).next;
+    let overshot = null;
+    rx.items.forEach((it) => {
+      const old = before[it.key].e1rm, now = after.lifts[it.key].e1rm;
+      const raw = after.lifts[it.key].hist.at(-1).raw;
+      if (raw > old && now > raw + 0.5) overshot = `${it.key}: ${old.toFixed(1)} -> ${now.toFixed(1)} past reading ${raw}`;
+    });
+    check(`the e1RM EWMA never overshoots its reading, so every alpha is in (0,1] (${overshot || "none overshot"})`,
+      overshot === null);
+  }
+  /* My own Phase 4 T2-4 assertion only checked that migration left MEV within
+     the ratio bound. Setting MEV to 1 also satisfies that, so a mutation
+     replacing Math.max(1, cap) with Math.min(1, cap) — which pins MEV at 1 for
+     every group — passed it. Assert the actual intent: MEV lands ON the cap. */
+  {
+    const p = fresh();
+    p.landmarks.quads = { label: "Quads", mev: 12, mav: 14, mrv: 18 };
+    const mg = migrateProgram(p);
+    const cap = Math.floor(14 * MEV_MAV_MAX_RATIO);
+    check(`migration sets a violating MEV to exactly the ratio cap, not merely inside it (${mg.landmarks.quads.mev} === ${cap})`,
+      mg.landmarks.quads.mev === cap);
+    check("...and leaves a compliant group's MEV completely alone",
+      mg.landmarks.chest.mev === landmarksForExperience("intermediate").chest.mev);
   }
 }
 
