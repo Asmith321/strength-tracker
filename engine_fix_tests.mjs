@@ -8,7 +8,7 @@ import {
   freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience, rampedSlotSets,
   rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
-  FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA,
+  FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA, SAME_DAY_GROUP_CAP as SDGC,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
@@ -2020,6 +2020,263 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     check("...and leaves a compliant group's MEV completely alone",
       mg.landmarks.chest.mev === landmarksForExperience("intermediate").chest.mev);
   }
+}
+
+/* ===========================================================================
+   AREA 5 (round 2) — close the remaining surviving mutants.
+   The first area-5 pass closed the 6 most serious of 28 survivors and left 22
+   open as "cost above benefit". Closing them out properly here. Each block
+   names the mutation it kills; all were verified by re-applying that mutation
+   and confirming the assertion fails.
+   =========================================================================== */
+{
+  console.log("\n== AREA 5.4: same-day cap arithmetic (4 surviving mutants) ==");
+  /* The cap's internals were unreachable by any test because, after T1-3's
+     remainder distribution, SAME_DAY_GROUP_CAP stopped binding at the default
+     landmarks — disabling it entirely changed nothing observable there. Four
+     mutations lived in that shadow: the day-walk offset (`let i = 0`), the
+     stacking predicate (`n >= 2`), the running total's seed value, and the
+     rounding mode of the scale-down.
+     A landmark set with quads MAV 23 makes the cap bind again AND makes the two
+     stacked days UNEVEN (pre-cap [6,6,6,5]), which is what separates the four:
+     an even pair alone cannot distinguish round from floor, or a total of 12
+     from a total of 13. Auto-tuned landmarks reach this range in normal use, so
+     this is a real configuration, not a synthetic one. */
+  const capLm = { quads: { label: "Quads", mev: 5, mav: 23, mrv: 25 } };
+  const alloc = rampedAllocation("quads", "accumulation", 5, capLm, 1);
+  check(`the binding-cap allocation is exactly [5,5,5,5] (got [${alloc}])`,
+    JSON.stringify(alloc) === JSON.stringify([5, 5, 5, 5]));
+  const days = PATTERN_DAY_SLOTS.quads;
+  let idx = 0;
+  days.forEach(({ day, n }) => {
+    const tot = alloc.slice(idx, idx + n).reduce((s, v) => s + v, 0);
+    check(`day ${day}: stacked quads total ${tot} respects SAME_DAY_GROUP_CAP (${SAME_DAY_GROUP_CAP})`,
+      tot <= SAME_DAY_GROUP_CAP);
+    idx += n;
+  });
+  check("sanity: without the cap this configuration WOULD breach it, so the assertions above are not vacuous",
+    2 * ACC_SET_CAP > SAME_DAY_GROUP_CAP);
+}
+
+{
+  console.log("\n== AREA 5.5: the frequency-scaled set floor (1 mutant) ==");
+  /* round -> floor on the scaled floor survived: at 5x/week round(2 x 0.8) = 2
+     but floor(2 x 0.8) = 1, which quietly halves the minimum prescription for
+     every ramped slot at that cadence. */
+  const lm = landmarksForExperience("intermediate");
+  const fs5 = weeklyFreqScale(7 / 5);
+  const lowest = Math.min(...Object.keys(lm).map((g) =>
+    Math.min(...rampedAllocation(g, "accumulation", 0, lm, fs5))));
+  check(`at 5x/week no ramped slot opens the block below 2 sets (lowest ${lowest})`, lowest >= 2);
+  check(`sanity: the scaled floor really is round-sensitive here (round=${Math.round(2 * fs5)}, floor=${Math.floor(2 * fs5)})`,
+    Math.round(2 * fs5) !== Math.floor(2 * fs5));
+}
+
+{
+  console.log("\n== AREA 5.6: deload set counts, both minimum and rounding (3 mutants) ==");
+  /* 5.1 pinned deload VOLUME and REPS but not deload SET COUNTS, leaving the
+     `Math.max(1, Math.round(...))` in both the fixedSets and ramped branches
+     unconstrained in three ways. */
+  const mkDeload = () => { const p = fresh(); p.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null }; p.cycleIndex = 0; return p; };
+  const green80 = prescribe(mkDeload(), { trainingReadiness: 80 }).items;
+  const amber55 = prescribe(mkDeload(), { trainingReadiness: 55 }).items;
+  const fxG = green80.find((i) => LIB[i.key].fixedSets);
+  const fxA = amber55.find((i) => LIB[i.key].fixedSets);
+  // round vs floor: 3 x 0.5 = 1.5, which rounds to 2 and floors to 1
+  check(`deload fixedSets accessory rounds 1.5 up to 2 at green readiness (${fxG.key}=${fxG.sets})`, fxG.sets === 2);
+  // Math.max(1,...) vs Math.max(2,...): at amber the same accessory drops to 1
+  check(`...and is allowed to fall to 1 at reduced readiness (${fxA.key}=${fxA.sets})`, fxA.sets === 1);
+  const minRamped = Math.min(...green80.filter((i) => !LIB[i.key].fixedSets).map((i) => i.sets));
+  check(`a deload RAMPED slot is allowed to be a single set (min ${minRamped})`, minRamped === 1);
+}
+
+{
+  console.log("\n== AREA 5.7: e1RM recording threshold (1 mutant) ==");
+  /* E1RM_MIN_RPE 7 -> 8 survived: it decides which logged sets are trustworthy
+     enough to update the e1RM estimate at all. Raising it silently discards
+     every RPE-7 set, which is the entire opening cycle of an accumulation
+     block. Asserted at the boundary in both directions. */
+  const logAt = (rpe) => {
+    const p = fresh();
+    const rx = prescribe(p, green);
+    const it = rx.items.find((i) => i.key === "squat");
+    const before = p.lifts.squat.hist.length;
+    const after = ingest(p, [{ key: "squat", topWeight: it.topLoad, topReps: it.reps, topRpe: rpe,
+      targetRpe: it.rpe, missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount,
+      backoffReps: it.reps, backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap }], green).next;
+    return after.lifts.squat.hist.length > before;
+  };
+  /* LITERAL 7, not E1RM_MIN_RPE. Written against the imported constant this is
+     self-consistent — mutating the constant to 8 moves the test's own input to
+     8 as well and the assertion passes unchanged, which is exactly what
+     happened on the first attempt. That is the third time this trap has caught
+     me in this audit (see the deload rep table and the T2-4 migration check),
+     which is the argument for pinning threshold VALUES literally wherever the
+     threshold itself is what the test is about. */
+  check("a set at exactly RPE 7 IS recorded to e1RM history (the threshold is 7)", logAt(7));
+  check("a set at RPE 6.5 is NOT recorded", !logAt(6.5));
+  check(`sanity: the engine's threshold really is 7 (${E1RM_MIN_RPE})`, E1RM_MIN_RPE === 7);
+}
+
+{
+  console.log("\n== AREA 5.8: auto-tune guards that had no coverage (4 mutants) ==");
+  const mkGrow = (fatigue, cyc) => {
+    const p = fresh();
+    Object.values(p.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 104, raw: 104 }, { e: 108, raw: 108 }]; });
+    p.block = { type: "accumulation", cycle: cyc, sessionsInBlock: cyc * ROT, nextAfter: null };
+    p.fatigue.index = fatigue;
+    return p;
+  };
+  const lowered = (adj) => Object.values(adj).some((a) => a.dMav < 0 || a.dMrv < 0);
+  /* `fatigueSpikedEarly = index >= SPIKE && cyc < maxCycles`. As an OR, a spike
+     in the FINAL cycle — a block that ran its full length, which is the normal
+     healthy ending — would be treated as an early blow-up and cut landmarks. */
+  const last = BLOCKS.accumulation.maxCycles;
+  const lateSpike = mkGrow(0.95, last);
+  Object.values(lateSpike.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+  check("a fatigue spike in the FINAL cycle is not treated as an early spike (landmarks not cut)",
+    !lowered(adjustLandmarks(lateSpike).adjustments));
+  const earlySpike = mkGrow(0.95, 1);
+  Object.values(earlySpike.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+  check("...but the same spike EARLY in the block does cut them (the gate still works)",
+    lowered(adjustLandmarks(earlySpike).adjustments));
+  /* `let dMev = 0, dMrv = 0, dMav = 0` — defaulting any of these non-zero makes
+     the `if (!dMev && !dMrv && !dMav) return` guard fall through, recording a
+     phantom adjustment for every group on every call. */
+  const noEvidence = fresh();
+  Object.values(noEvidence.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+  noEvidence.block = { type: "accumulation", cycle: 2, sessionsInBlock: 8, nextAfter: null };
+  noEvidence.fatigue.index = 0.45; // neither comfortable enough to grow nor spiked
+  check("a block with no qualifying evidence records NO landmark adjustments at all",
+    Object.keys(adjustLandmarks(noEvidence).adjustments).length === 0);
+  /* `deliveredWeekly(..., Math.max(0, cyc - 1), ...)` — the stall gate must
+     read the volume the block ACTUALLY reached, i.e. its last completed cycle,
+     not its opening cycle. Replacing max with min pins the lookup at cycle 0
+     for every block, so a group that ramped all the way to its MAV would be
+     judged on the 8 sets it opened with instead of the 14 it finished on, and
+     the stall-notice gate could never clear. Asserted at cycle 6, where the
+     two readings are furthest apart (opening 8 vs completed 14 for quads). */
+  {
+    const flat = fresh();
+    Object.values(flat.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+    flat.fatigue.index = 0.3;
+    flat.block = { type: "accumulation", cycle: 6, sessionsInBlock: 6 * ROT, nextAfter: null };
+    const streaks = adjustLandmarks(flat).stallStreaks;
+    const lmI = landmarksForExperience("intermediate");
+    check(`sanity: opening and completed volume really differ (quads ${deliveredWeekly("quads", "accumulation", 0, lmI, 1)} vs ${deliveredWeekly("quads", "accumulation", 5, lmI, 1)})`,
+      deliveredWeekly("quads", "accumulation", 0, lmI, 1) !== deliveredWeekly("quads", "accumulation", 5, lmI, 1));
+    check(`a fully-ramped stalled block is judged on its COMPLETED volume, so the stall gate clears (${Object.keys(streaks).length} groups streaked)`,
+      Object.keys(streaks).length > 0);
+  }
+  /* The MEV raise gate's boundary: `lm.mev + 1 <= mevCeiling`. A group exactly
+     one set below its ceiling must be allowed that set. */
+  {
+    const p = mkGrow(0.2, 5);
+    const g = "chest";
+    const mav = p.landmarks[g].mav;
+    p.landmarks[g] = { ...p.landmarks[g], mev: Math.floor(mav * MEV_MAV_MAX_RATIO) - 1 };
+    const adj = adjustLandmarks(p).adjustments[g];
+    check(`MEV exactly one set below its ratio ceiling is allowed to rise (${p.landmarks[g].mev} -> ${adj ? adj.after.mev : "none"})`,
+      adj && adj.dMev === 1);
+  }
+}
+
+{
+  console.log("\n== AREA 5.9: ingest-side guards (3 mutants) ==");
+  /* `priorReps != null && g.topReps <= priorReps` decides whether a
+     double-progression stall counter increments. As an OR it increments on the
+     FIRST ever log of an exercise, when there is no prior to compare against —
+     manufacturing a stall out of no history. */
+  {
+    /* The discriminating case is NOT the first log — with no prior reps both
+       the AND and the OR forms evaluate false and the counter stays 0. The
+       difference appears once a prior EXISTS and the athlete ADVANCES: under
+       AND that resets the counter to 0 (progress is not a stall), under OR it
+       keeps incrementing, so a lifter adding reps every session would be
+       driven into a stall response. Asserted on an isolation lift, since
+       dpStalls is only tracked for repTier "isolation". */
+    const isoKey = ROTATION.flatMap((d) => d.items).find((k) => LIB[k].repTier === "isolation" && !LIB[k].fixedSets);
+    const isoDay = dayWith(isoKey);
+    const logOnce = (p, reps) => {
+      p.cycleIndex = isoDay;
+      const rx = prescribe(p, green);
+      const it = rx.items.find((i) => i.key === isoKey);
+      return ingest(p, [{ key: isoKey, topWeight: it.topLoad, topReps: reps, topRpe: it.rpe,
+        targetRpe: it.rpe, missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount,
+        backoffReps: reps, backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap }], green).next;
+    };
+    let p = fresh();
+    check(`sanity: ${isoKey} is a ramped isolation lift, so dpStalls is tracked for it`,
+      LIB[isoKey].repTier === "isolation" && !LIB[isoKey].fixedSets);
+    p = logOnce(p, 8);
+    check("the first ever log of an exercise cannot register a double-progression stall",
+      (p.lifts[isoKey].dpStalls ?? 0) === 0);
+    p = logOnce(p, 8);   // held -> a genuine stall
+    const held = p.lifts[isoKey].dpStalls ?? 0;
+    check(`holding reps registers a stall (dpStalls ${held})`, held > 0);
+    p = logOnce(p, 12);  // advanced -> must RESET
+    check(`advancing reps RESETS the stall counter to 0 (was ${held}, now ${p.lifts[isoKey].dpStalls ?? 0})`,
+      (p.lifts[isoKey].dpStalls ?? 0) === 0);
+  }
+  /* The session-gap EWMA's smoothing factor. At 1.3 the filter overshoots its
+     input instead of converging on it, so avgSessionGapDays — which drives ALL
+     frequency scaling — would oscillate past the athlete's real cadence. */
+  {
+    /* A CONSTANT cadence cannot expose this: ewma() seeds itself with the first
+       reading, so a fixed gap sits at its own value forever whatever the alpha
+       is. The athlete has to CHANGE cadence for the smoothing to do any work —
+       here 2 days for a while, then 4. With a valid alpha the average walks
+       from 2 toward 4 and never passes it; at 1.3 the first step alone lands on
+       4.6, above any gap the athlete has ever trained at. */
+    const log = (p) => {
+      const rx = prescribe(p, green);
+      return ingest(p, rx.items.map((it) => ({
+        key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+        missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      })), green).next;
+    };
+    let p = fresh(), seen = [];
+    for (let s = 0; s < 6; s++) { CLOCK += 2 * 86400000; p = log(p); if (p.avgSessionGapDays != null) seen.push(p.avgSessionGapDays); }
+    const settled = p.avgSessionGapDays;
+    for (let s = 0; s < 6; s++) { CLOCK += 4 * 86400000; p = log(p); if (p.avgSessionGapDays != null) seen.push(p.avgSessionGapDays); }
+    check(`sanity: the cadence really changed, so the EWMA had to move (settled at ${settled?.toFixed(2)}, ended ${p.avgSessionGapDays?.toFixed(2)})`,
+      settled != null && Math.abs(p.avgSessionGapDays - settled) > 0.1);
+    check(`avgSessionGapDays never overshoots the slowest cadence actually trained (max seen ${Math.max(...seen).toFixed(2)} <= 4)`,
+      seen.every((v) => v <= 4 + 1e-9));
+    check("...and never drops below the fastest one either",
+      seen.every((v) => v >= 2 - 1e-9));
+  }
+}
+
+{
+  console.log("\n== AREA 5.10: double-progression load anchors round, they don't truncate (2 mutants) ==");
+  /* Both load anchors in the dpMode branch use Math.round(w / step) * step.
+     Mutating either to Math.floor silently truncates every prescribed load down
+     to the next plate — a systematic, permanent under-prescription that no test
+     noticed because no test pinned a load whose quotient has a fractional part
+     at or above a half step.
+     Lateral raise is used because its 2.5 lb increment makes such loads easy to
+     hit exactly; the values below were measured, not derived. */
+  const mkLR = (w, blockType) => {
+    const p = fresh();
+    p.lifts.lateralraise = { ...p.lifts.lateralraise, last: { w, reps: 12, rpe: 8 } };
+    p.block = { type: blockType, cycle: 2, sessionsInBlock: 8, nextAfter: null };
+    p.cycleIndex = dayWith("lateralraise");
+    return prescribe(p, green).items.find((i) => i.key === "lateralraise");
+  };
+  const step = LIB.lateralraise.increment;
+  check(`sanity: lateral raise steps in ${step} lb, so half-step remainders are reachable`, step === 2.5);
+  /* w = 24: 24 / 2.5 = 9.6 — rounds UP to 25, truncates DOWN to 22.5. */
+  const acc = mkLR(24, "accumulation");
+  check(`accumulation DP anchor rounds 9.6 steps up, not down (topLoad ${acc.topLoad}, truncating would give 25)`,
+    acc.topLoad === 27.5);
+  /* w = 25 in a deload: 25 x 0.85 / 2.5 = 8.5 — rounds to 22.5, truncates to 20. */
+  const del = mkLR(25, "deload");
+  check(`deload DP anchor rounds 8.5 steps up, not down (topLoad ${del.topLoad}, truncating would give 20)`,
+    del.topLoad === 22.5);
+  check("both anchors land on the exercise's plate grid",
+    acc.topLoad % step === 0 && del.topLoad % step === 0);
 }
 
 Date.now = RealNow;
