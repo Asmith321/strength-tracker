@@ -232,7 +232,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     : `BW${it.topLoad >= 0 ? "+" : ""}${it.topLoad} lb`;
   const loadScheme = it.bodyweight ? bwScheme
     : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`
-    : it.unilateral ? `${it.topLoad} lb/dumbbell`
+    : (it.unilateral || it.perDumbbell) ? `${it.topLoad} lb/dumbbell`
     : `${it.topLoad} lb`;
   /* Every exercise is straight sets since the hypertrophy rebuild — `sets` is
      the full working-set count at one load, so there is no top-set/backoff
@@ -251,7 +251,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const logLoadScheme = it.bodyweightUnknown ? "bodyweight only"
     : it.bodyweight ? (log.topWeight < 0 ? `assisted — about ${Math.abs(log.topWeight)} lb help` : log.topWeight === 0 ? "bodyweight only" : `BW${log.topWeight >= 0 ? "+" : ""}${log.topWeight} lb`)
     : it.barbell ? `${log.topWeight} lb`
-    : it.unilateral ? `${log.topWeight} lb/dumbbell`
+    : (it.unilateral || it.perDumbbell) ? `${log.topWeight} lb/dumbbell`
     : `${log.topWeight} lb`;
   const logSummary = (it.dpMode
     ? `${it.sets} × ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
@@ -302,7 +302,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
             </button>
           ) : (
             <>
-              <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Working weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
+              <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : (it.unilateral || it.perDumbbell) ? "Weight per dumbbell" : "Working weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
               <label className="fieldrow sm"><span>Reps (per set)</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={20} /></label>
               <label className="fieldrow sm"><span>RPE (hardest set)</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
               <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
