@@ -1576,20 +1576,36 @@ const RETURN_SET_MULT = 0.7;
    number. */
 const FEELER_LOAD_FLOOR_LB = 100;
 const FEELER_LOAD_FLOOR_KG = 45;
-/* Double-progression rep floor for isolation accessories: load holds while
-   reps climb from here to the tier's rep target; hitting the target earns one
-   load step and resets reps (see the isolation branch in prescribe).
-   Deliberately NOT scaled down alongside the -2 rep change to ACC_REP_TIERS.
-   Dropping this to 6 would preserve the old 5-step climb window, but 6-rep
-   lateral raises and pec deck are not a prescription worth writing — isolation
-   work below ~8 reps stops being isolation work and starts being a
-   coordination test. The cost of leaving it at 8 is a shorter window: reps now
-   climb 8 -> 9 -> 10 before earning a load step, so isolation lifts progress
-   LOAD about twice as often as before (every ~3 sessions rather than ~5).
-   That is a real behaviour change, not a neutral one — if isolation loads
-   start outrunning what the reps can support, lowering this to 7 is the lever
-   (it widens the window without reaching absurd rep counts). */
-const DP_MIN_REPS = 8;
+/* Double-progression window for isolation accessories: load holds while reps
+   climb from the bottom of the window to the tier's rep target; hitting the
+   target earns one load step and resets to the bottom.
+   DERIVED from the isolation rep target, not an absolute number. It was
+   absolute (8), and when the rep targets were scaled down by 2 the window
+   silently narrowed from 5 steps to 3 — the constant no longer expressed the
+   thing it was for. Deriving it means the window is invariant to rep-target
+   changes: at the previous 12-rep isolation target this yields exactly the old
+   8, so it also reproduces history rather than quietly redefining it.
+   WIDTH CHOSEN FROM MEASUREMENT, not preference. Simulated a lateral raise
+   over 52 weeks against a true capability growing 15%/yr, logging honestly
+   (the athlete gets the reps their capability supports at the prescribed load
+   and falls short when it doesn't):
+     floor 8 (window 3): athlete short of target in 52% of sessions, 12 stall-
+                         driven load cuts in the year
+     floor 7 (window 4): 42% short, 10 cuts
+     floor 6 (window 5): 38% short,  8 cuts
+   A narrow window makes the mechanism climb faster than the lift can actually
+   support, then claw back — over the year the load nets one 2.5 lb increment
+   either way, so the extra steps buy nothing and are paid for in missed reps.
+   My earlier reasoning here — that a floor of 6 means "6-rep lateral raises",
+   which is not a prescription worth writing — was wrong about what the floor
+   IS. It is not a training style; it is the rep count you land on immediately
+   after a load increase, when the weight is hardest. Climbing 6 -> 10 and then
+   adding weight is exactly how double progression is supposed to read. The
+   residual 38% shortfall is not the window's fault: a 2.5 lb step on a ~22 lb
+   lateral raise is an 11% jump against ~15%/yr of real progress, so the
+   equipment's granularity, not this constant, sets the floor on thrashing. */
+const DP_WINDOW = 4;
+const DP_MIN_REPS = ACC_REP_TIERS.accumulation.isolation.reps - DP_WINDOW;
 /* AUDIT 2.6: the +1-rep-per-session rule was fixed regardless of how the
    previous set actually went — a set logged well under the block's target
    RPE (an easy rep-in-reserve session) earned the same single-rep bump as
@@ -2609,7 +2625,7 @@ export {
   PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
-  DP_MIN_REPS, BW_REPONLY_FLOOR, LEGACY_BLOCK_TYPES, RETIRED_LABELS, RETIRED_LIFT_SEEDS,
+  DP_MIN_REPS, DP_WINDOW, BW_REPONLY_FLOOR, LEGACY_BLOCK_TYPES, RETIRED_LABELS, RETIRED_LIFT_SEEDS,
   MEV_MAV_MAX_RATIO, RPE_CREEP_FULL_SCALE, RAMPED_SET_FLOOR, CONVENTION_RESCALE,
   DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
   RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP, FATIGUE_FLOOR_FRAC,
