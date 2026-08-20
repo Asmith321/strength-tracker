@@ -400,17 +400,31 @@ const LIB = {
   /* ---- ramped compound accessories (multi-joint, the program's heavy work) ---- */
   squat:        { label: "Back Squat",                     role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
   rdl:          { label: "Romanian Deadlift",              role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
-  bench:        { label: "Bench Press (BB/DB)",            role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
-  inclinebench: { label: "Incline Bench Press (BB/DB)",    role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
+  bench:        { label: "Barbell Bench Press",            role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
+  /* Incline DUMBBELL press. Separate exercise from inclinebb, not a label
+     variant of it: the dumbbell version allows a deeper bottom position (the
+     bar stops the barbell version at chest level) and is logged per dumbbell,
+     so it carries a different load scale entirely. Keeping the `inclinebench`
+     key on the dumbbell version preserves e1RM history for every program saved
+     before the split, since that key has always been the DB press. */
+  inclinebench: { label: "Incline DB Press (~30°)",        role: "acc",  barbell: false, perDumbbell: true, repTier: "compound", volumeGroup: "chest" },
   /* Machine dip: chest is the primary mover at the depth this is trained to,
      with the triceps long head loaded heavily as a secondary. volumeGroup is
      the PRIMARY mover by the engine's convention, so this counts to chest —
      the triceps landmark's lowered MEV (see PATTERNS.triceps) is where that
      secondary work is accounted for. */
   dip:          { label: "Dip Machine",                    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest", increment: 10 },
-  dbshoulderpress: { label: "DB Overhead Press",           role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
+  dbshoulderpress: { label: "DB Overhead Press",           role: "acc",  barbell: false, perDumbbell: true, repTier: "compound", volumeGroup: "front_delts" },
   tbarrow:      { label: "T-Bar Row",                      role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
-  pullup:       { label: "Pull-Up / Lat Pulldown",         role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
+  /* Pull-Up and Lat Pulldown are SEPARATE exercises, not one slot with a
+     slash. They were briefly merged and that was a real modelling error, not
+     just a naming one: a pull-up is `bodyweight: true`, so its e1RM is tracked
+     as SYSTEM load (bodyweight + any added/assisted weight) and prescribe()
+     runs the whole added-weight / unloaded-reps / assistance branch on it. A
+     pulldown is an ordinary weight stack with none of that. Merging them meant
+     one lift's history held two incompatible load scales. */
+  pullup:       { label: "Pull-Up",                        role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
+  pulldown:     { label: "Lat Pulldown",                   role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
   /* LOGGING CONVENTION for this and any future repTier:"unilateral" dumbbell
      exercise: log the weight of ONE dumbbell, assuming a matched pair (one in
      each hand) — the convention lifters already use mentally for split
@@ -428,7 +442,14 @@ const LIB = {
      squat above. */
   cablefly:     { label: "Seated Cable Fly",               role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest", increment: 10 },
   latpullover:  { label: "Machine Lat Pullover",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "back", increment: 10 },
-  lateralraise: { label: "Lateral Raise (Machine/DB)",     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
+  /* Machine and dumbbell lateral raises are separate exercises. The resistance
+     profiles genuinely differ — a dumbbell's moment arm peaks near the top of
+     the raise and vanishes at the bottom, while a machine (or cable) holds
+     tension through the stretched position — so running both across the week
+     is a real variation, not a relabel. `lateralraise` stays the machine
+     version to keep e1RM history on the key that has always carried this slot. */
+  lateralraise: { label: "Machine Lateral Raise",          role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
+  dblateralraise: { label: "DB Lateral Raise",             role: "acc",  barbell: false, perDumbbell: true, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
   reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
   triext:       { label: "Overhead Cable Triceps Ext.",    role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "triceps" },
   bayesiancurl: { label: "Bayesian Cable Curl",            role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "biceps", increment: 2.5 },
@@ -452,22 +473,28 @@ const LIB = {
   calfraise:    { label: "Standing Calf Raise",            role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
 
   /* ---- fixedSets accessories ----
-     Flat set count, excluded from the landmark pools. These three back muscles
-     that (a) receive very heavy indirect work from the ramped slots above and
-     (b) have exactly one approved exercise each, so there is no second slot for
-     a ramp to distribute volume across even if one were warranted. */
-  shrug:        { label: "DB Shrug",                       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
-  wristcurl:    { label: "Wrist Curl (BB/DB)",             role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
+     Flat set count, excluded from the landmark pools. These back muscles
+     (a) receive very heavy indirect work from the ramped slots above and
+     (b) have one approved exercise carrying the slot, so there is no second
+     slot for a ramp to distribute volume across even if one were warranted. */
+  shrug:        { label: "DB Shrug",                       role: "acc",  barbell: false, perDumbbell: true, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
+  wristcurl:    { label: "DB Wrist Curl",                  role: "acc",  barbell: false, perDumbbell: true, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
   cablecrunch:  { label: "Cable Crunch",                   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
 
   /* ---- defined but OUT OF ROTATION ----
      Kept so History labels and previously-logged e1RM records still resolve,
      and so migrateProgram can seed them if they ever return. They contribute
      nothing to volume math (fixedWeeklySets/PATTERN_FREQ/PATTERN_RAMPED_ACC all
-     read the ROTATION, not LIB). Both are on the athlete's approved list;
-     see the ROTATION comment for why neither carries a slot. */
+     read the ROTATION, not LIB). All are on the athlete's approved list — the
+     list explicitly does not require every entry to be used, and the ROTATION
+     comment records why each of these sits out. They are also exactly the pool
+     a future macrocycle variant-rotation pass would draw from, since each is a
+     like-for-like swap for a slot that IS in the rotation. */
   frontsquat:   { label: "Front Squat",                    role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
   deadlift:     { label: "Deadlift",                       role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
+  dbbench:      { label: "DB Bench Press",                 role: "acc",  barbell: false, perDumbbell: true, repTier: "compound", volumeGroup: "chest" },
+  inclinebb:    { label: "Incline Barbell Press (~30°)",   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
+  bbwristcurl:  { label: "Barbell Wrist Curl",             role: "acc",  barbell: true,  fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
 };
 
 /* ---- rotation: which lifts each training day trains ----
@@ -541,7 +568,7 @@ const LIB = {
 const ROTATION = [
   { name: "Push · Quads A", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "squat", "legext", "calfraise", "cablecrunch"] },
   { name: "Pull · Hinge A", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "rdl", "legcurl", "calfraise", "shrug"] },
-  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "lateralraise", "triext", "bsplit", "legext", "calfraise", "cablecrunch"] },
+  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "dblateralraise", "triext", "bsplit", "legext", "calfraise", "cablecrunch"] },
   /* triext appears here as well as on both push days: with only one approved
      triceps exercise, 2 slots forced 6 sets of the same movement into a single
      session to reach the triceps MAV of 12 — past the point where additional
@@ -549,7 +576,7 @@ const ROTATION = [
      splits the same weekly volume 4/4/4. Landing it on a pull day is not a
      mismatch: this day already carries lateral raises, and triceps are fully
      recovered here precisely because they were not the day's pressing work. */
-  { name: "Pull · Hinge B", items: ["pullup", "latpullover", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "legcurl", "lateralraise", "wristcurl"] },
+  { name: "Pull · Hinge B", items: ["pullup", "pulldown", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "legcurl", "lateralraise", "wristcurl"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -899,6 +926,16 @@ const GROWTH_POS = 0.001;    // normalized slope above this = still progressing 
    before anything says so. Observation only: see the stall-streak block in
    adjustLandmarks — it never touches exercise selection, MEV/MRV, or e1RM. */
 const STALL_STREAK_THRESHOLD = 3;
+/* Hard ceiling on MEV as a fraction of MAV, enforced in both directions by the
+   landmark auto-tune. The MEV->MAV distance IS the accumulation block's ramp,
+   so it is not something the tuner may spend: if MEV is allowed to converge on
+   MAV the block flattens into a constant-volume phase at the athlete's ceiling
+   and the mesocycle stops existing (measured, see the ramp-span note in
+   adjustLandmarks). Expressed as a ratio rather than a fixed set count so it
+   scales with the group — a 3-set span is generous for hamstrings and useless
+   for back. RP's published landmarks sit near 0.40-0.50 MEV/MAV; 0.65 leaves
+   real headroom for MEV to grow while never letting the ramp close. */
+const MEV_MAV_MAX_RATIO = 0.65;
 /* landmark group → the lift that carries its growth signal, for pools where a
    single exercise is unambiguously the driver. Empty since the hypertrophy
    rebuild: with no main lifts, no pool has one exercise that dominates it — a
@@ -1110,8 +1147,31 @@ function adjustLandmarks(program) {
          from 12 sets to 7), shortens accumulation blocks, and permanently
          raises intensification/deload volume too, since VOL_SCALE keys off
          MEV. This is containment, not a cure: the root cause is that the
-         landmark table describes volume this ROTATION cannot deliver. */
-      const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capW) - 2 && lm.mev + 1 <= lm.mav;
+         landmark table describes volume this ROTATION cannot deliver.
+
+         RAMP-SPAN BOUND (fixes a defect introduced by the MAV ramp endpoint).
+         The AUDIT 3.5 guard above — "MEV may not climb past MAV" — was
+         sufficient while the ramp ran MEV -> MRV: MEV pinning at MAV still
+         left an MAV -> MRV span for the block to ramp across. Once MAV became
+         the ramp's endpoint that guard stopped being enough, because MAV is
+         bounded (by MRV-1 and by schedule capacity) and stops rising while MEV
+         keeps going, so MEV converges on MAV-1 and the ramp width goes to
+         ZERO. Simulated 24 successful blocks: by block ~15 quads/chest/back
+         all sat at mev/mav/mrv = 22/23/24 delivering 24 -> 24 sets, i.e. every
+         accumulation block a flat line at maximum deliverable volume with no
+         ramp at all — the mesocycle structure silently gone after roughly a
+         year of good training.
+         The fix keeps MEV strictly a bounded FRACTION of MAV rather than
+         merely below it, so the span scales with the group instead of being a
+         fixed number that is too wide for hamstrings and too narrow for back.
+         RP's own published tables put MEV at roughly 40-50% of MAV; 0.65 is a
+         permissive ceiling that still lets MEV nearly double from its seeded
+         value while guaranteeing the block always has somewhere to ramp. */
+      const mavAfterRaise = Math.min(mrvAfter - 1, lm.mav + 1);
+      const mevCeiling = Math.floor(MEV_MAV_MAX_RATIO * mavAfterRaise);
+      const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capW) - 2
+        && lm.mev + 1 <= lm.mav
+        && lm.mev + 1 <= mevCeiling;
       dMev = canRaiseMev ? 1 : 0;
       dMrv = canRaiseMrv ? 1 : 0;
       /* MAV drifts too, and this is now the auto-tune's most important output:
@@ -1139,6 +1199,14 @@ function adjustLandmarks(program) {
     lm.mev = Math.max(2, lm.mev + dMev);           // floor MEV at 2
     lm.mrv = Math.max(lm.mev + 2, lm.mrv + dMrv);  // keep MRV ≥2 above MEV (range can't collapse)
     lm.mav = Math.min(lm.mrv - 1, Math.max(lm.mev + 1, lm.mav + dMav));
+    /* Enforce the ramp span from the OTHER direction too. The raise gate above
+       stops MEV climbing into MAV, but MAV can also come DOWN to meet a
+       standing MEV — the fatigue path lowers MAV, and the MRV-1 clamp on the
+       line above can drag it down further when MRV falls. Without this, a
+       string of bad blocks compresses the ramp just as effectively as a string
+       of good ones used to. MEV yields, because between "train less at the
+       floor" and "have no ramp", the former is the recoverable state. */
+    lm.mev = Math.max(2, Math.min(lm.mev, Math.floor(MEV_MAV_MAX_RATIO * lm.mav)));
     // report the deltas actually realized after the safety clamps
     const rMev = lm.mev - before.mev, rMrv = lm.mrv - before.mrv, rMav = lm.mav - before.mav;
     if (!rMev && !rMrv && !rMav) return;
@@ -1574,7 +1642,16 @@ function prescribe(program, readiness) {
     // isolation non-barbell accessories below the load floor: no warmup (working sets are light enough)
 
     return { key, label: L.label, barbell: L.barbell, repTier: L.repTier, volumeGroup: L.volumeGroup,
-      bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly, bodyweightUnknown,
+      bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral",
+      /* perDumbbell drives the "Weight per dumbbell" label, and is deliberately
+         SEPARATE from `unilateral`. Unilateral means one limb at a time (split
+         squat); perDumbbell means a matched pair held simultaneously (DB bench).
+         Both log the weight of ONE dumbbell, but they are different training
+         shapes and only the former gets the unilateral rep tier. Before the
+         BB/DB exercises were split apart, every dumbbell press shared a slot
+         with its barbell version and the athlete had no way to tell which
+         convention a number was in. */
+      perDumbbell: !!L.perDumbbell, assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup, dpMode };
   });
@@ -2009,13 +2086,15 @@ const ACC_E1RM_REF = {
   frontsquat: "squat", bsplit: "squat", legext: "squat", calfraise: "squat",
   legcurl: "rdl", deadlift: "rdl",
   // upper push — referenced off bench
-  inclinebench: "bench", dip: "bench", cablefly: "bench", dbshoulderpress: "bench",
-  lateralraise: "bench", triext: "bench", wristcurl: "bench", cablecrunch: "bench",
+  inclinebench: "bench", inclinebb: "bench", dbbench: "bench", dip: "bench",
+  cablefly: "bench", dbshoulderpress: "bench",
+  lateralraise: "bench", dblateralraise: "bench", triext: "bench",
+  wristcurl: "bench", bbwristcurl: "bench", cablecrunch: "bench",
   // upper pull — referenced off the seeded row rather than off bench, which is
   // what the pre-rebuild table did for every pulling movement. A pressing lift
   // is a poor predictor of pulling capacity; with T-Bar Row seeded directly at
   // onboarding these no longer have to guess across the push/pull divide.
-  latpullover: "tbarrow", reversepecdeck: "tbarrow",
+  latpullover: "tbarrow", pulldown: "tbarrow", reversepecdeck: "tbarrow",
   bayesiancurl: "tbarrow", preachercurl: "tbarrow", shrug: "tbarrow",
 };
 /* bsplit: 0.2 is a PER-DUMBBELL fraction of squat e1RM, matching the logging
@@ -2030,10 +2109,19 @@ const ACC_E1RM_REF = {
 const ACC_E1RM_MULT = {
   frontsquat: 0.8, bsplit: 0.2, legext: 0.65, calfraise: 1.2,
   legcurl: 0.47, deadlift: 1.18, // rdl is seeded directly; deadlift ~= rdl / 0.85
-  inclinebench: 0.8, dip: 0.75, cablefly: 0.3, dbshoulderpress: 0.6,
-  lateralraise: 0.12, triext: 0.45, wristcurl: 0.15, cablecrunch: 0.4,
+  /* PER-DUMBBELL entries (LIB.perDumbbell) are fractions of the reference lift
+     sized for ONE dumbbell of a matched pair, the same convention bsplit uses.
+     A DB bench press moves roughly 80% of a barbell bench's total load, so one
+     hand is ~0.4x — never 0.8x. Getting this wrong is not a rounding error, it
+     is a 2x prescription, so every perDumbbell exercise's ratio below is a
+     halved TOTAL estimate rather than a guess. */
+  inclinebench: 0.4, inclinebb: 0.8, dbbench: 0.42, dip: 0.75,
+  cablefly: 0.3, dbshoulderpress: 0.3,
+  lateralraise: 0.12, dblateralraise: 0.1, triext: 0.45,
+  wristcurl: 0.1, bbwristcurl: 0.15, cablecrunch: 0.4,
   // pull ratios are relative to T-Bar Row, not bench (see ACC_E1RM_REF)
-  latpullover: 0.6, reversepecdeck: 0.2, bayesiancurl: 0.4, preachercurl: 0.45, shrug: 0.55,
+  latpullover: 0.6, pulldown: 0.95, reversepecdeck: 0.2,
+  bayesiancurl: 0.4, preachercurl: 0.45, shrug: 0.3,
 };
 
 function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
@@ -2076,7 +2164,7 @@ const LANDMARK_RENAME = { squat: "quads", hinge: "hamstrings", horiz_press: "che
    session would render the bare key ("cablerow"). Label lookup only: nothing
    here participates in volume math, seeding, or prescription. */
 const RETIRED_LABELS = {
-  row: "Barbell Row", cablerow: "Seated Cable Row", pulldown: "Lat Pulldown",
+  row: "Barbell Row", cablerow: "Seated Cable Row",
   ohp: "Overhead Press", curl: "Incline Dumbbell Curl", seatedcalf: "Seated Calf Raise",
 };
 
@@ -2090,11 +2178,31 @@ const RETIRED_LABELS = {
    generic path. Ratios are rough by design — the e1RM EWMA re-anchors from the
    first real session, and every one of these errs light rather than heavy. */
 const RETIRED_LIFT_SEEDS = {
-  tbarrow:      [["row", 1.0], ["cablerow", 1.0], ["pulldown", 1.05]],
-  latpullover:  [["pulldown", 0.85], ["cablerow", 0.8]],
+  tbarrow:      [["row", 1.0], ["cablerow", 1.0]],
+  latpullover:  [["cablerow", 0.8]],
   bayesiancurl: [["curl", 1.0]],
   preachercurl: [["curl", 1.1]],
-  dip:          [["inclinebench", 1.35], ["bench", 0.75]],
+  dip:          [["bench", 0.75]],
+};
+
+/* Lifts whose LOGGING CONVENTION changed, not just their label.
+   Splitting the slash-separated exercises apart (DB/BB bench, machine/DB
+   lateral raise, etc.) forced every dumbbell movement to declare whether its
+   logged number is one dumbbell or the pair — `perDumbbell` on LIB. For the
+   entries below the answer is now "one dumbbell", but a saved program may hold
+   an e1RM recorded under the older, ambiguous convention at roughly double
+   that. Prescribing from an unconverted value would issue a per-dumbbell load
+   equal to the athlete's two-dumbbell (or barbell) load — a 2x overload on a
+   pressing movement, which is the one direction this must never fail in.
+   Detection is a ratio test against a reference lift the program already
+   tracks, with the threshold set between the old and new expected ratios, and
+   the repair reseeds rather than guessing a conversion factor: the e1RM EWMA
+   re-anchors from the first real session anyway, so a slightly-low reseed
+   costs one session of easy work while a silent 2x costs an injury. */
+const CONVENTION_RESCALE = {
+  inclinebench:    { ref: "bench",   suspectAbove: 0.6,  reseedAt: 0.4 },
+  dbshoulderpress: { ref: "bench",   suspectAbove: 0.45, reseedAt: 0.3 },
+  shrug:           { ref: "tbarrow", suspectAbove: 0.42, reseedAt: 0.3 },
 };
 
 /* Reconcile a loaded program's landmark keys to the current PATTERNS set so
@@ -2166,6 +2274,14 @@ function migrateProgram(program) {
     const base = lifts[ACC_E1RM_REF[k]]?.e1rm || 100;
     seedLift(k, base * (ACC_E1RM_MULT[k] || 0.6));
   }));
+  /* 3c. reseed any lift still carrying an e1RM on a superseded LOGGING
+     convention (see CONVENTION_RESCALE). Runs after the backfills so the
+     reference lifts it tests against are guaranteed present. */
+  Object.entries(CONVENTION_RESCALE).forEach(([k, { ref, suspectAbove, reseedAt }]) => {
+    const cur = lifts[k]?.e1rm, base = lifts[ref]?.e1rm;
+    if (!(cur > 0) || !(base > 0)) return;
+    if (cur > base * suspectAbove) seedLift(k, base * reseedAt);
+  });
   // 4. backfill stall-notice tracking for a program saved before this feature existed.
   const stallStreaks = program.stallStreaks || {};
   const stallNotices = program.stallNotices || {};
@@ -2215,6 +2331,7 @@ export {
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   DP_MIN_REPS, BW_REPONLY_FLOOR, LEGACY_BLOCK_TYPES, RETIRED_LABELS, RETIRED_LIFT_SEEDS,
+  MEV_MAV_MAX_RATIO, RPE_CREEP_FULL_SCALE, RAMPED_SET_FLOOR, CONVENTION_RESCALE,
   DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
   RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,

@@ -35,11 +35,26 @@ const lm = landmarksForExperience("intermediate");
 /* The athlete's approved exercise list, verbatim in spirit — nothing outside it
    may ever be prescribed. Keyed by LIB key so the constraint is machine-checked
    rather than left to a code comment. */
+/* Entries written "A/B" on the athlete's list mean TWO SEPARATE exercises, not
+   one slot with a slash label — DB bench and BB bench, machine and DB lateral
+   raise, pull-up and lat pulldown, and so on. Each half gets its own LIB key,
+   its own load scale, and its own e1RM history. */
 const APPROVED = new Set([
-  "cablefly", "dip", "dbshoulderpress", "bench", "triext", "lateralraise", "inclinebench",
-  "latpullover", "shrug", "wristcurl", "reversepecdeck", "bayesiancurl", "preachercurl",
-  "tbarrow", "pullup", "calfraise", "legcurl", "legext", "rdl", "squat", "frontsquat",
-  "bsplit", "cablecrunch", "deadlift",
+  "cablefly", "dip", "dbshoulderpress", "triext", "latpullover", "shrug",
+  "reversepecdeck", "bayesiancurl", "preachercurl", "tbarrow", "calfraise",
+  "legcurl", "legext", "rdl", "bsplit", "cablecrunch", "deadlift",
+  // DB/BB Bench Press -> two exercises
+  "bench", "dbbench",
+  // Incline BB/DB bench -> two exercises
+  "inclinebb", "inclinebench",
+  // Machine/DB Lateral Raise -> two exercises
+  "lateralraise", "dblateralraise",
+  // DB/BB wrist curls -> two exercises
+  "wristcurl", "bbwristcurl",
+  // Pull-ups / lat pulldown -> two exercises (and two different load models)
+  "pullup", "pulldown",
+  // front/back squat -> two exercises
+  "squat", "frontsquat",
 ]);
 
 console.log("\n== Approved-exercise constraint ==");
@@ -53,8 +68,10 @@ console.log("\n== Approved-exercise constraint ==");
   check("front squat is defined but carries no rotation slot (quads already have 4)",
     !!LIB.frontsquat && !inRotation.has("frontsquat"));
   check("retired exercises are gone from LIB entirely, kept only as history labels",
-    !LIB.row && !LIB.cablerow && !LIB.pulldown && !LIB.ohp && !LIB.curl && !LIB.seatedcalf
+    !LIB.row && !LIB.cablerow && !LIB.ohp && !LIB.curl && !LIB.seatedcalf
     && !!RETIRED_LABELS.cablerow && !!RETIRED_LABELS.ohp);
+  check("no LIB key is also claimed as a retired-only history label",
+    Object.keys(RETIRED_LABELS).every((k) => !LIB[k]));
 }
 
 console.log("\n== The strength skeleton is gone ==");
@@ -268,9 +285,10 @@ console.log("\n== Migration from a saved strength-era program ==");
     [...inRotation].every((k) => m.lifts[k]?.e1rm > 0), [...inRotation].filter((k) => !(m.lifts[k]?.e1rm > 0)).join(","));
   check("T-Bar Row seeds off the old Barbell Row, not off a pressing lift or the 100 fallback",
     Math.abs(m.lifts.tbarrow.e1rm - 210) < 1, String(m.lifts.tbarrow.e1rm));
-  check("lat pullover seeds off the old Lat Pulldown", Math.abs(m.lifts.latpullover.e1rm - 196 * 0.85) < 1);
+  check("lat pullover seeds off the old Seated Cable Row", Math.abs(m.lifts.latpullover.e1rm - 210 * 0.8) < 1);
+  check("Lat Pulldown is now its own exercise, seeded off T-Bar Row", m.lifts.pulldown?.e1rm > 0);
   check("both curls seed off the old Incline DB Curl", m.lifts.bayesiancurl.e1rm === 98 && Math.abs(m.lifts.preachercurl.e1rm - 98 * 1.1) < 1);
-  check("dip seeds off the old incline press", Math.abs(m.lifts.dip.e1rm - 154 * 1.35) < 1);
+  check("dip seeds off bench", Math.abs(m.lifts.dip.e1rm - 280 * 0.75) < 1);
   check("biceps and triceps landmarks are backfilled for a program that predates them",
     m.landmarks.biceps?.mav > 0 && m.landmarks.triceps?.mav > 0);
   check("retired lifts keep their records (history still resolves)", !!m.lifts.row && !!m.lifts.deadlift);

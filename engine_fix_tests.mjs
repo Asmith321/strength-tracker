@@ -11,7 +11,7 @@ import {
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
-  FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs,
+  FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs, MEV_MAV_MAX_RATIO,
   FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP,
 } from "./src/engine.js";
 
@@ -683,7 +683,7 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      against the hand-computed slot budget in the ROTATION comment (chest 4
      slots, back 4, quads 4, triceps 3, ...) plus the MEV/MAV endpoints in
      PATTERNS. */
-  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":195,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"squat","sets":2,"topLoad":275,"reps":8},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":2,"topLoad":180,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"rdl","sets":2,"topLoad":265,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"shrug","sets":3,"topLoad":85,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":155,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":120,"reps":8},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"bsplit","sets":2,"topLoad":50,"reps":10},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":2,"topLoad":-60,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"preachercurl","sets":2,"topLoad":70,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12}],[{"key":"bench","sets":2,"topLoad":205,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":125,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"squat","sets":2,"topLoad":285,"reps":8},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":3,"topLoad":190,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"rdl","sets":2,"topLoad":275,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"shrug","sets":3,"topLoad":90,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":165,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":125,"reps":8},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"bsplit","sets":2,"topLoad":55,"reps":10},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":3,"topLoad":-50,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":3,"topLoad":72.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":25,"reps":12}],[{"key":"bench","sets":4,"topLoad":210,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":125,"reps":8},{"key":"cablefly","sets":4,"topLoad":60,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"squat","sets":4,"topLoad":295,"reps":8},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"tbarrow","sets":5,"topLoad":190,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"rdl","sets":3,"topLoad":285,"reps":8},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"shrug","sets":3,"topLoad":90,"reps":12}],[{"key":"inclinebench","sets":4,"topLoad":170,"reps":8},{"key":"dip","sets":4,"topLoad":160,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":125,"reps":8},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"bsplit","sets":4,"topLoad":55,"reps":10},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"pullup","sets":5,"topLoad":-50,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":5,"topLoad":75,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":30,"reps":12}]];
+  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":195,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"squat","sets":2,"topLoad":275,"reps":8},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":2,"topLoad":180,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"rdl","sets":2,"topLoad":265,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"shrug","sets":3,"topLoad":45,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"bsplit","sets":2,"topLoad":50,"reps":10},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":2,"topLoad":-60,"reps":8},{"key":"pulldown","sets":2,"topLoad":170,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"preachercurl","sets":2,"topLoad":70,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"wristcurl","sets":3,"topLoad":15,"reps":12}],[{"key":"bench","sets":2,"topLoad":205,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"squat","sets":2,"topLoad":285,"reps":8},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":3,"topLoad":190,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"rdl","sets":2,"topLoad":275,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":3,"topLoad":17.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"bsplit","sets":2,"topLoad":55,"reps":10},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":3,"topLoad":-50,"reps":8},{"key":"pulldown","sets":3,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":3,"topLoad":72.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}],[{"key":"bench","sets":4,"topLoad":210,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"cablefly","sets":4,"topLoad":60,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"squat","sets":4,"topLoad":295,"reps":8},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"tbarrow","sets":5,"topLoad":190,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"rdl","sets":3,"topLoad":285,"reps":8},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":4,"topLoad":85,"reps":8},{"key":"dip","sets":4,"topLoad":160,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"dblateralraise","sets":5,"topLoad":17.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"bsplit","sets":4,"topLoad":55,"reps":10},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"pullup","sets":5,"topLoad":-50,"reps":8},{"key":"pulldown","sets":5,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":5,"topLoad":75,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -1166,10 +1166,16 @@ console.log("\n== AUDIT 3.5: MEV cannot ratchet past MAV ==");
   const below = adjustLandmarks(mk()).adjustments.chest;
   check(`MEV still raises when it sits below MAV (${below?.before.mev} -> ${below?.after.mev})`, below && below.dMev === 1);
   // at-MAV case: the new guard blocks it
-  const p2 = mk(); p2.landmarks.chest.mev = p2.landmarks.chest.mav; // 14/14
+  /* A program that somehow arrives at MEV === MAV has no ramp left at all.
+     The guard must not merely decline to raise MEV further — it must repair
+     the degenerate state, because a block starting at its own ceiling is not
+     a mesocycle. The MEV_MAV_MAX_RATIO clamp pulls MEV back to 65% of MAV. */
+  const p2 = mk(); p2.landmarks.chest.mev = p2.landmarks.chest.mav; // 14/14, ramp width 0
   const atMav = adjustLandmarks(p2).adjustments.chest;
-  check(`MEV at MAV (${p2.landmarks.chest.mev}/${p2.landmarks.chest.mav}) is NOT raised further (adjustment: ${atMav ? `dMev ${atMav.dMev}` : "none"})`,
-    !atMav || atMav.dMev === 0);
+  check(`MEV at MAV (14/14) is never raised further (dMev ${atMav ? atMav.dMev : "none"} <= 0)`,
+    !atMav || atMav.dMev <= 0);
+  check(`MEV at MAV is actively pulled back off MAV to restore a ramp (${atMav?.after.mev}/${atMav?.after.mav})`,
+    atMav && atMav.after.mev <= Math.floor(MEV_MAV_MAX_RATIO * atMav.after.mav));
   /* The ratchet this guard prevents: MEV climbing until it swallows the whole
      MEV->MAV ramp. The rebuild makes that MORE important, not less — MAV is now
      the ramp's endpoint, so an unbounded MEV would collapse the block into a
@@ -1288,6 +1294,130 @@ console.log("\n== AUDIT 3.12 (re-derived): true-weekly volume is frequency-INDEP
   const at3x = perSession(7 / 3), at6x = perSession(7 / 6);
   check(`peak session shrinks as cadence rises (3x/wk=${at3x} sets -> 6x/wk=${at6x}) — frequency spreads volume, it doesn't add it`,
     at6x <= at3x);
+}
+
+console.log("\n== RAMP SPAN: the MEV->MAV ramp survives an athlete's whole training career ==");
+{
+  /* REGRESSION. Shipping the MAV ramp endpoint introduced a defect the whole
+     400-test suite missed because it takes ~15 successful blocks to appear:
+     MEV ratchets +1/block while MAV is bounded by MRV-1 and by schedule
+     capacity, so MEV converges on MAV-1 and the ramp width falls to ZERO —
+     every accumulation block a flat line at the athlete's ceiling, the
+     mesocycle structure gone. Measured before the fix: by block 18 quads /
+     chest / back all sat at mev/mav/mrv 22/23/24 delivering 24 -> 24 sets.
+     This drives 30 real blocks through prescribe/ingest/applyTransition and
+     asserts the ramp is still there at the end. It fails on the pre-fix engine
+     (width 0 for the big groups) and passes now. */
+  let p = fresh();
+  const gains = {};
+  let blocks = 0;
+  for (let i = 0; i < 800 && blocks < 30; i++) {
+    const rx = prescribe(p, green);
+    const logs = rx.items.map((it) => {
+      gains[it.key] = (gains[it.key] || 0) + 2; // steady genuine progress
+      return { key: it.key, topWeight: it.bodyweight ? it.topLoad : it.topLoad + gains[it.key],
+        topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap };
+    });
+    CLOCK += 1.75 * 86400000;
+    const r = ingest(p, logs, green);
+    p = r.next;
+    if (r.transition) { p = applyTransition(p, r.transition); if (r.transition.to === "deload") blocks++; }
+  }
+  check(`the sim actually ran ${blocks} full blocks`, blocks >= 25);
+  const rampWidth = (g) =>
+    deliveredWeekly(g, "accumulation", BLOCKS.accumulation.maxCycles - 1, p.landmarks, 1)
+    - deliveredWeekly(g, "accumulation", 0, p.landmarks, 1);
+  for (const g of Object.keys(PATTERNS)) {
+    const l = p.landmarks[g];
+    check(`${g}: ramp still has width after ${blocks} blocks (${l.mev}/${l.mav}/${l.mrv}, delivers +${rampWidth(g)} sets across the block)`,
+      rampWidth(g) > 0);
+    check(`${g}: MEV stayed within ${MEV_MAV_MAX_RATIO} of MAV (${l.mev}/${l.mav} = ${(l.mev / l.mav).toFixed(2)})`,
+      l.mev <= Math.floor(MEV_MAV_MAX_RATIO * l.mav));
+  }
+  // progression is still real — the bound must not freeze the athlete in place
+  const seeded = landmarksForExperience("intermediate");
+  check(`MEV still progressed materially over those blocks (quads ${seeded.quads.mev} -> ${p.landmarks.quads.mev})`,
+    p.landmarks.quads.mev > seeded.quads.mev + 3);
+  check(`MAV still progressed too (quads ${seeded.quads.mav} -> ${p.landmarks.quads.mav})`,
+    p.landmarks.quads.mav > seeded.quads.mav);
+}
+
+console.log("\n== EXERCISE SPLITS: slash-separated list entries are distinct exercises ==");
+{
+  /* The athlete's list wrote several entries as "A/B" meaning two exercises,
+     which were initially built as single slots with a slash in the label. That
+     was a real modelling error for pull-up vs lat pulldown especially: one is
+     bodyweight (e1RM tracked as SYSTEM load, with added-weight / unloaded-reps
+     / assistance branches) and the other is a plain weight stack. */
+  check("Pull-Up and Lat Pulldown are separate LIB entries", !!LIB.pullup && !!LIB.pulldown);
+  check("only the pull-up carries the bodyweight load model",
+    LIB.pullup.bodyweight === true && !LIB.pulldown.bodyweight);
+  check("both are in the rotation, both count to back",
+    ROTATION.some((d) => d.items.includes("pullup")) && ROTATION.some((d) => d.items.includes("pulldown"))
+    && LIB.pullup.volumeGroup === "back" && LIB.pulldown.volumeGroup === "back");
+  for (const [a, b] of [["bench", "dbbench"], ["inclinebb", "inclinebench"],
+                        ["lateralraise", "dblateralraise"], ["wristcurl", "bbwristcurl"], ["squat", "frontsquat"]]) {
+    check(`${a} and ${b} are separate LIB entries`, !!LIB[a] && !!LIB[b] && a !== b);
+    check(`${a}/${b} share a volume group (same muscle, different implement)`,
+      LIB[a].volumeGroup === LIB[b].volumeGroup);
+  }
+  check("no LIB label still advertises a slash-merged pair",
+    Object.values(LIB).every((L) => !/\bBB\/DB\b|\bDB\/BB\b|Machine\/DB|\/ Lat Pulldown/.test(L.label)),
+    Object.values(LIB).filter((L) => /\//.test(L.label)).map((L) => L.label).join(" | "));
+
+  // per-dumbbell loading is declared, not left ambiguous
+  const dbLifts = Object.entries(LIB).filter(([, L]) => L.perDumbbell).map(([k]) => k);
+  check(`dumbbell exercises declare perDumbbell (${dbLifts.join(", ")})`, dbLifts.length >= 5);
+  check("no barbell exercise is marked perDumbbell",
+    Object.values(LIB).every((L) => !(L.perDumbbell && L.barbell)));
+  const rx = prescribe({ ...fresh(), cycleIndex: dayWith("inclinebench") }, green);
+  check("prescribe() surfaces perDumbbell so the UI can label the field",
+    rx.items.find((i) => i.key === "inclinebench").perDumbbell === true);
+  check("a barbell press on the same rotation does NOT claim perDumbbell",
+    prescribe({ ...fresh(), cycleIndex: dayWith("bench") }, green).items.find((i) => i.key === "bench").perDumbbell === false);
+}
+
+console.log("\n== MIGRATION: a changed logging convention never doubles a prescribed load ==");
+{
+  /* Per-dumbbell entries hold roughly HALF the number an older save recorded
+     under the ambiguous convention. Left unconverted, prescribe() would issue
+     a per-dumbbell load equal to the athlete's two-dumbbell load. */
+  const base = { unit: "lb", goal: "hypertrophy", experience: "intermediate", bodyweight: 200,
+    landmarks: landmarksForExperience("intermediate"),
+    cycleIndex: 0, sessionCount: 10, lastSessionAt: null, avgSessionGapDays: 1.75, sessionsSinceLayoff: null,
+    fatigue: { index: 0.2, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
+    block: { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null },
+    blockHistory: [], landmarkAdjustments: {}, landmarkLog: [], stallStreaks: {}, stallNotices: {} };
+  const lift = (e) => ({ e1rm: e, e1rmRaw: e, hist: [{ e, raw: e }] });
+  const stale = migrateProgram({ ...base, lifts: {
+    bench: lift(280), tbarrow: lift(210), squat: lift(400), rdl: lift(340),
+    inclinebench: lift(224),     // 0.8 x bench — the old barbell-scale value
+    dbshoulderpress: lift(168),  // 0.6 x bench — old ambiguous scale
+    shrug: lift(115),            // 0.55 x tbarrow — old ambiguous scale
+  } });
+  check(`stale barbell-scale inclinebench is reseeded to the per-dumbbell scale (224 -> ${Math.round(stale.lifts.inclinebench.e1rm)})`,
+    stale.lifts.inclinebench.e1rm < 224 * 0.7);
+  check(`stale dbshoulderpress is reseeded (168 -> ${Math.round(stale.lifts.dbshoulderpress.e1rm)})`,
+    stale.lifts.dbshoulderpress.e1rm < 168 * 0.7);
+  check(`stale shrug is reseeded (115 -> ${Math.round(stale.lifts.shrug.e1rm)})`,
+    stale.lifts.shrug.e1rm < 115 * 0.8);
+
+  // a value ALREADY on the new scale must be left alone — this must not re-halve every load
+  const fine = migrateProgram({ ...base, lifts: {
+    bench: lift(280), tbarrow: lift(210), squat: lift(400), rdl: lift(340),
+    inclinebench: lift(112), dbshoulderpress: lift(84), shrug: lift(63),
+  } });
+  check(`an already-converted inclinebench is untouched (112 -> ${Math.round(fine.lifts.inclinebench.e1rm)})`,
+    fine.lifts.inclinebench.e1rm === 112);
+  check(`an already-converted dbshoulderpress is untouched (84 -> ${Math.round(fine.lifts.dbshoulderpress.e1rm)})`,
+    fine.lifts.dbshoulderpress.e1rm === 84);
+  check("migration is idempotent — running it twice changes nothing further",
+    migrateProgram(stale).lifts.inclinebench.e1rm === stale.lifts.inclinebench.e1rm);
+  check("the reseeded program prescribes a sane per-dumbbell incline load", (() => {
+    const it = prescribe({ ...stale, cycleIndex: dayWith("inclinebench") }, green).items.find((i) => i.key === "inclinebench");
+    return it.topLoad > 0 && it.topLoad < 280 * 0.5; // never near a barbell-scale number
+  })());
 }
 
 console.log("\n== AUDIT 3.13: same-day same-muscle volume is capped, not multiplied by stacked slots ==");
