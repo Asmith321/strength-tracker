@@ -507,7 +507,7 @@ console.log("\n== P1.6: double progression for isolation accessories ==");
     if (last) p.lifts.lateralraise.last = last;
     return prescribe(p, green).items.find((i) => i.key === "lateralraise");
   };
-  const hit = rx({ w: 30, reps: 12, rpe: 10 });
+  const hit = rx({ w: 30, reps: ACC_REP_TIERS.accumulation.isolation.reps, rpe: 10 }); // at the tier's rep target
   // audit 2.7: lateralraise now carries increment: 2.5 (cable-stack pin spacing), so the
   // DP load step is 30 -> 32.5, not the old unit-default 5 lb step (30 -> 35).
   check(`top-of-range last session earns one load step (30 -> ${hit.topLoad}) and resets reps to ${DP_MIN_REPS}`,
@@ -742,7 +742,7 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      groups now lands EXACTLY on its MAV (quads 14, chest 14, back 18, biceps
      14, triceps 12, side_delts 14, calves 14, rear_delts 9, front_delts 7,
      hamstrings 8), and no same-day muscle total exceeds SAME_DAY_GROUP_CAP. */
-  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":195,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"squat","sets":2,"topLoad":275,"reps":8},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":2,"topLoad":180,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"rdl","sets":2,"topLoad":265,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"shrug","sets":3,"topLoad":45,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"bsplit","sets":2,"topLoad":50,"reps":10},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":2,"topLoad":-60,"reps":8},{"key":"pulldown","sets":2,"topLoad":170,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"preachercurl","sets":2,"topLoad":70,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"wristcurl","sets":3,"topLoad":15,"reps":12}],[{"key":"bench","sets":3,"topLoad":205,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"squat","sets":3,"topLoad":285,"reps":8},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":3,"topLoad":190,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"rdl","sets":2,"topLoad":275,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":3,"topLoad":17.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"bsplit","sets":2,"topLoad":55,"reps":10},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":3,"topLoad":-50,"reps":8},{"key":"pulldown","sets":2,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":3,"topLoad":72.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":2,"topLoad":80,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}],[{"key":"bench","sets":4,"topLoad":210,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"cablefly","sets":4,"topLoad":60,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"squat","sets":4,"topLoad":295,"reps":8},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"tbarrow","sets":5,"topLoad":190,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"rdl","sets":3,"topLoad":285,"reps":8},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":3,"topLoad":85,"reps":8},{"key":"dip","sets":3,"topLoad":160,"reps":8},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":8},{"key":"dblateralraise","sets":5,"topLoad":17.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"bsplit","sets":3,"topLoad":55,"reps":10},{"key":"legext","sets":3,"topLoad":170,"reps":12},{"key":"calfraise","sets":4,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"pullup","sets":4,"topLoad":-50,"reps":8},{"key":"pulldown","sets":4,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":5,"topLoad":75,"reps":12},{"key":"bayesiancurl","sets":4,"topLoad":67.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"legcurl","sets":2,"topLoad":120,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}]];
+  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":2,"topLoad":22.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":2,"topLoad":22.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":3,"topLoad":220,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"latpullover","sets":3,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":3,"topLoad":-45,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":4,"topLoad":225,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"tbarrow","sets":5,"topLoad":200,"reps":6},{"key":"latpullover","sets":5,"topLoad":110,"reps":10},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10}],[{"key":"inclinebench","sets":3,"topLoad":90,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":5,"topLoad":20,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"legcurl","sets":2,"topLoad":130,"reps":10},{"key":"lateralraise","sets":4,"topLoad":25,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -831,22 +831,25 @@ console.log("\n== AUDIT 1.3: repOnly moves the REP target instead of shipping a 
   const p = fresh();
   p.bodyweight = 200;
   /* e1RM chosen so rawSys = e1rm * rpePct(8, 7) lands INSIDE the repOnly band
-     [0.85*bw, bw). At the rebuilt compound target of 8 reps @ RPE 7 that pct is
-     0.707, so the band is e1RM ~240.5 .. ~282.9 — 260 sits mid-band. (The old
-     value of 240 was mid-band under the previous main-lift rep/RPE scheme and
-     now falls just below it, into the assistance branch.) */
-  p.lifts.pullup.e1rm = 260;
+     [0.85*bw, bw). The band MOVES with the compound rep target, because pct is
+     a function of reps: at 6 reps @ RPE 7 pct is 0.762, so the band is e1RM
+     ~223.1 .. ~262.5 and mid-band is ~243. Recomputed when the rep targets
+     were scaled down by 2 — the previous fixture of 260 was mid-band at 8 reps
+     but sits near the TOP of the 6-rep band, where the required load already
+     ~= bodyweight and almost no rep reduction is called for, so the test would
+     have passed vacuously on a case that no longer exercised the mechanism. */
+  p.lifts.pullup.e1rm = 243;
   p.cycleIndex = dayWith("pullup");
   const it = prescribe(p, green).items.find((i) => i.key === "pullup");
   check(`lands in the repOnly band (repOnly=${it.repOnly}, topLoad=${it.topLoad})`, it.repOnly && it.topLoad === 0);
   /* The athlete's actual load is their bodyweight (200), heavier than the
-     ~184 the RPE math asked for. Holding the prescribed 8 reps would ship a
+     ~185 the RPE math asked for. Holding the prescribed rep target would ship a
      set meaningfully heavier than its RPE label. The rep target must come DOWN. */
   const accumTierReps = ACC_REP_TIERS.accumulation.compound.reps;
   check(`reps reduced below the tier default (${it.reps} < ${accumTierReps}) so the set matches its RPE label`,
     it.reps < accumTierReps);
   // and the reduced rep count should be the table's best match for bw/e1rm
-  const want = repsAtPct(200 / 260, it.rpe);
+  const want = repsAtPct(200 / 243, it.rpe);   // matches the recomputed fixture above
   check(`reps equals the inverted-table answer for bw/e1rm (${it.reps} === ${want})`, it.reps === want);
 }
 
@@ -912,9 +915,15 @@ console.log("\n== AUDIT 2.1(a): rep targets hold constant across a block; only E
     check(`${key}: reps constant across the block (${a.reps} -> ${b.reps}), effort climbs (${a.rpe} -> ${b.rpe})`,
       a.reps === b.reps && b.rpe > a.rpe);
   }
-  check(`compound tier is 8 reps, unilateral 10, isolation 12`,
-    ACC_REP_TIERS.accumulation.compound.reps === 8 && ACC_REP_TIERS.accumulation.unilateral.reps === 10
-    && ACC_REP_TIERS.accumulation.isolation.reps === 12);
+  /* Literal on purpose — this test exists to make a change to the rep targets
+     deliberate. Scaled down by 2 per tier at the athlete's request (was
+     8/10/12); see the ACC_REP_TIERS comment for the load consequence. */
+  check(`compound tier is 6 reps, unilateral 8, isolation 10`,
+    ACC_REP_TIERS.accumulation.compound.reps === 6 && ACC_REP_TIERS.accumulation.unilateral.reps === 8
+    && ACC_REP_TIERS.accumulation.isolation.reps === 10);
+  check(`deload rep targets track accumulation exactly (${Object.values(ACC_REP_TIERS.deload).map((t) => t.reps).join("/")})`,
+    ["compound", "unilateral", "isolation"].every((t) =>
+      ACC_REP_TIERS.deload[t].reps === ACC_REP_TIERS.accumulation[t].reps));
 }
 
 console.log("\n== AUDIT 2.7: per-exercise load increments override the unit-default rounding step ==");
@@ -925,8 +934,22 @@ console.log("\n== AUDIT 2.7: per-exercise load increments override the unit-defa
   const lateralraise = itemOn("lateralraise", late);
   const reversepecdeck = itemOn("reversepecdeck", late);
   check(`latpullover (increment: 10) rounds to a multiple of 10 (got ${latpullover.topLoad})`, latpullover.topLoad % 10 === 0);
-  check(`lateralraise (increment: 2.5) lands on a non-5-multiple value the old step couldn't produce (got ${lateralraise.topLoad})`,
-    lateralraise.topLoad % 2.5 === 0 && lateralraise.topLoad % 5 !== 0);
+  /* The point is that a 2.5 increment can REACH values the old 5 lb default
+     could not. Pinning that on one named exercise is fragile — which lift
+     happens to land off the 5 grid depends on its seed ratio and the block's
+     rep target, and scaling reps by -2 moved lateralraise from 22.5 onto 25.
+     Asserted across the class instead: at least one 2.5-increment lift lands
+     off the 5 grid, which is the capability being tested, and it stays true
+     however the individual loads shuffle. */
+  const fineGrid = ROTATION.flatMap((d) => d.items).filter((k, i, a) => a.indexOf(k) === i)
+    .filter((k) => LIB[k].increment === 2.5)
+    .map((k) => ({ key: k, load: itemOn(k, late).topLoad }));
+  const offFive = fineGrid.filter((x) => x.load % 5 !== 0);
+  check(`sanity: the rotation actually carries 2.5-increment lifts (${fineGrid.length})`, fineGrid.length > 0);
+  check(`at least one lands off the 5 lb grid, unreachable with the old step (${offFive.map((x) => `${x.key}=${x.load}`).join(", ") || "none"})`,
+    offFive.length > 0);
+  check(`and every one of them sits on the 2.5 grid (${fineGrid.map((x) => x.load).join(", ")})`,
+    fineGrid.every((x) => x.load % 2.5 === 0));
   check(`reversepecdeck (increment: 2.5) rounds to a multiple of 2.5 (got ${reversepecdeck.topLoad})`,
     reversepecdeck.topLoad % 2.5 === 0);
   // exercises without an `increment` still use the old unit-based step
@@ -1004,14 +1027,32 @@ console.log("\n== AUDIT 2.9: the session's first barbell lift never opens on a s
   const items = prescribe(p, green).items;
   const bench = items.find((i) => i.key === "bench");     // day 0's FIRST barbell lift
   const squat = items.find((i) => i.key === "squat");     // a LATER barbell lift, same day
-  check(`baseTier without the floor would be "minimal" (pct=${rpePct(bench.reps, bench.rpe).toFixed(3)} < 0.70)`,
-    rpePct(bench.reps, bench.rpe) < 0.70);
-  check(`first-barbell floor bumps it to short instead (type=${bench.warmup?.type}, ${bench.warmup?.sets?.length} sets)`,
-    bench.warmup?.type === "short" && bench.warmup.sets.length === 2);
-  check(`a LATER barbell lift at the identical %1RM is NOT floored (squat pct=${rpePct(squat.reps, squat.rpe).toFixed(3)}, type=${squat.warmup?.type})`,
-    rpePct(squat.reps, squat.rpe) === rpePct(bench.reps, bench.rpe) && squat.warmup?.type === "minimal");
-  check("the floor is about session position, not the exercise — same lift, different index, different tier",
-    bench.warmup.sets.length > squat.warmup.sets.length);
+  /* THE FLOOR IS NOW DORMANT, and this test says so rather than pretending
+     otherwise. Scaling compound reps 8 -> 6 raised every barbell prescription's
+     %1RM above the 0.70 "minimal" boundary — the lowest real value is now a
+     deload compound at 0.739, where it used to be 0.68. Verified by disabling
+     the floor line entirely and re-running 432 prescriptions across 3 tiers x
+     2 block types x 6 cycles x 4 days x 3 readiness bands: output IDENTICAL.
+     That is a benign kind of dead: AUDIT 2.9 added the floor so the day's
+     opening barbell lift could never ship a single warmup set, and that
+     property is now STRUCTURALLY true — no barbell lift is light enough to
+     qualify for "minimal" in the first place — rather than enforced after the
+     fact. The floor is kept as a guard in case rep targets move back down.
+     Asserted as: no barbell lift anywhere opens on fewer than 2 warmup sets,
+     which is the outcome AUDIT 2.9 actually cared about and holds however that
+     outcome is achieved. */
+  const lowest = Math.min(...["accumulation", "deload"].flatMap((bt) =>
+    [0, 5].flatMap((cyc) => Array.from({ length: ROT }, (_, d) => {
+      const q = fresh(); q.cycleIndex = d; q.block = { type: bt, cycle: cyc, sessionsInBlock: cyc * ROT, nextAfter: null };
+      return prescribe(q, green).items.filter((i) => LIB[i.key].barbell)
+        .map((i) => rpePct(i.reps, i.rpe));
+    }).flat())));
+  check(`no real barbell prescription now falls below the 0.70 minimal boundary (lowest ${lowest.toFixed(3)})`,
+    lowest >= 0.70);
+  check(`the day's first barbell lift still never opens on a single warmup set (bench: ${bench.warmup?.type}, ${bench.warmup?.sets?.length} sets)`,
+    (bench.warmup?.sets?.length ?? 0) >= 2);
+  check(`a later barbell lift on the same day is still allowed a shorter ramp (squat ${squat.warmup?.sets?.length} <= bench ${bench.warmup?.sets?.length})`,
+    (squat.warmup?.sets?.length ?? 0) <= (bench.warmup?.sets?.length ?? 0));
 }
 
 console.log("\n== AUDIT 2.10: feeler steps track priming — cold gets 2, primed gets 1 ==");
@@ -1885,7 +1926,7 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
        attempt at this test had it: mutating the deload compound rep target
        from 8 to 9 passed all 429 assertions. Pinning the numbers means a change
        to the deload prescription has to be made deliberately, here. */
-    const DELOAD_REPS = { compound: 8, unilateral: 10, isolation: 12 };
+    const DELOAD_REPS = { compound: 6, unilateral: 8, isolation: 10 };  // scaled -2/tier at athlete request
     Object.entries(DELOAD_REPS).forEach(([tier, reps]) => {
       if (seen[tier] === undefined) return;
       check(`deload ${tier} reps are ${reps} (prescribed ${seen[tier]})`, seen[tier] === reps);
@@ -2269,8 +2310,8 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
   check(`sanity: lateral raise steps in ${step} lb, so half-step remainders are reachable`, step === 2.5);
   /* w = 24: 24 / 2.5 = 9.6 — rounds UP to 25, truncates DOWN to 22.5. */
   const acc = mkLR(24, "accumulation");
-  check(`accumulation DP anchor rounds 9.6 steps up, not down (topLoad ${acc.topLoad}, truncating would give 25)`,
-    acc.topLoad === 27.5);
+  check(`accumulation DP anchor rounds 9.6 steps up, not down (topLoad ${acc.topLoad}, truncating gives less)`,
+    acc.topLoad === 30);
   /* w = 25 in a deload: 25 x 0.85 / 2.5 = 8.5 — rounds to 22.5, truncates to 20. */
   const del = mkLR(25, "deload");
   check(`deload DP anchor rounds 8.5 steps up, not down (topLoad ${del.topLoad}, truncating would give 20)`,
@@ -2345,6 +2386,85 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     };
     check(`more reps at the same RPE implies a higher max (${est(6).toFixed(1)} < ${est(12).toFixed(1)})`,
       est(6) < est(12));
+  }
+}
+
+{
+  console.log("\n== REP RESCALE: paths the -2 change moved out of coverage ==");
+  /* Scaling the rep targets shifted which engine states are reachable, and
+     three mutants that the suite previously killed slipped through as a
+     result. Coverage is a property of the reachable state space, not of the
+     test count — these restore it. */
+
+  /* 1. accRpeBase's guard is `accTarget && accTarget.rpeStep ? ramped : flat`.
+     DELOAD tiers deliberately carry no rpeStep (effort is flat there), so they
+     take the second branch. As an OR the guard is always truthy and deload
+     takes the RAMPED branch, computing Math.min(undefined, rpe + undefined*cyc)
+     = NaN — every deload RPE becomes NaN. The existing "never exceeds the cap"
+     assertion cannot catch that, because NaN fails every comparison silently.
+     Pinned as exact values. */
+  {
+    const p = fresh();
+    p.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+    const seen = {};
+    for (let d = 0; d < ROT; d++) {
+      p.cycleIndex = d;
+      prescribe(p, green).items.forEach((it) => { seen[LIB[it.key].repTier] = it.rpe; });
+    }
+    check(`deload RPE is exactly 6 / 6 / 6.5 by tier, and finite (${JSON.stringify(seen)})`,
+      seen.compound === 6 && seen.unilateral === 6 && seen.isolation === 6.5);
+    check("no deload RPE is NaN", Object.values(seen).every((v) => Number.isFinite(v)));
+    /* And the ramped branch must still ramp in accumulation, so the guard is
+       not simply always-false either. */
+    const q = fresh();
+    const rpeAt = (c) => { q.block = { type: "accumulation", cycle: c, sessionsInBlock: c * ROT, nextAfter: null }; q.cycleIndex = 0;
+      return prescribe(q, green).items.find((i) => i.key === "bench").rpe; };
+    check(`accumulation still ramps effort across the block (${rpeAt(0)} -> ${rpeAt(4)})`, rpeAt(4) > rpeAt(0));
+  }
+
+  /* 2. reachedCeiling = capW < mav && deliveredPrev >= capW. As an OR, any
+     capacity-limited cadence reads as "ceiling reached" regardless of how
+     little volume was actually delivered, which switches OFF stalledEarly and
+     with it the fatigue-lowering branch. Concretely: an athlete training at a
+     low cadence who genuinely stalls AND spikes fatigue would have their
+     landmarks left untouched, because the schedule happens to be the binding
+     constraint. Being capacity-limited is not a reason to ignore a real stall. */
+  {
+    const p = fresh();
+    p.experience = "advanced";
+    p.landmarks = landmarksForExperience("advanced");
+    p.avgSessionGapDays = 7 / 2.2;               // freqScale 1.8 -> capW < mav for most groups
+    Object.values(p.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+    p.fatigue.index = 0.95;
+    p.block = { type: "accumulation", cycle: 1, sessionsInBlock: ROT, nextAfter: null };
+    const fs = weeklyFreqScale(7 / 2.2);
+    const limited = Object.keys(p.landmarks).filter((g) => maxDeliverable(g, "accumulation") / fs < p.landmarks[g].mav);
+    check(`sanity: this cadence really is capacity-limited for most groups (${limited.length}/10)`, limited.length > 0);
+    const adj = adjustLandmarks(p).adjustments;
+    const cut = Object.values(adj).some((a) => a.dMav < 0 || a.dMrv < 0);
+    check("a genuine stall + fatigue spike still cuts landmarks at a capacity-limited cadence",
+      cut);
+  }
+
+  /* 3. overshootSteps = min(CAP, floor((last.reps - target) / 2) + 1). floor vs
+     ceil only diverge when the rep excess is ODD, and the isolation target
+     moving 12 -> 10 changed which excesses the existing fixtures produced.
+     13 reps against a target of 10 is an excess of 3: floor gives 2 load steps,
+     ceil would give 3. */
+  {
+    const target = ACC_REP_TIERS.accumulation.isolation.reps;
+    const excess = 3;
+    const p = fresh();
+    p.cycleIndex = dayWith("lateralraise");
+    p.block = { type: "accumulation", cycle: 1, sessionsInBlock: ROT, nextAfter: null };
+    p.lifts.lateralraise = { ...p.lifts.lateralraise, last: { w: 30, reps: target + excess, rpe: 10 } };
+    const it = prescribe(p, green).items.find((i) => i.key === "lateralraise");
+    const step = LIB.lateralraise.increment;
+    const anchor = Math.round(30 / step) * step;
+    const wantSteps = Math.min(DP_MAX_STEPS, Math.floor(excess / 2) + 1);   // 2
+    check(`sanity: the rep excess (${excess}) is odd, so floor and ceil disagree`, excess % 2 === 1);
+    check(`overshooting the rep target by ${excess} earns ${wantSteps} load steps, not ${wantSteps + 1} (topLoad ${it.topLoad} === ${anchor + step * wantSteps})`,
+      it.topLoad === anchor + step * wantSteps);
   }
 }
 

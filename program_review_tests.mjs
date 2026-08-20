@@ -160,8 +160,24 @@ console.log("\n== Effort progression: 3 RIR -> 0-1 RIR, compounds never to failu
   const maxFirst = Math.max(...first.items.map((it) => it.rpe));
   const maxLast = Math.max(...last.items.map((it) => it.rpe));
   check(`prescribed effort really climbs across the block (max RPE ${maxFirst} -> ${maxLast})`, maxLast > maxFirst);
-  check("rep targets sit in the 8-12 band where the load-vs-growth evidence is flat",
-    [first, last].every((rx) => rx.items.every((it) => it.reps >= 8 && it.reps <= 12)));
+  /* The band this guards is the ~5-30 rep zone the evidence says is flat for
+     hypertrophy, NOT a narrower "hypertrophy rep range" — no such thing exists.
+     Written as 8-12 it was really pinning the then-current targets, so scaling
+     them by -2 broke it even though the program stayed comfortably inside the
+     evidence-supported zone. Asserted against the zone the comment actually
+     names, with a floor at 5 that would catch a genuine drift into strength
+     territory (triples and below) where the load-equivalence finding no longer
+     holds. */
+  check("every prescribed rep target sits inside the flat 5-30 zone",
+    [first, last].every((rx) => rx.items.every((it) => it.reps >= 5 && it.reps <= 30)));
+  /* Across the WHOLE rotation, not just the default day — the unilateral tier
+     has a single exercise (bsplit, day 2), so a one-day sample silently misses
+     it and this assertion would claim two tiers where there are three. */
+  const allReps = [...new Set(Array.from({ length: ROT }, (_, d) =>
+    prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: 0 } }, green).items.map((it) => it.reps)).flat())]
+    .sort((a, b) => a - b);
+  check(`the program's actual rep targets are ${allReps.join("/")} (compound/unilateral/isolation, scaled -2 at athlete request)`,
+    allReps.length === 3 && allReps[0] === 6 && allReps[1] === 8 && allReps[2] === 10);
 }
 
 console.log("\n== Session and weekly budget (measured from real prescribe output) ==");
