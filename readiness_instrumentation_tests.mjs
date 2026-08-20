@@ -17,7 +17,7 @@ const check = (name, cond, extra = "") => {
   if (cond) { pass++; console.log(`  PASS  ${name}`); }
   else { fail++; console.log(`  FAIL  ${name}  ${extra}`); }
 };
-const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
+const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
 const fresh = () => freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
 
 console.log("\n== Decoupling: same-day path vs multi-session path are independent ==");
@@ -57,8 +57,19 @@ console.log("\n== ingest() returns this session's raw outcome (not just smoothed
     backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.backoffRpeCap + 0.5, backoffRpeCap: it.backoffRpeCap,
   }));
   const r = ingest(p, logs, green);
-  check("ingest() returns a non-null rpeMiss when touched main logs exist", r.rpeMiss != null && r.rpeMiss > 0);
-  check("ingest() returns a non-null backoffDrift when backoff data exists", r.backoffDrift != null && r.backoffDrift > 0);
+  check("ingest() returns a non-null rpeMiss when touched compound logs exist", r.rpeMiss != null && r.rpeMiss > 0);
+  /* Since the hypertrophy rebuild nothing is prescribed a distinct backoff set
+     (straight sets everywhere — backoffSetCount is always 0), so the backoff
+     channel has no evidence to read and correctly reports 0 rather than null:
+     "we looked and there was no drift", not "we never looked". The channel
+     itself is exercised by the synthetic-backoff case below. */
+  check("ingest() returns backoffDrift 0 when nothing is prescribed backoff sets", r.backoffDrift === 0);
+  {
+    // force a backoff set onto a compound log to prove the channel still reads it
+    const boLogs = logs.map((l, i) => (i === 0 ? { ...l, backoffSetCount: 2 } : l));
+    const rBo = ingest(p, boLogs, green);
+    check("ingest() reads backoffDrift when a log DOES carry backoff sets", rBo.backoffDrift != null && rBo.backoffDrift > 0);
+  }
   check("ingest() returns missFreq for this session (0 here, no misses)", r.missFreq === 0);
 
   // no touched main logs this session -> rpeMiss/backoffDrift are null (no evidence), not a fake 0

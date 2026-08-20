@@ -69,3 +69,75 @@ flags rather than over-reading an early run. **This script — run against
 real accumulated history, not this note or a synthetic demo — is the
 intended mechanism for ever changing `READINESS_RPE_ADJ`, `READINESS_SET_MULT`,
 or `READINESS_FATIGUE_WEIGHT`. It hasn't been run against real data yet.**
+
+## Hypertrophy rebuild — exercise selection, volume, effort
+
+**Design intent.** The program was rebuilt as a pure hypertrophy program from a
+fixed list of athlete-approved exercises, with the mandatory squat/bench/deadlift
+skeleton removed. The notes below record the evidence each design decision rests
+on, so the numbers in `PATTERNS` / `ACC_REP_TIERS` / `ROTATION` aren't left
+looking arbitrary.
+
+**Volume is the primary driver, with diminishing returns.** Pelland, Remmert,
+Robinson, Hinson & Zourdos, *The Resistance Training Dose Response:
+Meta-Regressions Exploring the Effects of Weekly Volume and Frequency on Muscle
+Hypertrophy and Strength Gains* (Sports Medicine, 2026; 67 studies, 2058
+participants) finds a positive weekly-volume dose-response for hypertrophy that
+flattens as volume rises. The companion per-session analysis (*Is There Too Much
+of a Good Thing?*) puts the point of undetectable outcome superiority at **~11
+fractional sets per muscle per session** — this is what `SAME_DAY_GROUP_CAP`
+(10) and `ACC_SET_CAP` (6) encode.
+
+**Frequency distributes volume; it is not independently anabolic.** Volume-
+equated comparisons of 2x vs 3x per week find no meaningful hypertrophy
+difference (effect-size differences around 0.02). Frequency earns its place only
+because per-session volume saturates — so the rotation gives every muscle 2-3
+exposures per pass specifically to keep each session under the per-session
+ceiling, not because more sessions are better per se. This is also why the
+rebuilt rotation pairs an upper and a lower half on every day rather than
+splitting upper/lower across days: it was the only way to get chest and back to
+two exposures without doubling session length.
+
+**Load/rep range is close to irrelevant when sets are near failure.** Meta-
+analyses spanning roughly 3 to 35 reps find equivalent hypertrophy (pooled heavy
+8.3% vs light 7.0%, a gap smaller than chance). Rep targets in `ACC_REP_TIERS`
+are therefore chosen for practicality — load-progression granularity on
+compounds, rep headroom for double progression on isolation — not because a
+"hypertrophy rep range" exists. Load still matters for strength, which this
+program no longer optimises for.
+
+**Proximity to failure has a real dose-response — for hypertrophy specifically.**
+Robinson et al. (2024) meta-regressions find hypertrophy improves as reps-in-
+reserve approach 0, degrading more steeply past ~5 RIR, while *strength* is
+largely insensitive to RIR. Absolute failure is not required: 1-2 RIR matches
+training to failure in trained lifters. Hence the block ramps ~3 RIR → ~0-1 RIR,
+with compounds capped at RPE 9 (failure on multi-joint work costs more systemic
+fatigue than the last half-rep returns) and isolation at 9.5.
+
+**Long-muscle-length training is the exercise-selection variable with the
+clearest evidence.** A 2025 systematic review of partial-ROM training at long vs
+short muscle lengths found greater hypertrophy at long lengths in 7 of 8
+included studies. Specific choices this drove, all from the approved list:
+overhead cable triceps extension over any pressdown (Maeo et al. 2022 — roughly
+40% greater triceps growth, long head loaded overhead), seated over lying leg
+curl (hip flexion lengthens the hamstring), machine lat pullover, Bayesian cable
+curl, and the deep positions of RDL and Bulgarian split squat.
+
+**MAV, not MRV, is the ramp's endpoint.** RP's textbook mesocycle ramps a muscle
+from MEV toward MRV, but that model is written per-muscle. This program tracks
+ten landmark groups and ramps them on one schedule, and MRV is by definition the
+volume a muscle can *barely* recover from — so hitting ten MRVs at once is one
+athlete well past their systemic limit, not ten muscles at theirs. Measured on
+this rotation an MRV endpoint delivered 175 sets/rotation with a 47-set peak
+session; the MAV endpoint delivers ~148 with a peak in the high 30s, every group
+still inside the 10-20 sets/week band where the dose-response evidence is
+strongest. MRV keeps three jobs: bounding MAV's auto-tuned growth, feeding the
+schedule-capacity math, and being what the athlete sees as their ceiling.
+
+**Caveats.** Volume/frequency meta-regressions are dominated by relatively
+untrained, mostly male samples and short interventions; the per-session ceiling
+in particular rests on sparse data at high per-session volumes, and the authors
+say explicitly that it is unclear whether more sets beyond it are harmful or
+merely not better. The landmark table is RP's published guidance, which is
+practitioner consensus rather than a meta-analysis. Treat every specific number
+here as a defensible starting point that the per-athlete auto-tune then moves.

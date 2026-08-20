@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from "./storage.js";
 import {
-  LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram,
+  LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
   prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
@@ -142,8 +142,14 @@ function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
   const [experience, setExperience] = useState("intermediate");
   const [bodyweight, setBodyweight] = useState(180);
+  /* Four seeded lifts, one per movement family, chosen so every other exercise
+     in LIB can be ratio-seeded off one of them (see ACC_E1RM_REF): a squat
+     pattern, a hinge, an upper press, and an upper pull. Deadlift is no longer
+     asked for — it isn't in the rotation — and T-Bar Row is asked for instead,
+     so pulling loads stop being estimated from a pressing lift. */
   const [seeds, setSeeds] = useState({
-    squat: { weight: 225, reps: 5, rpe: 8 }, bench: { weight: 155, reps: 5, rpe: 8 }, deadlift: { weight: 275, reps: 5, rpe: 8 },
+    squat: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 185, reps: 8, rpe: 8 },
+    bench: { weight: 155, reps: 5, rpe: 8 }, tbarrow: { weight: 135, reps: 8, rpe: 8 },
   });
   const setSeed = (k, f, v) => setSeeds((s) => ({ ...s, [k]: { ...s[k], [f]: v } }));
 
@@ -151,11 +157,11 @@ function Onboarding({ onDone }) {
     <div className="screen">
       <div className="eyebrow">SETUP · 1 OF 2</div>
       <h1 className="display">Calibrate the lifts.</h1>
-      <p className="lede">Bodyweight drives system-load math for bodyweight lifts (Pull-Up / Chin-Up) — added weight or assistance is tracked relative to it. Enter a recent honest top set for each main lift — weight, reps, and RPE (10 = no reps left, 8 = two left). The engine converts this to an estimated 1RM and prescribes every future load from it, re-reading your e1RM after each session.</p>
+      <p className="lede">Bodyweight drives system-load math for bodyweight lifts (Pull-Up / Lat Pulldown) — added weight or assistance is tracked relative to it. Enter a recent honest top set for each of these four — weight, reps, and RPE (10 = no reps left, 8 = two left). Every other exercise in the program starts from a ratio off the closest one of these, then re-anchors to your own numbers after its first real session.</p>
       <div className="panel">
         <label className="fieldrow sm"><span>Bodyweight</span><Stepper value={bodyweight} set={setBodyweight} min={80} max={400} step={1} suffix=" lb" /></label>
       </div>
-      {["squat", "bench", "deadlift"].map((k) => (
+      {["squat", "rdl", "bench", "tbarrow"].map((k) => (
         <div key={k} className="panel">
           <div className="exer-name" style={{ fontSize: 19, padding: "10px 0 4px" }}>{LIB[k].label}</div>
           <label className="fieldrow sm"><span>Weight</span><Stepper value={seeds[k].weight} set={(v) => setSeed(k, "weight", v)} step={5} suffix=" lb" /></label>
@@ -173,7 +179,7 @@ function Onboarding({ onDone }) {
     <div className="screen">
       <div className="eyebrow">SETUP · 2 OF 2</div>
       <h1 className="display sm">Training experience.</h1>
-      <p className="lede">This seeds your starting weekly-volume landmarks — MEV (minimum effective), MAV (most growth), MRV (most you can recover from) hard sets per pattern. From here the engine auto-tunes them each block from your strength trend and fatigue; you won't set these by hand.</p>
+      <p className="lede">This seeds your starting weekly-volume landmarks — MEV (minimum effective), MAV (most growth), MRV (most you can recover from) hard sets per muscle. Each block ramps from MEV up to MAV and then deloads; MRV is the recovery ceiling that bounds how far MAV can climb. From here the engine auto-tunes all three every block from your growth trend and fatigue; you won't set these by hand.</p>
       {Object.entries(EXPERIENCE_TIERS).map(([key, t]) => (
         <button key={key} type="button" className={"optcard" + (experience === key ? " on" : "")} onClick={() => setExperience(key)}>
           <div className="optcard-top">
@@ -185,13 +191,26 @@ function Onboarding({ onDone }) {
       ))}
       <div className="eyebrow mt">SEEDED LANDMARKS</div>
       <LandmarkTable landmarks={preview} />
-      <button className="cta" onClick={() => onDone(freshProgram({ seeds, experience, unit: "lb", goal: "hybrid", bodyweight }))}>Start program</button>
+      <button className="cta" onClick={() => onDone(freshProgram({ seeds, experience, unit: "lb", goal: "hypertrophy", bodyweight }))}>Start program</button>
     </div>
   );
 }
 
+/* Rest between straight sets, by exercise tier. Longer rest is one of the few
+   session variables with a clear hypertrophy effect: short rest truncates the
+   next set's reps, so matched-set programs on 1-minute rest deliver less total
+   volume and less growth than the same program on 2-3 minutes (Schoenfeld et
+   al. 2016). Multi-joint work needs the most because it is the most limited by
+   systemic recovery between sets; single-joint work recovers fastest. Replaces
+   the old flat "3:00 for a main, 1:30 for everything else". */
+const REST_SECONDS = { compound: 150, unilateral: 120, isolation: 90 };
+const REST_LABEL = { compound: "2:30", unilateral: "2:00", isolation: "1:30" };
+
 function ExerciseCard({ it, log, update, barWeight, onRest }) {
-  const [open, setOpen] = useState(it.isMain);
+  /* Compounds open by default — they are the session's headline work and the
+     exercises most likely to need a warmup ramp expanded. Isolation work stays
+     collapsed. (This used to key off isMain, which no longer exists.) */
+  const [open, setOpen] = useState(it.repTier === "compound");
   const [warmupOpen, setWarmupOpen] = useState(false);
   /* Six loggable fields (weight/reps/RPE/missed/backoff reps/backoff RPE)
      each feed a distinct engine calculation — none are removable without
@@ -215,20 +234,15 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     : it.barbell ? `${it.topLoad} lb — ${plateText(it.topLoad, barWeight)}`
     : it.unilateral ? `${it.topLoad} lb/dumbbell`
     : `${it.topLoad} lb`;
-  const setWord = (n) => (n === 1 ? "set" : "sets");
-  /* Unambiguous total-set breakdown for mains: `sets` is the FULL working-set
-     count, never top-sets-plus-extra-backoff — see prescribe(). Only the
-     first set is at topLoad; the rest (if any) are at the lower backoffLoad. */
-  /* AUDIT 2.6: double-progression sets hold a fixed load and climb reps —
+  /* Every exercise is straight sets since the hypertrophy rebuild — `sets` is
+     the full working-set count at one load, so there is no top-set/backoff
+     split left to describe here.
+     AUDIT 2.6: double-progression sets hold a fixed load and climb reps —
      the load is never derived from the shown RPE the way a normal accessory's
      is, so leading with "RPE X ·" implies a precision that isn't there. Lead
      with the load (what's actually prescribed) and show RPE as a target
      effort to aim for, not a computed value. */
-  const scheme = it.isMain
-    ? (it.backoffSetCount > 0
-        ? `${it.topSetCount} ${setWord(it.topSetCount)} @ ${it.topLoad} lb, then ${it.backoffSetCount} ${setWord(it.backoffSetCount)} @ ${it.backoffLoad} lb (${it.reps} reps · RPE ${it.rpe})`
-        : `${it.sets} ${setWord(it.sets)} of ${it.reps} @ ${it.topLoad} lb (RPE ${it.rpe})`)
-    : it.dpMode
+  const scheme = it.dpMode
     ? `${it.sets} × ${it.reps} @ ${loadScheme} (aim RPE ${it.rpe})`
     : `${it.sets} × ${it.reps} @ RPE ${it.rpe} · ${loadScheme}`;
   // Same load-display logic as loadScheme above, applied to the LOGGED weight
@@ -239,9 +253,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     : it.barbell ? `${log.topWeight} lb`
     : it.unilateral ? `${log.topWeight} lb/dumbbell`
     : `${log.topWeight} lb`;
-  const logSummary = (it.isMain
-    ? `${it.sets} ${setWord(it.sets)} of ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
-    : it.dpMode
+  const logSummary = (it.dpMode
     ? `${it.sets} × ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
     : `${it.sets} × ${log.topReps} @ RPE ${log.topRpe} · ${logLoadScheme}`)
     + (log.missedSets > 0 ? ` · ${log.missedSets} missed` : "");
@@ -249,7 +261,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
         <div>
-          <div className="exer-name">{it.label}{it.isMain && <span className="tag">MAIN</span>}</div>
+          <div className="exer-name">{it.label}</div>
           <div className="exer-scheme mono">{scheme}</div>
         </div>
         {open ? <ChevronDown size={17} color="#8A909C" /> : <ChevronRight size={17} color="#8A909C" />}
@@ -290,11 +302,17 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
             </button>
           ) : (
             <>
-              <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Top-set weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
-              <label className="fieldrow sm"><span>Top-set reps</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={15} /></label>
-              <label className="fieldrow sm"><span>Top-set RPE</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
+              <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : it.unilateral ? "Weight per dumbbell" : "Working weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
+              <label className="fieldrow sm"><span>Reps (per set)</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={20} /></label>
+              <label className="fieldrow sm"><span>RPE (hardest set)</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
               <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
-              {it.isMain && it.backoffSetCount > 0 && (
+              {/* Backoff fields render only if something is ever prescribed a
+                  distinct backoff set. Nothing is today (straight sets
+                  everywhere — see prescribe), so this branch is currently
+                  unreachable; it is kept rather than deleted because the log
+                  shape still carries the fields and an older saved session can
+                  still have non-zero values in them. */}
+              {it.backoffSetCount > 0 && (
                 <>
                   <label className="fieldrow sm"><span>Backoff sets — reps (avg)</span><Stepper value={log.backoffReps} set={(v) => update({ backoffReps: v })} min={1} max={20} /></label>
                   <label className="fieldrow sm"><span>Backoff sets — RPE (avg)</span><Stepper value={log.backoffRpe} set={(v) => update({ backoffRpe: v })} min={5} max={10} step={0.5} /></label>
@@ -306,7 +324,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
               )}
             </>
           )}
-          <button className="restbtn mono" onClick={() => onRest(it)}><Timer size={13} /> REST {it.isMain ? "3:00" : "1:30"}</button>
+          <button className="restbtn mono" onClick={() => onRest(it)}><Timer size={13} /> REST {REST_LABEL[it.repTier] || "1:30"}</button>
         </div>
       )}
     </div>
@@ -338,7 +356,7 @@ function Today({ program, sessions, onLog }) {
     return () => clearInterval(id);
   }, [rest !== null && rest.left > 0]);
 
-  const startRest = (it) => setRest({ label: it.label, left: it.isMain ? 180 : 90 });
+  const startRest = (it) => setRest({ label: it.label, left: REST_SECONDS[it.repTier] || 90 });
   const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
 
   useEffect(() => {
@@ -370,7 +388,7 @@ function Today({ program, sessions, onLog }) {
       )}
 
       {program.lastPRs?.length > 0 && (
-        <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || k).join(", ")}</div>
+        <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || RETIRED_LABELS[k] || k).join(", ")}</div>
       )}
 
       {program.lastRestUntil && (
@@ -430,8 +448,8 @@ function Status({ program }) {
   return (
     <div className="screen">
       <div className="eyebrow">MESOCYCLE</div>
-      <h1 className="display sm">{BLOCKS[program.block.type].label}</h1>
-      <p className="lede" style={{ marginBottom: 14 }}>Microcycle {cyc + 1} · emphasis: {BLOCKS[program.block.type].emphasis}. Block length is decided live from your e1RM trend, RPE creep, and readiness — not a fixed calendar.</p>
+      <h1 className="display sm">{BLOCKS[program.block.type]?.label || LEGACY_BLOCK_TYPES[program.block.type] || program.block.type}</h1>
+      <p className="lede" style={{ marginBottom: 14 }}>Microcycle {cyc + 1} · emphasis: {BLOCKS[program.block.type]?.emphasis || "volume"}. Block length is decided live from your e1RM trend, RPE creep, and readiness — not a fixed calendar.</p>
       <div className="panel" style={{ padding: 14 }}>
         <Gauge value={program.fatigue.index} label={`FATIGUE INDEX  ${program.fatigue.index.toFixed(2)}`} color={program.fatigue.index >= 0.7 ? "#D7443E" : program.fatigue.index >= 0.55 ? "#E8C547" : "#3FA85F"} />
         <Gauge value={0.5 + program.fatigue.slope * 50} label={`e1RM TREND  ${(program.fatigue.slope * 100).toFixed(2)}%/session`} color="#2F6FB0" />
@@ -454,7 +472,11 @@ function Status({ program }) {
 }
 
 function Trends({ program }) {
-  const lifts = [["squat", "Squat", "#D7443E"], ["bench", "Bench", "#2F6FB0"], ["deadlift", "Deadlift", "#3FA85F"]];
+  /* The four onboarding-seeded lifts, one per movement family — the same four
+     the athlete calibrated at setup, so the trend lines are the ones they have
+     a reference point for. (Deadlift is no longer in the program; T-Bar Row
+     replaces it here as the pulling trend.) */
+  const lifts = [["squat", "Squat", "#D7443E"], ["bench", "Bench", "#2F6FB0"], ["rdl", "RDL", "#3FA85F"], ["tbarrow", "T-Bar Row", "#E8C547"]];
   const any = lifts.some(([k]) => (program.lifts[k].hist || []).length > 1);
   if (!any) return <div className="screen"><div className="empty">Estimated-1RM curves appear here once you've logged a few sessions.</div></div>;
   return (
@@ -493,9 +515,9 @@ function History({ sessions }) {
       {[...sessions].reverse().map((s, i) => (
         <div key={i} className="hist">
           <div className="hist-top"><span className="mono">{s.block} · {s.dayName}</span><span className="mono dim">{new Date(s.date).toLocaleDateString()}</span></div>
-          <div className="hist-lifts mono">{s.logs.map((l) => `${(LIB[l.key]?.label || l.key).split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}` + (l.backoffSetCount > 0 ? ` (+${l.backoffSetCount} backoff×${l.backoffReps}@${l.backoffRpe})` : "")).join("  ·  ")}</div>
-          {s.prs?.length > 0 && <div className="hist-pr mono">★ e1RM PR — {s.prs.map((k) => LIB[k]?.label || k).join(", ")}</div>}
-          {s.transition && <div className="hist-trans mono">→ {BLOCKS[s.transition]?.label || s.transition}</div>}
+          <div className="hist-lifts mono">{s.logs.map((l) => `${(LIB[l.key]?.label || RETIRED_LABELS[l.key] || l.key).split(" ")[0]} ${l.topWeight}×${l.topReps}@${l.topRpe}` + (l.backoffSetCount > 0 ? ` (+${l.backoffSetCount} backoff×${l.backoffReps}@${l.backoffRpe})` : "")).join("  ·  ")}</div>
+          {s.prs?.length > 0 && <div className="hist-pr mono">★ e1RM PR — {s.prs.map((k) => LIB[k]?.label || RETIRED_LABELS[k] || k).join(", ")}</div>}
+          {s.transition && <div className="hist-trans mono">→ {BLOCKS[s.transition]?.label || LEGACY_BLOCK_TYPES[s.transition] || s.transition}</div>}
           {s.coach && s.coach !== COACH_OFFLINE_NOTE && <div className="hist-coach">{s.coach}</div>}
         </div>
       ))}
@@ -636,9 +658,9 @@ export default function App() {
     const { next, transition, fatigueIndex, e1rmSlope, rScore, prs, rpeMiss, backoffDrift, missFreq } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
-        lifts: logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
+        lifts: logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
         trainingReadiness: readiness.trainingReadiness },
-      ...sessions.slice(-4).reverse().map((s) => ({ block: s.block, lifts: s.logs.filter((l) => LIB[l.key]?.role === "main").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe })) })),
+      ...sessions.slice(-4).reverse().map((s) => ({ block: s.block, lifts: s.logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe })) })),
     ];
 
     const coach = await runCoach({ rx, fatigueIndex, e1rmSlope, rScore, transition, recent });

@@ -5,7 +5,7 @@
    bundling step. */
 import { freshProgram, prescribe, LIB, ROTATION, PATTERNS } from "./src/engine.js";
 
-const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
+const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
 
 // Fixed program; iterate every rotation day and a few block types so every
 // warmup branch (full/short/minimal, feeler, primed reductions) is exercised.
@@ -35,7 +35,7 @@ for (const [k, L] of Object.entries(LIB)) {
 console.log(`  TOTAL DISTINCT VOLUME GROUPS: ${groups.size}  [${[...groups].sort().join(", ")}]`);
 console.log(`  LANDMARK GROUPS (PATTERNS): ${Object.keys(PATTERNS).length}  [${Object.keys(PATTERNS).sort().join(", ")}]`);
 
-for (const bt of ["accumulation", "intensification", "deload", "realization"]) {
+for (const bt of ["accumulation", "deload"]) {
   console.log(`\n==== PRESCRIPTION REPORT · block=${bt} ====`);
   console.log(report(bt));
 }
