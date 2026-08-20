@@ -1132,6 +1132,49 @@ console.log("\n== AUDIT 3.6/3.8: capacity saturation is not mistaken for volume 
     gateDiffers > 0 && streakDiffers === 0);
 }
 
+console.log("\n== AUDIT 3.12 (investigation, not a fix): schedule capacity already scales with real training frequency ==");
+{
+  /* Confirms the finding written into the comment above EXPERIENCE_TIERS:
+     capA/MRV measured at a fixed 4x/week cadence makes advanced athletes
+     look proportionally MORE capacity-starved than beginners (123% MEV
+     coverage vs 72%), but that's an artifact of the measurement, not the
+     schedule — fixedWeeklySets/ACC_SET_CAP are deliberately unscaled by
+     freqScale, so an athlete training more often delivers each fixed/ramped
+     contribution MORE TIMES per real week automatically. No code changed
+     here; this test locks in that the mechanism keeps working, since it's
+     the reason no further tier-based capacity scaling was implemented. */
+  const advSeeds = { squat: { weight: 405, reps: 5, rpe: 8 }, bench: { weight: 275, reps: 5, rpe: 8 }, deadlift: { weight: 495, reps: 5, rpe: 8 } };
+  const lm = landmarksForExperience("advanced");
+  const trueWeeklyChest = (gap) => {
+    const p = freshProgram({ seeds: advSeeds, experience: "advanced", unit: "lb", goal: "strength", bodyweight: 220 });
+    p.avgSessionGapDays = gap;
+    const fs = wfs(gap);
+    return deliveredWeekly("chest", "accumulation", 5, lm, fs) / fs;
+  };
+  const at4x = trueWeeklyChest(1.75), at6x = trueWeeklyChest(7 / 6);
+  check(`advanced chest is short of its own MRV at 4x/week (${at4x.toFixed(1)} < ${lm.chest.mrv})`, at4x < lm.chest.mrv);
+  check(`the SAME athlete reaches chest's MRV simply by training 6x/week instead (${at6x.toFixed(1)} >= ${lm.chest.mrv}) — no code change, just real cadence`,
+    at6x >= lm.chest.mrv);
+
+  // confirmed end-to-end through prescribe(), not just the deliveredWeekly formula in isolation
+  const weeklyDelivered = (gap) => {
+    const p = freshProgram({ seeds: advSeeds, experience: "advanced", unit: "lb", goal: "strength", bodyweight: 220 });
+    p.avgSessionGapDays = gap;
+    p.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
+    let chestSets = 0;
+    for (let d = 0; d < 4; d++) { p.cycleIndex = d; chestSets += prescribe(p, green).items
+      .filter((it) => it.volumeGroup === "chest").reduce((s, it) => s + it.sets, 0); }
+    return chestSets / wfs(gap);
+  };
+  const real4x = weeklyDelivered(1.75), real6x = weeklyDelivered(7 / 6);
+  check(`prescribe() itself delivers the same rise (4x/wk=${real4x.toFixed(1)} -> 6x/wk=${real6x.toFixed(1)})`, real6x > real4x);
+
+  // the documented exception: front_delts cannot be fixed by frequency alone (structural slot-count limit)
+  const frontDeltsAtClamp = deliveredWeekly("front_delts", "accumulation", 5, lm, 0.6) / 0.6;
+  check(`front_delts stays short of its MRV even at the freqScale clamp's ceiling (${frontDeltsAtClamp.toFixed(1)} < ${lm.front_delts.mrv}) — a slot-count limit, not a frequency one`,
+    frontDeltsAtClamp < lm.front_delts.mrv);
+}
+
 Date.now = RealNow;
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
