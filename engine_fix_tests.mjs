@@ -12,7 +12,7 @@ import {
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
-  FEELER_LOAD_FLOOR_LB,
+  FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -873,6 +873,111 @@ console.log("\n== AUDIT 2.12: isolation accessories earn a feeler once load cros
   check(`calfraise (${calfraise.topLoad} lb, >= ${FEELER_LOAD_FLOOR_LB}) now earns a feeler`, calfraise.warmup?.type === "feeler");
   check(`triext (${triext.topLoad} lb, < ${FEELER_LOAD_FLOOR_LB}) stays exempt (self-warms)`, triext.warmup == null);
   check(`wristcurl (${wristcurl.topLoad} lb, < ${FEELER_LOAD_FLOOR_LB}) stays exempt (self-warms)`, wristcurl.warmup == null);
+}
+
+console.log("\n== AUDIT 3.1/3.9: absent or malformed readiness is 'no evidence', never max deficit or NaN ==");
+{
+  const mkLogs = (p) => prescribe(p, green).items.map((it) => ({ key: it.key, topWeight: it.topLoad,
+    topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+    backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap }));
+  check("readinessScore({}) is null, not NaN", readinessScore({}) === null);
+  check("readinessScore({trainingReadiness:null}) is null, not 0 (0 would read as MAXIMUM deficit)",
+    readinessScore({ trainingReadiness: null }) === null);
+  check("readinessScore still maps a real reading normally (65 -> 0.65)", readinessScore({ trainingReadiness: 65 }) === 0.65);
+
+  // ingest must not throw on a missing readiness arg (prescribe already guards it)
+  let threw = false;
+  try { ingest(fresh(), mkLogs(fresh()), undefined); } catch { threw = true; }
+  check("ingest() with no readiness argument does not throw", !threw);
+
+  // the critical property: one malformed session must not permanently poison the index
+  { let p = ingest(fresh(), mkLogs(fresh()), {}).next;
+    check(`malformed readiness leaves a finite index (got ${p.fatigue.index})`, Number.isFinite(p.fatigue.index));
+    for (let i = 0; i < 5; i++) p = ingest(p, mkLogs(p), green).next;
+    check(`index stays finite after 5 later GOOD sessions (got ${p.fatigue.index.toFixed(4)}) — pre-fix this was NaN forever`,
+      Number.isFinite(p.fatigue.index)); }
+
+  // same defect class, second entry point: a main log missing targetRpe
+  { const noTarget = (p) => mkLogs(p).map((l) => { const { targetRpe, ...rest } = l; return rest; });
+    let p = ingest(fresh(), noTarget(fresh()), green).next;
+    check(`main log missing targetRpe leaves rpeCreep finite (got ${p.fatigue.rpeCreep})`, Number.isFinite(p.fatigue.rpeCreep));
+    for (let i = 0; i < 5; i++) p = ingest(p, mkLogs(p), green).next;
+    check(`index recovers after later well-formed sessions (got ${p.fatigue.index.toFixed(4)})`, Number.isFinite(p.fatigue.index)); }
+
+  // and a null reading must not silently cut the session like a red-band day would
+  const rxNull = prescribe(fresh(), { trainingReadiness: null });
+  const rxNone = prescribe(fresh(), null);
+  check(`null readiness prescribes the same as no readiness at all (band green, not red): ${rxNull.band}`,
+    rxNull.band === "green" && rxNull.band === rxNone.band && rxNull.setMult === rxNone.setMult);
+}
+
+console.log("\n== AUDIT 3.2: e1RM slope window is odd-length, cancelling the heavy/volume-day sawtooth ==");
+{
+  /* squat/bench log TWO readings per rotation at different rep targets, so a
+     rep-profile mismatch makes the raw series alternate. An even-length OLS
+     window leaks that into the slope; an odd one cancels it exactly. */
+  const alt = (n) => { const ys = []; for (let i = 0; i < n; i++) ys.push(1 + ((n - 1 - i) % 2 === 0 ? -1 : 1)); return ys; };
+  check(`even window leaks the alternation (n=4 -> ${slope(alt(4)).toFixed(4)}, n=6 -> ${slope(alt(6)).toFixed(4)}, n=8 -> ${slope(alt(8)).toFixed(4)})`,
+    slope(alt(4)) < -0.3 && slope(alt(6)) < -0.1 && slope(alt(8)) < -0.05);
+  check("odd windows cancel it exactly (n=3,5,7 all 0)",
+    slope(alt(3)) === 0 && slope(alt(5)) === 0 && slope(alt(7)) === 0);
+
+  // liftSlopeInfo must hand slope() an odd-length series at every run length
+  const mkHist = (n) => ({ e1rm: 100, hist: Array.from({ length: n }, (_, i) => ({ e: 100, raw: 100 + (i % 2 ? 5 : -5), b: "accumulation" })) });
+  for (const n of [4, 6, 8, 12]) {
+    const info = liftSlopeInfo(mkHist(n));
+    check(`hist run of ${n} yields an ODD fit window (n=${info.n})`, info.n % 2 === 1);
+  }
+  check("a run too short to fit still reports n=0 (unchanged)", liftSlopeInfo(mkHist(2)).n === 0);
+
+  /* End-to-end: an athlete whose 8-rep sets read ~3.9% low relative to their
+     5-rep sets, with genuine +0.4%/wk progress. Pre-fix the sawtooth put
+     squat's slope at 0.000991 against GROWTH_POS=0.001 — failing the growth
+     gate by a hair and suppressing that group's landmark raises. */
+  const p0 = fresh(); const trueE1 = {};
+  Object.keys(p0.lifts).forEach((k) => { trueE1[k] = p0.lifts[k].e1rm; });
+  let p = p0;
+  for (let i = 0; i < 16; i++) {
+    const rx = prescribe(p, green);
+    const logs = rx.items.map((it) => {
+      const real = trueE1[it.key] * rpePct(it.reps, it.rpe) * (it.reps >= 7 ? 0.961 : 1);
+      return { key: it.key, topWeight: LIB[it.key].bodyweight ? it.topLoad : Math.round(real / 5) * 5,
+        topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: Math.min(it.rpe, it.backoffRpeCap ?? it.rpe), backoffRpeCap: it.backoffRpeCap };
+    });
+    CLOCK += 1.75 * 86400000;
+    Object.keys(trueE1).forEach((k) => { trueE1[k] *= (1 + 0.004 * 1.75 / 7); });
+    p = ingest(p, logs, green).next;
+  }
+  const sq = liftSlopeInfo(p.lifts.squat);
+  check(`offset athlete with real growth clears GROWTH_POS (g=${sq.g.toFixed(6)} > 0.001, n=${sq.n}) — pre-fix g=0.000991 at n=8 failed it`,
+    sq.g > 0.001 && sq.n % 2 === 1);
+}
+
+console.log("\n== AUDIT 3.7: a layoff is excluded from the frequency estimate, so it can't inflate comeback volume ==");
+{
+  const mkLogs = (p) => prescribe(p, green).items.map((it) => ({ key: it.key, topWeight: it.topLoad,
+    topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+    backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap }));
+  let p = fresh();
+  for (let i = 0; i < 12; i++) { CLOCK += 1.75 * 86400000; p = ingest(p, mkLogs(p), green).next; }
+  const settledGap = p.avgSessionGapDays, settledScale = wfs(settledGap);
+  check(`settled 4x/week athlete sits at freqScale 1 (gap=${settledGap.toFixed(2)}, fs=${settledScale.toFixed(3)})`,
+    Math.abs(settledScale - 1) < 1e-9);
+
+  CLOCK += 21 * 86400000; // 3-week layoff, then the comeback session is logged
+  p = ingest(p, mkLogs(p), green).next;
+  check(`the 21-day gap does NOT move the frequency estimate (gap still ${p.avgSessionGapDays.toFixed(2)})`,
+    Math.abs(p.avgSessionGapDays - settledGap) < 1e-9);
+  check(`freqScale is unchanged after the layoff (fs=${wfs(p.avgSessionGapDays).toFixed(3)}) — pre-fix it hit the 1.8 clamp and PRESCRIBED MORE SETS on the comeback`,
+    Math.abs(wfs(p.avgSessionGapDays) - 1) < 1e-9);
+
+  // normal gaps must still be tracked — the fix must not freeze the estimator
+  let q = fresh();
+  for (let i = 0; i < 12; i++) { CLOCK += 3 * 86400000; q = ingest(q, mkLogs(q), green).next; }
+  check(`a genuine 3-day cadence is still learned (gap=${q.avgSessionGapDays.toFixed(2)} -> fs=${wfs(q.avgSessionGapDays).toFixed(2)})`,
+    q.avgSessionGapDays > 2.9 && wfs(q.avgSessionGapDays) > 1.2);
 }
 
 Date.now = RealNow;

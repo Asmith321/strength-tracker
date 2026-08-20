@@ -164,7 +164,29 @@ function liftSlopeInfo(lift) {
     if (lastB && p.b && p.b !== lastB) break;
     run.unshift(p);
   }
-  const ys = run.slice(-8).map((p) => p.raw ?? p.e);
+  /* AUDIT 3.2: the window is forced to an ODD length. Squat and bench log TWO
+     readings per rotation at different rep targets (heavy day 5 reps; volume
+     day 5+VOLUME_DAY_REP_BUMP=8 at a capped RPE — 3 vs 6 in intensification),
+     so whenever the athlete's real rep-strength curve differs from RPE_TABLE
+     — which this file's own rpePct notes cite Hoeger 1990 / Richens & Cleather
+     2014 to say is common — the raw series is a SAWTOOTH, e.g. an actual
+     measured run of 388, 375, 388, 373, 395, 379, 395, 379.
+     An OLS fit over an EVEN-length window does not cancel that alternating
+     component; an odd-length window cancels it exactly. Measured artifact,
+     as a multiple of the alternation amplitude: n=4 -> -0.400, n=6 -> -0.171,
+     n=8 -> -0.095, every odd n -> exactly 0. It is always NEGATIVE because
+     transitions are only evaluated at sessionsInBlock % ROT === 0, i.e.
+     always immediately after the volume day, so the window always ends on the
+     low reading — a phase-locked bias, not noise. On the series above it put
+     squat's slope at 0.000991 against a GROWTH_POS of 0.001: failing the
+     growth gate by a hair despite genuine +0.4%/week progress, which
+     suppressed that group's landmark raises for an entire simulated year.
+     Trimming the OLDEST reading (rather than capping at 7) is what makes this
+     correct at every run length: squat's window is structurally even at every
+     decision point — it accrues 2 readings per rotation, so a plain slice(-7)
+     leaves runs of 4 and 6 untouched, which are exactly the worst cases. */
+  const win = run.slice(-8);
+  const ys = (win.length % 2 === 0 ? win.slice(1) : win).map((p) => p.raw ?? p.e);
   const base = lift?.e1rm || 1;
   /* n = points the fit actually used (0 when below slope()'s 3-point minimum,
      where the returned slope is a placeholder 0, not evidence of flatness) —
@@ -818,8 +840,20 @@ function adjustLandmarks(program) {
    engine-research-summary.md for why these particular numbers were chosen
    as a first-pass parameterization and how to validate/adjust them against
    this athlete's own logged data (readiness_analysis.mjs). */
+/* AUDIT 3.1/3.9: returns null for "no usable reading" rather than coercing.
+   `r.trainingReadiness` of null/undefined/"" all divide to 0 or NaN, and both
+   failure modes were silently harmful: null/100 === 0 read as a PERFECT
+   readiness DEFICIT (the red band, a 40% set cut, from absent data), while
+   {} produced NaN, which then propagated into fatigue.readSupp and
+   fatigue.index through the EWMA and never washed out — every later
+   comparison against it (`fatigueComfortable = index < FATIGUE_SPIKE`) is
+   false for NaN, which permanently disables the landmark auto-tune's growth
+   branch. Callers distinguish null ("no evidence", the same convention
+   rpeMiss/backoffDrift already use) from a real 0. */
 function readinessScore(r) {
-  return Math.max(0, Math.min(1, r.trainingReadiness / 100));
+  const v = r?.trainingReadiness;
+  if (!Number.isFinite(v)) return null;
+  return Math.max(0, Math.min(1, v / 100));
 }
 const readinessBand = (s) => (s >= 0.60 ? "green" : s >= 0.40 ? "amber" : "red");
 /* Same-day-only: how much a non-green readiness band softens TODAY's rpe
@@ -1010,7 +1044,11 @@ function prescribe(program, readiness) {
      assuming exactly 4x/week regardless of the athlete's real cadence. */
   const freqScale = weeklyFreqScale(program.avgSessionGapDays);
 
-  const band = readiness ? readinessBand(readinessScore(readiness)) : "green";
+  /* AUDIT 3.1/3.9: an unusable reading falls back to "green" (no softening),
+     the same as no readiness object at all — absent data must not be read as
+     a maximum readiness deficit and silently cut the session by 40%. */
+  const rxScore = readinessScore(readiness);
+  const band = rxScore == null ? "green" : readinessBand(rxScore);
   const rpeAdj = READINESS_RPE_ADJ[band];
 
   const gapDays = program.lastSessionAt ? (Date.now() - program.lastSessionAt) / 86400000 : 0;
@@ -1275,8 +1313,20 @@ function ingest(program, logs, readiness) {
      residual, wherever it's computed) vs. deliberately not (fixedWeeklySets,
      ACC_SET_CAP/maxDeliverable — real structural counts and schedule-capacity
      ceilings, not rates). */
-  if (daysSinceLast > 0)
-    next.avgSessionGapDays = ewma(next.avgSessionGapDays, Math.min(daysSinceLast, 14), 0.3);
+  /* AUDIT 3.7: a layoff is NOT a frequency signal, and folding it in inverted
+     the intent of the layoff handling entirely. The old 14-day cap is 8x a
+     normal 4x/week gap, so one 3-week break pushed avgSessionGapDays to ~5.4,
+     freqScale to its 1.8 clamp, and — because freqScale MULTIPLIES the volume
+     target (see weeklyTarget) — prescribed MORE sets on the comeback: quads
+     ramped slots went 1 -> 4 (+300%), persisting ~11 sessions after the
+     athlete had fully resumed normal frequency. That is the opposite of what
+     RETURN_RPE_CAP/RETURN_SET_MULT (audit 2.8) exist to do, and it survived
+     precisely because the two mechanisms were reasoned about separately.
+     Layoff-length gaps are already handled by layoffFactor + the
+     sessionsSinceLayoff return window; excluding them here leaves the
+     frequency estimate describing the athlete's actual training cadence. */
+  if (daysSinceLast > 0 && daysSinceLast <= LAYOFF_THRESHOLD_DAYS)
+    next.avgSessionGapDays = ewma(next.avgSessionGapDays, daysSinceLast, 0.3);
 
   /* AUDIT 2.8: layoffFactor only softens LOAD — reps, RPE ceiling, and set
      count come back at full pre-layoff intensity the very next session, even
@@ -1306,7 +1356,13 @@ function ingest(program, logs, readiness) {
      against the readiness band/adjustment that was actually applied. null
      means "no evidence this session", not "zero overshoot". */
   const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
-  const rpeLogs = mainLogs.filter((g) => g.touched !== false);
+  /* AUDIT 3.1: a log missing either RPE (older saved record, or any caller
+     that omits targetRpe) yields Math.max(0, x - undefined) = NaN, which the
+     EWMA then makes a PERMANENT NaN in fatigue.rpeCreep and fatigue.index.
+     Same "no evidence" treatment as an untouched log: drop it from the mean
+     rather than letting it poison the channel. */
+  const rpeLogs = mainLogs.filter((g) => g.touched !== false
+    && Number.isFinite(g.topRpe) && Number.isFinite(g.targetRpe));
   let rpeMiss = null, backoffDrift = null;
   if (rpeLogs.length) {
     rpeMiss = rpeLogs.reduce((s, g) => s + Math.max(0, g.topRpe - g.targetRpe), 0) / rpeLogs.length;
@@ -1315,7 +1371,9 @@ function ingest(program, logs, readiness) {
        UI already collects, previously discarded. Folded into the same creep
        channel at half weight (backoff sets are submaximal; their drift is a
        softer signal than a top-set overshoot). */
-    const boLogs = rpeLogs.filter((g) => g.backoffSetCount > 0 && g.backoffRpe != null && g.backoffRpeCap != null);
+    // AUDIT 3.1: `!= null` lets NaN through (NaN != null is true) — require finite.
+    const boLogs = rpeLogs.filter((g) => g.backoffSetCount > 0
+      && Number.isFinite(g.backoffRpe) && Number.isFinite(g.backoffRpeCap));
     backoffDrift = boLogs.length
       ? boLogs.reduce((s, g) => s + Math.max(0, g.backoffRpe - g.backoffRpeCap), 0) / boLogs.length : 0;
     next.fatigue.backoffDrift = ewma(next.fatigue.backoffDrift ?? 0, backoffDrift, 0.4);
@@ -1327,7 +1385,12 @@ function ingest(program, logs, readiness) {
      above readinessScore(). This is the ONLY place readiness feeds the
      multi-session fatigue index; prescribe()'s same-day softening
      (READINESS_RPE_ADJ/READINESS_SET_MULT) never reads this field. */
-  next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, READSUPP_EWMA_ALPHA);
+  /* AUDIT 3.1: only fold a REAL reading into the accumulator. A missing or
+     malformed one is no evidence about accumulated fatigue, so readSupp is
+     left where it is rather than poisoned with NaN (permanent) or credited
+     with a fabricated maximum deficit. */
+  if (rScore != null)
+    next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, READSUPP_EWMA_ALPHA);
   const missFreq = logs.length ? logs.filter((g) => g.missedSets > 0).length / logs.length : 0;
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
 
