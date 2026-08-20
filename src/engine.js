@@ -761,12 +761,21 @@ function maxDeliverable(group, blockType = "accumulation") {
    find effectively identical growth (heavy 8.3% vs light 7.0%, a gap smaller
    than chance). Load matters for STRENGTH, which this program is no longer
    built around. So rep targets here are chosen for practicality inside that
-   flat zone, not because a "hypertrophy rep range" exists: compounds at 8
-   (heavy enough to progress load in meaningful steps, light enough that a hard
-   set isn't a maximal-strain event), unilateral at 10 (stability-limited —
-   load stops being the limiter first), isolation at 12 (single-joint work is
-   the safest place to train to true failure, and the double-progression rule
-   in prescribe() needs rep headroom to climb through).
+   flat zone, not because a "hypertrophy rep range" exists: compounds carry the
+   heaviest absolute load, unilateral sits higher because it is
+   stability-limited (load stops being the limiter first), and isolation sits
+   highest because single-joint work is the safest place to train near failure
+   and the double-progression rule in prescribe() needs rep headroom to climb.
+   ATHLETE PREFERENCE: every tier was scaled down by 2 reps (compound 8->6,
+   unilateral 10->8, isolation 12->10) at the athlete's request. This is a
+   preference call the evidence explicitly permits rather than a correction —
+   6 reps sits comfortably inside the flat 5-30 band, so predicted growth is
+   unchanged. The real trade is that fewer reps at the same RPE means MORE
+   LOAD: measured at cycle 3, bench 210 -> 220 lb, squat 290 -> 310 lb, cable
+   fly 50 -> 60 lb, roughly +5-12% across the board. Same stimulus by the
+   literature, more absolute tonnage through the joints per set, and fewer reps
+   per set in which to accumulate it. If anything starts to nag, this constant
+   is the first place to look, not the volume landmarks.
 
    EFFORT ramps across the mesocycle, all three tiers, which is the other half
    of the RP-style progression the volume ramp implements: rpe is the cycle-0
@@ -792,14 +801,19 @@ const ACC_REP_TIERS = {
        put EVERY set of EVERY isolation exercise at true failure for the back
        third of a block — that is the fatigue the deload then has to clear, paid
        for with stimulus the last half-rep never delivered. */
-    compound:   { reps: 8,  rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
-    unilateral: { reps: 10, rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
-    isolation:  { reps: 12, rpe: 7.5, rpeStep: 0.5, rpeCap: 9.5 },
+    compound:   { reps: 6,  rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
+    unilateral: { reps: 8,  rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
+    isolation:  { reps: 10, rpe: 7.5, rpeStep: 0.5, rpeCap: 9.5 },
   },
+  /* Deload rep targets TRACK the accumulation targets exactly — the deload's
+     job is to keep the movement pattern and drop the effort (RPE 6/6.5), not
+     to change what the exercise is. Scaled down with them so the two stay
+     aligned; a deload prescribing MORE reps than the block it is unloading
+     would be a strange thing to hand someone. */
   deload: {
-    compound:   { reps: 8,  rpe: 6 },
-    unilateral: { reps: 10, rpe: 6 },
-    isolation:  { reps: 12, rpe: 6.5 },
+    compound:   { reps: 6,  rpe: 6 },
+    unilateral: { reps: 8,  rpe: 6 },
+    isolation:  { reps: 10, rpe: 6.5 },
   },
 };
 
@@ -1564,7 +1578,17 @@ const FEELER_LOAD_FLOOR_LB = 100;
 const FEELER_LOAD_FLOOR_KG = 45;
 /* Double-progression rep floor for isolation accessories: load holds while
    reps climb from here to the tier's rep target; hitting the target earns one
-   load step and resets reps (see the isolation branch in prescribe). */
+   load step and resets reps (see the isolation branch in prescribe).
+   Deliberately NOT scaled down alongside the -2 rep change to ACC_REP_TIERS.
+   Dropping this to 6 would preserve the old 5-step climb window, but 6-rep
+   lateral raises and pec deck are not a prescription worth writing — isolation
+   work below ~8 reps stops being isolation work and starts being a
+   coordination test. The cost of leaving it at 8 is a shorter window: reps now
+   climb 8 -> 9 -> 10 before earning a load step, so isolation lifts progress
+   LOAD about twice as often as before (every ~3 sessions rather than ~5).
+   That is a real behaviour change, not a neutral one — if isolation loads
+   start outrunning what the reps can support, lowering this to 7 is the lever
+   (it widens the window without reaching absurd rep counts). */
 const DP_MIN_REPS = 8;
 /* AUDIT 2.6: the +1-rep-per-session rule was fixed regardless of how the
    previous set actually went — a set logged well under the block's target
