@@ -549,17 +549,26 @@ const LIB = {
    differentiated second weekly exposure, and every exercise here now runs the
    same straight-set prescription every time it appears.
 
-   SLOT BUDGET (ramped slots per rotation x ACC_SET_CAP=6 = capacity, vs the
-   intermediate landmark it has to reach — every group clears its MAV, and the
-   four biggest clear or nearly clear MRV):
-     chest 4 -> 24 (MRV 22)     back 4 -> 24 (MRV 25)    quads 4 -> 24 (MRV 18)
-     hamstrings 3 -> 18 (14)    side_delts 3 -> 18 (22)  biceps 3 -> 18 (20)
-     calves 3 -> 18 (20)        front_delts 2 -> 12 (12) rear_delts 2 -> 12 (16)
-     triceps 2 -> 12 (MAV 12)
-   Groups short of MRV (side/rear delts, biceps, triceps, calves) are all
-   either indirect-stimulus-heavy or limited by having one approved exercise;
-   this is the same deliberate stance the front_delts/rear_delts notes on
-   PATTERNS describe, not an oversight.
+   SLOT BUDGET — capacity per rotation vs the intermediate landmarks it has to
+   reach. PHASE 4 (T1-1/T2-7): this table used to read "slots x ACC_SET_CAP",
+   which was wrong twice over. It listed triceps at 2 slots when triext appears
+   on three days (the paragraph above adding that third exposure was already
+   in this same comment), and more importantly it ignored SAME_DAY_GROUP_CAP,
+   so every group that lands two ramped slots on one day was credited with
+   capacity it never had. Real capacity, cap-aware — see maxDeliverable, which
+   now computes exactly this:
+     chest 4 slots -> 20 (MAV 14, MRV 22)   back 4 -> 20 (MAV 18, MRV 25)
+     quads 4 -> 20 (MAV 14, MRV 18)         hamstrings 3 -> 16 (MAV 8, MRV 14)
+     biceps 3 -> 16 (MAV 14, MRV 20)        side_delts 3 -> 18 (MAV 14, MRV 22)
+     calves 3 -> 18 (MAV 14, MRV 20)        triceps 3 -> 18 (MAV 12, MRV 18)
+     front_delts 2 -> 12 (MAV 7, MRV 12)    rear_delts 2 -> 12 (MAV 9, MRV 16)
+   Every group clears its MAV at 4x/week at the intermediate tier, which is
+   what the ramp actually aims for. Groups short of MRV are indirect-stimulus-
+   heavy or limited by having one approved exercise — the same deliberate
+   stance the front_delts/rear_delts notes on PATTERNS describe. At the
+   ADVANCED tier back (MAV 23) and biceps (MAV 18) exceed 4x/week capacity and
+   reach their MAV by training 5x/week instead; that is the frequency mechanism
+   audit 3.12 documented, not a new shortfall.
 
    ORDER WITHIN A DAY: compounds before isolation for the same muscle, and no
    isolation exercise that pre-fatigues a later compound's weak link (e.g.
@@ -593,6 +602,38 @@ const PATTERN_FREQ = (() => {
   }));
   return f;
 })();
+/* Per-group ramped-slot counts broken out BY DAY, in rotation order — e.g.
+   quads -> [2, 0, 2, 0] flattened to the non-zero days [2, 2]. PATTERN_FREQ is
+   the sum of these; this keeps the shape, which is what SAME_DAY_GROUP_CAP
+   needs to be applied inside the volume math rather than only as a prescribe()
+   post-pass (T1-1). Each entry is { day, n }. */
+const PATTERN_DAY_SLOTS = (() => {
+  const f = {};
+  ROTATION.forEach((d, day) => {
+    const c = {};
+    d.items.forEach((k) => {
+      if (LIB[k].fixedSets) return;
+      const p = LIB[k].volumeGroup; c[p] = (c[p] || 0) + 1;
+    });
+    Object.entries(c).forEach(([p, n]) => { (f[p] = f[p] || []).push({ day, n }); });
+  });
+  return f;
+})();
+/* Position of one rotation slot within its GROUP's rotation-wide slot ordering,
+   keyed `${dayIndex}:${exerciseKey}`. rampedAllocation returns a per-slot array
+   in that same ordering, so prescribe() looks up which element belongs to the
+   item it is currently prescribing. A key can repeat across days but never
+   within one day, so the composite key is unique. */
+const SLOT_ORDINAL = (() => {
+  const idx = {}, seen = {};
+  ROTATION.forEach((d, day) => d.items.forEach((k) => {
+    if (LIB[k].fixedSets) return;
+    const p = LIB[k].volumeGroup;
+    seen[p] = seen[p] || 0;
+    idx[`${day}:${k}`] = seen[p]++;
+  }));
+  return idx;
+})();
 /* Hard per-exposure set cap: prescribe() never assigns a single ramped-slot
    APPEARANCE more than this many sets, however high the landmark target
    climbs — a lift appearing N times/week can still deliver up to N x this.
@@ -612,6 +653,26 @@ const PATTERN_FREQ = (() => {
    specifically) is consistent with RP's own numbers — it's the one group
    RP says needs the least direct volume in the first place. */
 const ACC_SET_CAP = 6;
+/* AUDIT 3.13: session-level cap on same-muscle RAMPED volume. ACC_SET_CAP
+   bounds each ramped slot's OWN set count, but several groups land two ramped
+   slots on the SAME day — so raising ACC_SET_CAP (audit 3.11) raised
+   same-SESSION volume for those groups by 2x the cap, not just weekly volume.
+   By late block that reached 12 sets for one muscle — two compound movements —
+   in a single session, above the per-session ceiling (~8-12 sets/muscle, audit
+   3.11's own research) this program otherwise respects. 10 was chosen by
+   checking the alternative: 8 also caps the session correctly but drags the
+   affected groups' WEEKLY totals below their own MAV by late block.
+   PHASE 4 (T1-1): the groups that stack are quads (D0, D2), chest (D0, D2),
+   back (D1, D3), hamstrings (D1) and biceps (D3) — FIVE groups, not just back
+   as this comment previously claimed. That stale claim mattered: the choice of
+   10 over 8 was justified against back's weekly total alone, and the four other
+   stacking groups were never in that analysis. Re-checked at 10 across all
+   five, none is dragged below its MAV. Scoped to RAMPED sets only — fixedSets
+   accessories are a deliberately stable floor, and no group stacks a fixedSets
+   item on top of already-capped ramped volume for the same muscle on one day.
+   This cap is applied inside rampedAllocation (NOT only as a prescribe()
+   post-pass, which was the T1-1 defect), so the capacity math sees it. */
+const SAME_DAY_GROUP_CAP = 10;
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
 /* Fewest sets a RAMPED slot may be prescribed, by block volume tier. Two in
@@ -622,7 +683,21 @@ const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
    overshoots MEV slightly in the block's opening cycle, which is harmless in
    the direction that matters: MEV is a MINIMUM, and the ramp is climbing away
    from it immediately. Deload keeps a floor of 1 — that block's whole job is
-   to be small, and one set there is a genuine movement-maintenance dose. */
+   to be small, and one set there is a genuine movement-maintenance dose.
+   KNOWN LIMIT (found verifying the Phase 4 T1-2 fix, not reported by the
+   audit): when floor x slot-count already meets a group's scaled MAV, the
+   floor consumes the entire ramp and that group is flat for the block no
+   matter what the target does. Today that is hamstrings at exactly 5x/week:
+   3 slots x floor 2 = 6 sets, against a scaled MAV of round(8 x 0.8) = 6. It
+   is a consequence of hamstrings having the narrowest MEV->MAV span of any
+   group (4 sets) spread over 3 slots, not of the frequency scaling — the
+   group still ramps at 4x and at 6x. Deliberately NOT fixed by lowering the
+   floor, which would trade a real problem (1-set prescriptions) for a
+   cosmetic one; the structural fixes would be fewer hamstring slots or a
+   wider span, both program-design changes rather than volume-math ones.
+   engine_fix_tests asserts that every flat group is explained by this exact
+   condition, so a flat group WITHOUT it (the T1-2 bug returning) still
+   fails. */
 const RAMPED_SET_FLOOR = { ramp: 2, mev: 2, half: 1 };
 
 /* ---- full-muscle volume accounting ----
@@ -666,7 +741,15 @@ function fixedWeeklySets(group, blockType) {
    treats undeliverable volume as if it had been trained. blockType defaults to
    accumulation, the only block with a volume ramp. */
 function maxDeliverable(group, blockType = "accumulation") {
-  return fixedWeeklySets(group, blockType) + ACC_SET_CAP * (PATTERN_FREQ[group] || 0);
+  /* T1-1: capacity must respect SAME_DAY_GROUP_CAP. A group with two ramped
+     slots on one day cannot deliver 2 x ACC_SET_CAP that day — the session cap
+     bounds the pair. Computing this as ACC_SET_CAP x PATTERN_FREQ overstated
+     capacity by 4 sets for quads/chest/back and 2 for hamstrings/biceps, and
+     because the landmark auto-tune's raise gates are computed from it, MAV
+     settled 2-3 sets ABOVE anything the schedule could ever prescribe. */
+  const ramped = (PATTERN_DAY_SLOTS[group] || []).reduce((s, { n }) =>
+    s + (n >= 2 ? Math.min(n * ACC_SET_CAP, SAME_DAY_GROUP_CAP) : n * ACC_SET_CAP), 0);
+  return fixedWeeklySets(group, blockType) + ramped;
 }
 
 /* ---- per-tier rep + RPE targets ----
@@ -822,12 +905,62 @@ function weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale = 1) 
    ACC_SET_CAP is a per-exposure schedule-capacity ceiling, not a rate. Only
    the ramped-accessory residual — the part of the volume math that actually
    flexes to hit a weekly landmark target — gets frequency-compensated. */
-function rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
+function rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
   const wk = weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale);
   const freq = PATTERN_FREQ[group] || 1;
-  const residual = wk - fixedWeeklySets(group, blockType);
-  const floor = RAMPED_SET_FLOOR[BLOCKS[blockType].volLevel] ?? 1;
-  return Math.max(floor, Math.min(ACC_SET_CAP, Math.round(residual / freq)));
+  const residual = Math.max(0, wk - fixedWeeklySets(group, blockType));
+  /* T1-2: the floor is frequency-scaled, like the target it clamps. It is a
+     per-exposure count, but weeklyTarget has already been multiplied by
+     freqScale, so an UNSCALED floor is being compared against a scaled target —
+     and below freqScale 1 (training more than 4x/week) the scaled target fell
+     under the raw floor for an entire block, pinning every cycle at the floor.
+     At 6x/week that flattened quads, chest and hamstrings completely: identical
+     volume in all six cycles, no ramp at all, for exactly the athlete the
+     frequency machinery is meant to serve. At freqScale 1 this is unchanged
+     (round(2 x 1) = 2), so 4x/week behaviour is byte-identical. */
+  const floorRaw = RAMPED_SET_FLOOR[BLOCKS[blockType].volLevel] ?? 1;
+  const floor = Math.max(1, Math.round(floorRaw * freqScale));
+  /* T1-3: distribute the residual and hand out the remainder one set at a time,
+     instead of giving every slot the same Math.round(residual / freq). The
+     single-quotient version could only produce per-rotation totals that were
+     multiples of PATTERN_FREQ, so the ramp advanced in jumps of 3-4 sets and
+     collapsed to two or three distinct levels across a six-cycle block —
+     hamstrings got 6,6,6,6,6,9, i.e. no progression at all in any block ending
+     before its last cycle. It also overshot: rounding UP at the top of the ramp
+     put 8 of 10 groups above their own MAV (quads 16 vs 14). Distributing lands
+     the top of the ramp exactly on MAV and roughly doubles the number of
+     distinct volume steps. Slots of the same group on the same day can now
+     differ by one set, which is ordinary programming, not an artifact. */
+  const base = Math.floor(residual / freq);
+  const rem = residual - base * freq;
+  const alloc = [];
+  for (let i = 0; i < freq; i++)
+    alloc.push(Math.max(floor, Math.min(ACC_SET_CAP, base + (i < rem ? 1 : 0))));
+  /* SAME_DAY_GROUP_CAP applied HERE, not only in prescribe(), so that
+     deliveredWeekly/maxDeliverable see the same number the athlete is handed
+     (T1-1). Capping is a ceiling, not a budget: the sets removed here are not
+     redistributed to other days, which would just push those days over the same
+     limit. */
+  let i = 0;
+  (PATTERN_DAY_SLOTS[group] || []).forEach(({ n }) => {
+    if (n >= 2) {
+      const tot = alloc.slice(i, i + n).reduce((s, v) => s + v, 0);
+      if (tot > SAME_DAY_GROUP_CAP) {
+        const sc = SAME_DAY_GROUP_CAP / tot;
+        for (let j = i; j < i + n; j++) alloc[j] = Math.max(1, Math.round(alloc[j] * sc));
+      }
+    }
+    i += n;
+  });
+  return alloc;
+}
+
+/* Sets for ONE ramped slot. `slotOrdinal` selects which of the group's
+   rotation-wide slots this is (see SLOT_ORDINAL); it defaults to 0 so callers
+   that only want a representative figure keep working. */
+function rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale = 1, slotOrdinal = 0) {
+  const alloc = rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale);
+  return alloc[slotOrdinal] ?? alloc[0] ?? 1;
 }
 
 /* Total weekly sets the schedule actually delivers for `group` this cycle
@@ -841,8 +974,14 @@ function rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale = 1
    ACTUALLY reflects what prescribe() delivers at the real frequency, instead
    of silently drifting stale once prescribe() itself became frequency-aware. */
 function deliveredWeekly(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
+  /* T1-1: sums the ACTUAL per-slot allocation rather than multiplying one
+     representative slot by PATTERN_FREQ. The old form could not see either the
+     same-day cap or the uneven remainder distribution, so it reported up to 4
+     more sets than prescribe() delivered — and every ceiling check and
+     auto-tune gate downstream was reasoning about that phantom volume. */
   return fixedWeeklySets(group, blockType)
-    + rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale) * (PATTERN_FREQ[group] || 0);
+    + rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale)
+        .reduce((s, v) => s + v, 0);
 }
 
 /* The volume ceiling a block can actually reach for `group`: the top of its
@@ -851,8 +990,12 @@ function deliveredWeekly(group, blockType, cycleInBlock, landmarks, freqScale = 
    weeklyTarget) — so MAV is what a block can actually reach, and using MRV here
    would report a ceiling the ramp is deliberately never aiming for. MRV remains
    the recovery bound on how far MAV may be auto-tuned. */
-function effectiveCeiling(group, blockType, landmarks) {
-  return Math.min(landmarks[group].mav, maxDeliverable(group, blockType));
+function effectiveCeiling(group, blockType, landmarks, freqScale = 1) {
+  /* T2-5: takes freqScale so it returns a TRUE WEEKLY rate comparable to the
+     landmark it is checked against — capacity is a per-rotation figure, and at
+     any cadence other than 4x/week those are different numbers. Defaulting to
+     1 keeps every existing caller's meaning intact. */
+  return Math.min(landmarks[group].mav, maxDeliverable(group, blockType) / freqScale);
 }
 
 /* ---- frequency-aware volume comparison ----
@@ -936,6 +1079,12 @@ const STALL_STREAK_THRESHOLD = 3;
    for back. RP's published landmarks sit near 0.40-0.50 MEV/MAV; 0.65 leaves
    real headroom for MEV to grow while never letting the ramp close. */
 const MEV_MAV_MAX_RATIO = 0.65;
+/* T2-2: the fatigue-lowering branch of adjustLandmarks may not tune a group's
+   MAV/MRV below this fraction of its SEEDED (experience-tier) value. See the
+   fatigue branch for why: unbounded, repeated bad blocks walk every group down
+   to the relational clamps' floor, where the landmarks no longer describe what
+   is prescribed. */
+const FATIGUE_FLOOR_FRAC = 0.5;
 /* landmark group → the lift that carries its growth signal, for pools where a
    single exercise is unambiguously the driver. Empty since the hypertrophy
    rebuild: with no main lifts, no pool has one exercise that dominates it — a
@@ -1191,7 +1340,26 @@ function adjustLandmarks(program) {
          the recovery ceiling down, and pull the training target down with it —
          dropping MRV alone would leave the athlete training at exactly the same
          MAV that just failed them. */
-      dMrv = -1; dMav = -1; signal = "stalled early with fatigue spike";
+      /* T2-2: bounded below at half the athlete's SEEDED landmarks. Unbounded,
+         a run of bad blocks walked every group down to the relational clamps'
+         own floor (2/3/4), where the landmark system is decoupled from the
+         prescription entirely — RAMPED_SET_FLOOR alone still delivers 8 sets to
+         quads against a stated MAV of 3, so the numbers on the Status screen
+         stop describing the program. The step is a constant -1 rather than
+         proportional, so small-MAV groups also fell fastest: hamstrings reached
+         the floor in 5 bad blocks where chest took 18. Half the seed is a
+         deliberate deload-depth bound, not a guess — it is roughly the volume
+         drop a genuine resensitisation block uses, and anything below it is
+         better handled by the athlete changing the program than by the
+         auto-tune grinding down another set per block. Reachability is low
+         (this branch needs stall AND fatigue spike every block) but the whole
+         point of the bound is the tail. */
+      const seeded = landmarksForExperience(program.experience)[p];
+      const mrvFloor = Math.ceil(seeded.mrv * FATIGUE_FLOOR_FRAC);
+      const mavFloor = Math.ceil(seeded.mav * FATIGUE_FLOOR_FRAC);
+      dMrv = lm.mrv > mrvFloor ? -1 : 0;
+      dMav = lm.mav > mavFloor ? -1 : 0;
+      signal = "stalled early with fatigue spike";
     }
     if (!dMev && !dMrv && !dMav) return;
 
@@ -1394,24 +1562,6 @@ const RETURN_SET_MULT = 0.7;
    number. */
 const FEELER_LOAD_FLOOR_LB = 100;
 const FEELER_LOAD_FLOOR_KG = 45;
-/* AUDIT 3.13: session-level cap on same-muscle RAMPED volume. ACC_SET_CAP
-   bounds each ramped slot's OWN set count, but back is the one group in
-   ROTATION with two ramped slots landing on the SAME day, twice a week
-   (Cable Row + Pull-Up on Bench day; Lat Pulldown + Barbell Row on Deadlift
-   day — see the ROTATION comment) — so raising ACC_SET_CAP (audit 3.11)
-   raised same-SESSION back volume by 2x the cap, not just weekly volume.
-   By late block that reached 12 sets of back work — two compound pulling
-   movements — in a single session, above even the per-session ceiling
-   (~8-12 sets/muscle, audit 3.11's own research) this program otherwise
-   respects. 10 was chosen by checking the alternative: 8 would also cap the
-   single session correctly but drags back's WEEKLY total below its own MAV
-   by late block (16 vs MAV 18); 10 keeps weekly total at MAV (20, still
-   short of MRV 25 — already true before this fix, just by a slightly wider
-   margin) while bounding any one session. Scoped to RAMPED sets only —
-   fixedSets accessories are a deliberately stable floor, not something this
-   should compress, and no group currently stacks a fixedSets item on top of
-   already-capped ramped volume for the same muscle on the same day. */
-const SAME_DAY_GROUP_CAP = 10;
 /* Double-progression rep floor for isolation accessories: load holds while
    reps climb from here to the tier's rep target; hitting the target earns one
    load step and resets reps (see the isolation branch in prescribe). */
@@ -1516,7 +1666,12 @@ function prescribe(program, readiness) {
          accounting, frequency-corrected — see rampedSlotSets); readiness
          trims but never exceeds the slot's nominal share */
       const vg = L.volumeGroup; // shared landmark pool key (e.g. 'back')
-      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale) * setMult));
+      /* slotOrdinal picks THIS slot's share out of the group's allocation —
+         two slots of the same group can legitimately differ by one set now
+         that the residual's remainder is distributed rather than rounded
+         per-slot (T1-3). */
+      const slotOrdinal = SLOT_ORDINAL[`${program.cycleIndex % ROT}:${key}`] ?? 0;
+      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale, slotOrdinal) * setMult));
     }
     /* Straight sets: one load, one rep target, one RPE target, `sets` times.
        The top-single-plus-backoff split existed for the barbell main lifts and
@@ -1905,14 +2060,31 @@ function ingest(program, logs, readiness) {
      malformed one is no evidence about accumulated fatigue, so readSupp is
      left where it is rather than poisoned with NaN (permanent) or credited
      with a fabricated maximum deficit. */
-  if (rScore != null)
+  if (rScore != null) {
     next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, READSUPP_EWMA_ALPHA);
+    next.fatigue.hasReadiness = true;
+  }
   const missFreq = logs.length ? logs.filter((g) => g.missedSets > 0).length / logs.length : 0;
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
 
+  /* T2-3: with no readiness data the readiness term is structurally zero, so
+     the index's supremum was 0.5 + 0.2 = 0.700 — exactly FATIGUE_SPIKE, which
+     meant the spike threshold was reachable only in the degenerate limit where
+     EVERY exercise in EVERY session misses sets AND rpeCreep is saturated,
+     sustained. In practice that put highFatigue, the 3-day rest advice, and the
+     entire fatigue-lowering branch of adjustLandmarks out of reach for anyone
+     not syncing a wearable. Renormalising the two remaining weights over their
+     own total restores the full 0..1 range instead of moving a threshold — the
+     thresholds keep meaning the same thing whether or not readiness is present,
+     which is the property that matters. Gated on hasReadiness rather than on
+     `readSupp === 0`, because a genuinely well-recovered athlete WITH a wearable
+     also sits at 0 and must not have their weights quietly rescaled. */
+  const readingsSeen = next.fatigue.hasReadiness === true;
+  const wCreep = readingsSeen ? 0.5 : 0.5 / (1 - READINESS_FATIGUE_WEIGHT);
+  const wMiss = readingsSeen ? 0.2 : 0.2 / (1 - READINESS_FATIGUE_WEIGHT);
   const fatigueIndex = Math.max(0, Math.min(1,
-    0.5 * Math.min(1, next.fatigue.rpeCreep / RPE_CREEP_FULL_SCALE)
-    + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
+    wCreep * Math.min(1, next.fatigue.rpeCreep / RPE_CREEP_FULL_SCALE)
+    + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + wMiss * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
   /* Block-level strength trend: main-lift slopes, PRECISION-WEIGHTED by the
@@ -1922,8 +2094,20 @@ function ingest(program, logs, readiness) {
      count 1/3 of the average — diluting a genuine squat/bench trend toward
      the stall threshold. Weighting by evidence lets the lifts with real data
      carry the signal; a lift with <3 points contributes nothing rather than a
-     fake zero. */
-  const slopeInfos = ["squat", "bench", "deadlift"].map((k) => liftSlopeInfo(next.lifts[k]));
+     fake zero.
+     T2-6: the lift list is now derived from the ROTATION instead of being the
+     hardcoded ["squat", "bench", "deadlift"] the strength program left behind.
+     Deadlift has not been in the rotation since the hypertrophy rebuild, so its
+     hist never grew past its seed and it contributed n=0 forever — harmless,
+     but it meant the block-level stall trigger for a 20-exercise program was
+     riding on two exercises that both happen to fall on the same day. Every
+     compound in the rotation now feeds it, which is both more evidence and
+     evidence that cannot silently refer to something untrained. Compounds
+     only: isolation e1RM is noisier and its double-progression load steps make
+     the series jumpier, so it is a worse stall signal per reading. */
+  const SLOPE_LIFTS = [...new Set(ROTATION.flatMap((d) => d.items))]
+    .filter((k) => !LIB[k].fixedSets && LIB[k].repTier === "compound");
+  const slopeInfos = SLOPE_LIFTS.map((k) => liftSlopeInfo(next.lifts[k]));
   const slopeN = slopeInfos.reduce((s, i) => s + i.n, 0);
   const e1rmSlope = slopeN ? slopeInfos.reduce((s, i) => s + i.g * i.n, 0) / slopeN : 0;
   next.fatigue.slope = e1rmSlope;
@@ -1970,7 +2154,13 @@ function ingest(program, logs, readiness) {
          weeklyTarget), so MAV — not MRV — is the volume ceiling a block can
          actually reach, and comparing delivered volume against MRV here would
          test against a number the ramp deliberately never aims for. */
-      const ceilTrue = Math.min(next.landmarks[p].mav, maxDeliverable(p, t) / freqScale);
+      /* T2-5: this now calls effectiveCeiling rather than re-deriving the same
+         expression inline. The exported helper and this gate had drifted — the
+         helper omitted the /freqScale conversion, so anything reading the
+         export (the UI, a test) saw a different ceiling than the engine's own
+         decision used: 18 vs 13.33 for back at 2.2x/week. One definition now,
+         with freqScale threaded through it. */
+      const ceilTrue = effectiveCeiling(p, t, next.landmarks, freqScale);
       /* AUDIT 3.6: schedule saturation well below the landmark range is a
          CAPACITY limit, not evidence the athlete accumulated volume
          tolerance — ending the block on it reports "weekly volume reached its
@@ -2138,7 +2328,12 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
       const base = seeds[ref] ? e1rmFrom(seeds[ref].weight, seeds[ref].reps, seeds[ref].rpe) : 100;
       e1rm = base * (ACC_E1RM_MULT[k] || 0.6);
     }
-    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
+    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup,
+      /* T1-4: a program created now is already on the current per-dumbbell
+         convention, so the migration-time ratio heuristic must never examine
+         it. Stamping at creation is what keeps that heuristic scoped to the
+         genuinely-legacy saves it was written for. */
+      ...(CONVENTION_RESCALE[k] ? { convRescaled: true } : {}) };
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
@@ -2243,6 +2438,22 @@ function migrateProgram(program) {
   // 2. add any missing group, drop any stale group.
   for (const key of Object.keys(canonical)) if (!lm[key]) { lm[key] = canonical[key]; changed = true; }
   for (const key of Object.keys(lm)) if (!canonical[key]) { delete lm[key]; changed = true; }
+  /* 2.5 (T2-4). Bring any landmark set that violates MEV_MAV_MAX_RATIO back
+     inside the bound, as a migration step.
+     A program saved before the ramp-collapse fix could carry a legacy one-way
+     MEV ratchet with MAV untuned — e.g. quads 12/14/18, an MEV/MAV ratio of
+     0.857 against a bound of 0.65. None of the seeded tiers can produce that,
+     so it arrives only through migration. Left alone, the first growth block
+     would clamp it and report the correction to the athlete as
+     {dMev: -3, signal: "growth strong, fatigue in check"} — a volume CUT
+     labelled as a strong-growth adjustment, which is worse than the stale
+     number it fixes. Correcting it silently here, where "we changed your saved
+     data to fit the current schema" is exactly what the athlete is already
+     being told, keeps the adjustment log honest. */
+  for (const key of Object.keys(lm)) {
+    const cap = Math.floor(lm[key].mav * MEV_MAV_MAX_RATIO);
+    if (lm[key].mev > cap) { lm[key] = { ...lm[key], mev: Math.max(1, cap) }; changed = true; }
+  }
   /* 3. backfill a lift record for any rotation member added to the program
      AFTER this save was created (e.g. bsplit re-entering the rotation) —
      seeded off a reference lift the program already tracks, exactly like
@@ -2277,10 +2488,27 @@ function migrateProgram(program) {
   /* 3c. reseed any lift still carrying an e1RM on a superseded LOGGING
      convention (see CONVENTION_RESCALE). Runs after the backfills so the
      reference lifts it tests against are guaranteed present. */
+  /* T1-4: the ratio test fires AT MOST ONCE per lift, ever, and is stamped so
+     it can never fire again. Without the stamp this ran on every program load
+     against the lift's CURRENT value, so a lift that grew legitimately past its
+     threshold was silently reseeded back down — measured: a shrug progressing
+     3%/month against a flat T-Bar Row got cut 29% (106 -> 75 lb) the month it
+     crossed 0.42x, and would be cut again every time it climbed back. That is a
+     permanent invisible ceiling on the lift, not a one-time migration.
+     The stamp is also what makes the heuristic defensible at all: it is only
+     ever asked "was this value recorded under the old convention?", which is a
+     question about a program's ORIGIN, so it must be answered once at first
+     load and then remembered — never re-litigated against a value that has
+     since moved for ordinary training reasons. freshProgram stamps every
+     candidate key at creation, so a program created after the split is never a
+     candidate and the whole misfire class disappears for new athletes. */
   Object.entries(CONVENTION_RESCALE).forEach(([k, { ref, suspectAbove, reseedAt }]) => {
+    if (!lifts[k] || lifts[k].convRescaled) return;
     const cur = lifts[k]?.e1rm, base = lifts[ref]?.e1rm;
     if (!(cur > 0) || !(base > 0)) return;
-    if (cur > base * suspectAbove) seedLift(k, base * reseedAt);
+    if (cur > base * suspectAbove) { seedLift(k, base * reseedAt); liftsChanged = true; }
+    lifts[k] = { ...lifts[k], convRescaled: true };
+    liftsChanged = true;
   });
   // 4. backfill stall-notice tracking for a program saved before this feature existed.
   const stallStreaks = program.stallStreaks || {};
@@ -2327,13 +2555,14 @@ export {
   RPE_TABLE, clampReps, clampRpe, rpePct, repsAtPct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
-  weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
+  weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
+  PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
   DP_MIN_REPS, BW_REPONLY_FLOOR, LEGACY_BLOCK_TYPES, RETIRED_LABELS, RETIRED_LIFT_SEEDS,
   MEV_MAV_MAX_RATIO, RPE_CREEP_FULL_SCALE, RAMPED_SET_FLOOR, CONVENTION_RESCALE,
   DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
-  RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP,
+  RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP, FATIGUE_FLOOR_FRAC,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,

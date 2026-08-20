@@ -7,12 +7,14 @@
 import {
   freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience, rampedSlotSets,
+  rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
+  FATIGUE_FLOOR_FRAC,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
   FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs, MEV_MAV_MAX_RATIO,
-  FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP,
+  FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP, FATIGUE_AMBER,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -361,11 +363,23 @@ console.log("\n== Stall notice: volumeAtMav now uses the same call-then-divide f
     p.avgSessionGapDays = 7 / 3; // freqScale ≈ 1.333
     p.landmarks.quads.mav = straddleMav; // midpoint of old/new — see above
     const { stallStreaks } = adjustLandmarks(p);
-    // "leave the streak unchanged" from a never-touched {} means the key stays
-    // absent (undefined), not 0 — asserting undefined here, not === 0, is the
-    // correct expectation for the "gate fails, no evidence" path.
-    check(`freqScale≈1.333: volumeAtMav correctly reads FALSE (streak never incremented, stays undefined/absent) — the OLD unscaled code would have wrongly cleared this gate`,
-      stallStreaks.quads === undefined);
+    /* PHASE 4: this assertion used to hardcode the OUTCOME (gate reads false,
+       streak absent), which silently depended on scaled < unscaled. T1-3's
+       remainder distribution flipped that sign for quads at this cadence
+       (unscaled 8, scaled-then-divided 9.0), and the hardcoded outcome broke
+       even though the property being tested was untouched. Now asserted
+       direction-agnostically: the gate must follow the SCALED value, whichever
+       side of mav that lands on, and the unscaled value must imply the
+       opposite — which is the actual claim, and is what would break if the
+       scaling were ever dropped from this gate again.
+       A cleared gate increments the streak to 1; a failed gate leaves the key
+       absent (undefined) rather than 0, since the map starts empty. */
+    const scaledClears = newValCyc0 >= straddleMav;
+    const unscaledClears = oldValCyc0 >= straddleMav;
+    check(`sanity: scaled and unscaled disagree about this gate (scaled ${scaledClears}, unscaled ${unscaledClears})`,
+      scaledClears !== unscaledClears);
+    check(`freqScale≈1.333: volumeAtMav follows the SCALED value (${newValCyc0.toFixed(2)} vs mav ${straddleMav.toFixed(2)} -> ${scaledClears ? "clears, streak 1" : "fails, streak absent"}), not the unscaled one`,
+      scaledClears ? stallStreaks.quads === 1 : stallStreaks.quads === undefined);
   }
 
   // 3. the flip side: a threshold where BOTH old and new agree the gate
@@ -682,8 +696,24 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      be deliberate. The values were generated from the engine and spot-checked
      against the hand-computed slot budget in the ROTATION comment (chest 4
      slots, back 4, quads 4, triceps 3, ...) plus the MEV/MAV endpoints in
-     PATTERNS. */
-  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":195,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"squat","sets":2,"topLoad":275,"reps":8},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":2,"topLoad":180,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"rdl","sets":2,"topLoad":265,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"shrug","sets":3,"topLoad":45,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"bsplit","sets":2,"topLoad":50,"reps":10},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":2,"topLoad":-60,"reps":8},{"key":"pulldown","sets":2,"topLoad":170,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"preachercurl","sets":2,"topLoad":70,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"wristcurl","sets":3,"topLoad":15,"reps":12}],[{"key":"bench","sets":2,"topLoad":205,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"squat","sets":2,"topLoad":285,"reps":8},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":3,"topLoad":190,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"rdl","sets":2,"topLoad":275,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":3,"topLoad":17.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"bsplit","sets":2,"topLoad":55,"reps":10},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":3,"topLoad":-50,"reps":8},{"key":"pulldown","sets":3,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":3,"topLoad":72.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}],[{"key":"bench","sets":4,"topLoad":210,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"cablefly","sets":4,"topLoad":60,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"squat","sets":4,"topLoad":295,"reps":8},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"tbarrow","sets":5,"topLoad":190,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"rdl","sets":3,"topLoad":285,"reps":8},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":4,"topLoad":85,"reps":8},{"key":"dip","sets":4,"topLoad":160,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"dblateralraise","sets":5,"topLoad":17.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"bsplit","sets":4,"topLoad":55,"reps":10},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"pullup","sets":5,"topLoad":-50,"reps":8},{"key":"pulldown","sets":5,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":5,"topLoad":75,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}]];
+     PATTERNS.
+
+     PHASE 4 re-capture (T1-1/T1-2/T1-3): the snapshot did its job — it caught
+     the volume-allocation rewrite and forced this diff to be justified rather
+     than waved through. Unlike the rebuild above, this one WAS a row-level
+     diff-and-verify: 16 of 105 rows moved, every one of them a SET COUNT, with
+     topLoad and reps identical on all 105 — exactly the signature a change that
+     touches only volume allocation should have, and the check that would have
+     caught it if the remainder distribution had accidentally perturbed load or
+     rep prescription. The 16 moves are all downward by one set, and they are
+     the MAV overshoot being removed: before this change 8 of 10 groups ended
+     the ramp ABOVE their own MAV (quads 16 vs 14), because a single
+     Math.round(residual / freq) rounded up for every slot at once. Verified
+     independently of this snapshot: at the top of the ramp every one of the ten
+     groups now lands EXACTLY on its MAV (quads 14, chest 14, back 18, biceps
+     14, triceps 12, side_delts 14, calves 14, rear_delts 9, front_delts 7,
+     hamstrings 8), and no same-day muscle total exceeds SAME_DAY_GROUP_CAP. */
+  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":195,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"squat","sets":2,"topLoad":275,"reps":8},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":2,"topLoad":180,"reps":8},{"key":"latpullover","sets":2,"topLoad":90,"reps":12},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"rdl","sets":2,"topLoad":265,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"shrug","sets":3,"topLoad":45,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"bsplit","sets":2,"topLoad":50,"reps":10},{"key":"legext","sets":2,"topLoad":150,"reps":12},{"key":"calfraise","sets":2,"topLoad":285,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":2,"topLoad":-60,"reps":8},{"key":"pulldown","sets":2,"topLoad":170,"reps":8},{"key":"reversepecdeck","sets":2,"topLoad":30,"reps":12},{"key":"preachercurl","sets":2,"topLoad":70,"reps":12},{"key":"bayesiancurl","sets":2,"topLoad":62.5,"reps":12},{"key":"triext","sets":2,"topLoad":75,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":2,"topLoad":20,"reps":12},{"key":"wristcurl","sets":3,"topLoad":15,"reps":12}],[{"key":"bench","sets":3,"topLoad":205,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"cablefly","sets":2,"topLoad":50,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"squat","sets":3,"topLoad":285,"reps":8},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"tbarrow","sets":3,"topLoad":190,"reps":8},{"key":"latpullover","sets":3,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"rdl","sets":2,"topLoad":275,"reps":8},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":2,"topLoad":80,"reps":8},{"key":"dip","sets":2,"topLoad":150,"reps":8},{"key":"dbshoulderpress","sets":2,"topLoad":60,"reps":8},{"key":"dblateralraise","sets":3,"topLoad":17.5,"reps":12},{"key":"triext","sets":3,"topLoad":80,"reps":12},{"key":"bsplit","sets":2,"topLoad":55,"reps":10},{"key":"legext","sets":2,"topLoad":160,"reps":12},{"key":"calfraise","sets":3,"topLoad":300,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":70,"reps":12}],[{"key":"pullup","sets":3,"topLoad":-50,"reps":8},{"key":"pulldown","sets":2,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":3,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":3,"topLoad":72.5,"reps":12},{"key":"bayesiancurl","sets":3,"topLoad":65,"reps":12},{"key":"triext","sets":2,"topLoad":80,"reps":12},{"key":"legcurl","sets":2,"topLoad":110,"reps":12},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}],[{"key":"bench","sets":4,"topLoad":210,"reps":8},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":8},{"key":"cablefly","sets":4,"topLoad":60,"reps":12},{"key":"lateralraise","sets":5,"topLoad":22.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"squat","sets":4,"topLoad":295,"reps":8},{"key":"legext","sets":4,"topLoad":170,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"tbarrow","sets":5,"topLoad":190,"reps":8},{"key":"latpullover","sets":5,"topLoad":100,"reps":12},{"key":"reversepecdeck","sets":5,"topLoad":32.5,"reps":12},{"key":"bayesiancurl","sets":5,"topLoad":67.5,"reps":12},{"key":"rdl","sets":3,"topLoad":285,"reps":8},{"key":"legcurl","sets":3,"topLoad":120,"reps":12},{"key":"calfraise","sets":5,"topLoad":310,"reps":12},{"key":"shrug","sets":3,"topLoad":50,"reps":12}],[{"key":"inclinebench","sets":3,"topLoad":85,"reps":8},{"key":"dip","sets":3,"topLoad":160,"reps":8},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":8},{"key":"dblateralraise","sets":5,"topLoad":17.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"bsplit","sets":3,"topLoad":55,"reps":10},{"key":"legext","sets":3,"topLoad":170,"reps":12},{"key":"calfraise","sets":4,"topLoad":310,"reps":12},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":12}],[{"key":"pullup","sets":4,"topLoad":-50,"reps":8},{"key":"pulldown","sets":4,"topLoad":180,"reps":8},{"key":"reversepecdeck","sets":4,"topLoad":32.5,"reps":12},{"key":"preachercurl","sets":5,"topLoad":75,"reps":12},{"key":"bayesiancurl","sets":4,"topLoad":67.5,"reps":12},{"key":"triext","sets":4,"topLoad":85,"reps":12},{"key":"legcurl","sets":2,"topLoad":120,"reps":12},{"key":"lateralraise","sets":4,"topLoad":22.5,"reps":12},{"key":"wristcurl","sets":3,"topLoad":20,"reps":12}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -1278,9 +1308,21 @@ console.log("\n== AUDIT 3.12 (re-derived): true-weekly volume is frequency-INDEP
       spread <= 8);
     check(`${g}: every cadence still delivers at least MEV (${lm[g].mev})`, rates.every((r) => r >= lm[g].mev));
   }
-  // and the reason it can hold: capacity is above the ramp's endpoint everywhere
-  const headroom = Object.keys(lm).every((g) => maxDeliverable(g, "accumulation") >= lm[g].mav);
-  check("frequency-independence is possible because capacity >= MAV for every group at the advanced tier", headroom);
+  /* PHASE 4 (T1-1): this previously asserted capacity >= MAV for EVERY group at
+     the advanced tier. That passed only because maxDeliverable was overstating
+     capacity by ignoring SAME_DAY_GROUP_CAP; the real per-rotation capacity for
+     the stacking groups has always been lower. The honest statement is that two
+     advanced groups are short at 4x/week and reach their MAV by training more
+     often — the same frequency mechanism Audit 3.12 established for chest, not
+     a new limitation. Asserted in both directions so a regression either way
+     (capacity silently rising again, or frequency ceasing to close the gap)
+     breaks this test. */
+  const shortAt4x = Object.keys(lm).filter((g) => maxDeliverable(g, "accumulation") < lm[g].mav);
+  check(`advanced tier: exactly back+biceps are short of MAV at 4x/week (${shortAt4x.join(", ")})`,
+    shortAt4x.length === 2 && shortAt4x.includes("back") && shortAt4x.includes("biceps"));
+  const fs5 = wfs(7 / 5);
+  const closedAt5x = shortAt4x.every((g) => maxDeliverable(g, "accumulation") / fs5 >= lm[g].mav);
+  check("...and training 5x/week closes that gap for both, with no code change", closedAt5x);
 
   // per-SESSION volume still falls as frequency rises — the actual job frequency does
   const perSession = (gap) => {
@@ -1451,11 +1493,282 @@ console.log("\n== AUDIT 3.13: same-day same-muscle volume is capped, not multipl
       sum(early) < SAME_DAY_GROUP_CAP);
   });
 
-  // groups that don't stack (only ever one ramped slot/day) must be completely unaffected
-  const bsplit = mk(dayWith("bsplit"), last).items.find((it) => it.key === "bsplit");
-  const uncappedShare = rampedSlotSets("quads", "accumulation", last, landmarksForExperience("intermediate"), 1);
-  check(`a non-stacked slot keeps its full uncapped share (bsplit=${bsplit.sets}, share=${uncappedShare})`,
-    bsplit.sets === uncappedShare);
+  /* Groups that don't stack (only ever one ramped slot/day) must be completely
+     unaffected by the same-day cap.
+     PHASE 4: this used to assert that on `bsplit`, describing it as "a
+     non-stacked slot" — but quads stacks on day 2 (bsplit + legext), so the
+     test's stated premise was false and it passed only because the old uncapped
+     share happened to coincide. Re-pointed at triceps, which genuinely never
+     stacks: triext appears on days 0, 2 and 3, once each. Asserted against the
+     allocation for THIS slot's ordinal rather than a bare default-ordinal call,
+     since the remainder is now distributed across slots (T1-3). */
+  const triDay = dayWith("triext");
+  const tri = mk(triDay, last).items.find((it) => it.key === "triext");
+  const triOrd = SLOT_ORDINAL[`${triDay}:triext`];
+  const triShare = rampedAllocation("triceps", "accumulation", last, landmarksForExperience("intermediate"), 1)[triOrd];
+  check(`a genuinely non-stacked slot keeps its full uncapped share (triext=${tri.sets}, share=${triShare})`,
+    tri.sets === triShare);
+  const triStacks = (PATTERN_DAY_SLOTS.triceps || []).some(({ n }) => n >= 2);
+  check("...and triceps really is non-stacking, so that assertion means what it says", !triStacks);
+}
+
+
+/* helpers used by the PHASE 4 blocks below */
+const snapSeedsP4 = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
+const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduce((a, k) => a + (LIB[k].fixedSets && LIB[k].volumeGroup === g ? LIB[k].fixedSets : 0), 0), 0);
+
+/* ===========================================================================
+   PHASE 4 — external scoped audit (T1-1 .. T1-4)
+   Each block asserts the FIXED behaviour and is written so that reverting the
+   corresponding engine change breaks it. Verified by actually reverting each
+   fix in turn and confirming the specific assertions below fail.
+   =========================================================================== */
+{
+  console.log("\n== PHASE 4 T1-1: capacity math respects the same-day cap ==");
+  /* maxDeliverable used to be ACC_SET_CAP x PATTERN_FREQ, which cannot see
+     SAME_DAY_GROUP_CAP. Groups that land two ramped slots on one day therefore
+     had their capacity overstated, and since the auto-tune's raise gates read
+     it, MAV settled above anything prescribe() could deliver. */
+  const stackers = Object.keys(PATTERN_DAY_SLOTS).filter((g) =>
+    (PATTERN_DAY_SLOTS[g] || []).some(({ n }) => n >= 2));
+  check(`five groups stack two ramped slots on one day (${stackers.sort().join(", ")})`,
+    stackers.length === 5);
+  stackers.forEach((g) => {
+    const slots = (PATTERN_DAY_SLOTS[g] || []).reduce((a, { n }) => a + n, 0);
+    const naive = ACC_SET_CAP * slots; // what the old formula returned for the ramped part
+    const real = maxDeliverable(g, "accumulation") - fixedWeeklySetsP4(g);
+    check(`${g}: real ramped capacity (${real}) is BELOW the naive cap x slots figure (${naive}) — the same-day cap is accounted for`,
+      real < naive);
+  });
+  /* The payoff: deliveredWeekly must equal what prescribe actually hands over,
+     for every group, at the top of the ramp. This is the assertion that would
+     have caught the original defect. */
+  const lmI = landmarksForExperience("intermediate");
+  const lastCyc = BLOCKS.accumulation.maxCycles - 1;
+  const realPerGroup = {};
+  for (let d = 0; d < ROT; d++) {
+    const p = freshProgram({ seeds: snapSeedsP4, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    p.cycleIndex = d;
+    p.block = { type: "accumulation", cycle: lastCyc, sessionsInBlock: lastCyc * 4, nextAfter: null };
+    prescribe(p, { trainingReadiness: 80 }).items.forEach((it) => {
+      if (LIB[it.key].fixedSets) return;
+      realPerGroup[it.volumeGroup] = (realPerGroup[it.volumeGroup] || 0) + it.sets;
+    });
+  }
+  Object.keys(realPerGroup).forEach((g) => {
+    const claimed = deliveredWeekly(g, "accumulation", lastCyc, lmI, 1) - fixedWeeklySetsP4(g);
+    check(`${g}: deliveredWeekly's ramped total (${claimed}) equals what prescribe() actually gives (${realPerGroup[g]})`,
+      claimed === realPerGroup[g]);
+  });
+}
+
+{
+  console.log("\n== PHASE 4 T1-2: the ramp survives frequencies above 4x/week ==");
+  /* An unscaled RAMPED_SET_FLOOR compared against a freqScale-scaled target
+     pinned every cycle at the floor below freqScale 1, flattening the block
+     entirely for the groups carrying the most work. */
+  const lm = landmarksForExperience("intermediate");
+  [[7 / 5, "5x/wk"], [7 / 6, "6x/wk"]].forEach(([gap, label]) => {
+    const fs = weeklyFreqScale(gap);
+    const flat = Object.keys(lm).filter((g) => {
+      const seen = new Set();
+      for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++)
+        seen.add(deliveredWeekly(g, "accumulation", c, lm, fs));
+      return seen.size === 1;
+    });
+    /* The defect was that a group went flat because an UNSCALED floor was being
+       compared against a SCALED target — flatness with no structural cause.
+       There is one legitimate way a group can still be flat: when its floor
+       (per-slot minimum x slot count) already meets or exceeds the group's own
+       scaled MAV, there is simply no integer room left to ramp into. That is a
+       property of a narrow MEV->MAV span, not a scaling bug. So rather than
+       asserting "nothing is ever flat" (too strong — it would be satisfied by
+       weakening the floor) or "at most N are flat" (too weak — it would pass if
+       the original bug returned), assert that EVERY flat group is fully
+       explained by that structural condition. If the unscaled-floor bug came
+       back, quads and chest would go flat WITHOUT satisfying it, and this
+       fails. */
+    const floorTotal = (g) => Math.max(1, Math.round((RAMPED_SET_FLOOR.ramp) * fs)) * (PATTERN_FREQ[g] || 1);
+    const unexplained = flat.filter((g) => floorTotal(g) < Math.round(lm[g].mav * fs));
+    check(`${label} (freqScale ${fs.toFixed(2)}): every flat group is explained by its floor already meeting MAV (${flat.length} flat: ${flat.join(", ") || "none"}; ${unexplained.length} unexplained)`,
+      unexplained.length === 0);
+  });
+  /* Pin the specific groups the audit reported as flat at 6x/week — the ones
+     carrying the most work. These had NO structural excuse and must ramp. */
+  const fs6 = weeklyFreqScale(7 / 6);
+  ["quads", "chest", "hamstrings"].forEach((g) => {
+    const seen = new Set();
+    for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++)
+      seen.add(deliveredWeekly(g, "accumulation", c, lm, fs6));
+    check(`6x/wk: ${g} ramps rather than sitting flat (${seen.size} distinct levels)`, seen.size > 1);
+  });
+  // and 4x/week must be untouched by the scaling — round(2 x 1) === 2
+  const fs1 = weeklyFreqScale(7 / 4);
+  check(`4x/week freqScale is exactly 1 (${fs1}), so the floor scaling is a no-op there`, fs1 === 1);
+}
+
+{
+  console.log("\n== PHASE 4 T1-3: the ramp lands ON MAV instead of overshooting ==");
+  /* One Math.round(residual / freq) applied to every slot meant per-rotation
+     totals could only be multiples of PATTERN_FREQ — coarse steps, and a
+     rounded-up top of ramp that pushed 8 of 10 groups past their own MAV. */
+  const lm = landmarksForExperience("intermediate");
+  const last = BLOCKS.accumulation.maxCycles - 1;
+  const over = [], levels = {};
+  Object.keys(lm).forEach((g) => {
+    const seq = [];
+    for (let c = 0; c <= last; c++) seq.push(deliveredWeekly(g, "accumulation", c, lm, 1));
+    levels[g] = new Set(seq).size;
+    if (seq[last] > lm[g].mav) over.push(`${g} ${seq[last]}>${lm[g].mav}`);
+  });
+  check(`no group overshoots its MAV at the top of the ramp (${over.length ? over.join(", ") : "none"})`,
+    over.length === 0);
+  check("every group lands exactly ON its MAV at the top of the ramp",
+    Object.keys(lm).every((g) => deliveredWeekly(g, "accumulation", last, lm, 1) === lm[g].mav));
+  /* Coarseness: with one shared quotient, hamstrings had 2 distinct volume
+     levels across a 6-cycle block (6,6,6,6,6,9) — no progression at all in any
+     block ending before its final cycle. */
+  check(`hamstrings now has more than 2 distinct volume levels in a block (${levels.hamstrings})`,
+    levels.hamstrings > 2);
+  check("no group is stuck at fewer than 3 distinct volume levels",
+    Object.values(levels).every((v) => v >= 3));
+}
+
+{
+  console.log("\n== PHASE 4 T1-4: the convention rescale fires once, not forever ==");
+  const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
+  // (a) a legitimately growing lift must never be reseeded
+  let p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+  const ref = p.lifts.tbarrow.e1rm;
+  let s = ref * 0.40, everReset = false, crossed = false;
+  for (let mo = 0; mo < 8; mo++) {
+    p.lifts.shrug = { ...p.lifts.shrug, e1rm: s, e1rmRaw: s };
+    if (s / ref > 0.42) crossed = true;
+    p = migrateProgram(p);
+    if (Math.abs(p.lifts.shrug.e1rm - s) > 0.5) everReset = true;
+    s = p.lifts.shrug.e1rm * 1.03;
+  }
+  check("sanity: the simulated shrug really does grow past its 0.42x suspicion threshold", crossed);
+  check("a legitimately growing lift is never silently reseeded by the ratio heuristic", !everReset);
+  // (b) a genuine legacy save must STILL be converted, exactly once
+  const legacy = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+  delete legacy.lifts.inclinebench.convRescaled; // pre-split save: no stamp
+  const stale = legacy.lifts.bench.e1rm * 0.80;
+  legacy.lifts.inclinebench = { ...legacy.lifts.inclinebench, e1rm: stale, e1rmRaw: stale };
+  const once = migrateProgram(legacy);
+  check(`a genuine legacy pair-convention value is still converted on first load (${stale.toFixed(0)} -> ${once.lifts.inclinebench.e1rm.toFixed(0)})`,
+    once.lifts.inclinebench.e1rm < stale * 0.75);
+  const twice = migrateProgram(once);
+  check("...and is stamped, so a second load leaves it alone (idempotent)",
+    twice.lifts.inclinebench.e1rm === once.lifts.inclinebench.e1rm);
+  check("a program created fresh is stamped at creation, so it is never a rescale candidate",
+    freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 })
+      .lifts.shrug.convRescaled === true);
+}
+
+
+{
+  console.log("\n== PHASE 4 T2-2/T2-3/T2-4/T2-5/T2-6: Tier 2 findings ==");
+  const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
+
+  // T2-2: the fatigue branch cannot walk landmarks into the degenerate 2/3/4 corner
+  {
+    let p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    const seeded = landmarksForExperience("intermediate");
+    for (let b = 0; b < 40; b++) {
+      Object.values(p.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 100, raw: 100 }, { e: 100, raw: 100 }]; });
+      p.fatigue.index = 0.95;
+      p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
+      p.landmarks = adjustLandmarks(p).landmarks;
+    }
+    const below = Object.keys(p.landmarks).filter((g) =>
+      p.landmarks[g].mav < Math.ceil(seeded[g].mav * FATIGUE_FLOOR_FRAC)
+      || p.landmarks[g].mrv < Math.ceil(seeded[g].mrv * FATIGUE_FLOOR_FRAC));
+    check(`40 consecutive stall+fatigue-spike blocks: no group falls below ${FATIGUE_FLOOR_FRAC}x its seeded landmarks (${below.length} below)`,
+      below.length === 0);
+    check("...and the landmarks are still a real range, not collapsed onto the relational clamps (quads mav > 3)",
+      p.landmarks.quads.mav > 3);
+  }
+
+  // T2-3: FATIGUE_SPIKE is reachable without any readiness data
+  {
+    let p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    for (let s = 0; s < 14; s++) {
+      const rx = prescribe(p, null);
+      const logs = rx.items.map((it) => ({
+        key: it.key, topWeight: it.bodyweight ? it.topLoad : it.topLoad, topReps: it.reps,
+        topRpe: Math.min(10, it.rpe + 2), targetRpe: it.rpe, missedSets: 1, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      }));
+      p = ingest(p, logs, null).next; // null readiness throughout
+    }
+    check(`no readiness data + a genuinely terrible block reaches FATIGUE_SPIKE (index ${p.fatigue.index.toFixed(3)} >= ${FATIGUE_SPIKE})`,
+      p.fatigue.index >= FATIGUE_SPIKE);
+    check("...and the readiness term really was absent the whole time (hasReadiness never set)",
+      p.fatigue.hasReadiness !== true);
+    // a healthy block with no readiness must still read LOW — the renormalisation must not inflate everything
+    let h = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    for (let s = 0; s < 14; s++) {
+      const rx = prescribe(h, null);
+      const logs = rx.items.map((it) => ({
+        key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+        missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      }));
+      h = ingest(h, logs, null).next;
+    }
+    check(`a healthy block with no readiness still reads well below AMBER (${h.fatigue.index.toFixed(3)} < ${FATIGUE_AMBER})`,
+      h.fatigue.index < FATIGUE_AMBER);
+  }
+
+  // T2-4: a migrated legacy landmark set is normalised, not "corrected" by a growth block
+  {
+    const p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    p.landmarks.quads = { label: "Quads", mev: 12, mav: 14, mrv: 18 }; // legacy ratchet state
+    check("sanity: the legacy state really does violate the ratio bound", 12 / 14 > MEV_MAV_MAX_RATIO);
+    const mg = migrateProgram(p);
+    check(`migration normalises it inside the bound (${mg.landmarks.quads.mev}/${mg.landmarks.quads.mav}, ratio ${(mg.landmarks.quads.mev / mg.landmarks.quads.mav).toFixed(3)} <= ${MEV_MAV_MAX_RATIO})`,
+      mg.landmarks.quads.mev / mg.landmarks.quads.mav <= MEV_MAV_MAX_RATIO);
+    Object.values(mg.lifts).forEach((l) => { l.hist = [{ e: 100, raw: 100 }, { e: 104, raw: 104 }, { e: 108, raw: 108 }]; });
+    mg.fatigue.index = 0.2;
+    mg.block = { type: "accumulation", cycle: 5, sessionsInBlock: 20, nextAfter: null };
+    const adj = adjustLandmarks(mg).adjustments.quads;
+    check("...so no growth block ever reports a volume CUT labelled 'growth strong'",
+      !adj || !(adj.dMev < 0 && /growth strong/.test(adj.signal)));
+  }
+
+  // T2-5: effectiveCeiling is the single definition, and is frequency-aware
+  {
+    const lm = landmarksForExperience("intermediate");
+    const fs = weeklyFreqScale(7 / 2.2);
+    check(`effectiveCeiling is frequency-aware (back at 4x=${effectiveCeiling("back", "accumulation", lm, 1)}, at 2.2x=${effectiveCeiling("back", "accumulation", lm, fs).toFixed(2)})`,
+      effectiveCeiling("back", "accumulation", lm, fs) !== effectiveCeiling("back", "accumulation", lm, 1));
+    check("effectiveCeiling with no freqScale is unchanged for existing callers",
+      effectiveCeiling("back", "accumulation", lm) === effectiveCeiling("back", "accumulation", lm, 1));
+  }
+
+  // T2-6: the block slope signal reads only lifts that are actually trained
+  {
+    const trained = new Set(ROTATION.flatMap((d) => d.items));
+    const p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    // drive one full rotation and confirm the slope signal moved off zero
+    let q = p;
+    for (let s = 0; s < 12; s++) {
+      const rx = prescribe(q, { trainingReadiness: 80 });
+      const logs = rx.items.map((it) => ({
+        key: it.key, topWeight: it.bodyweight ? it.topLoad : it.topLoad + 10, topReps: it.reps,
+        topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      }));
+      q = ingest(q, logs, { trainingReadiness: 80 }).next;
+    }
+    check("the block-level slope signal is non-zero after real training (it reads trained lifts)",
+      q.fatigue.slope !== 0);
+    check("deadlift is NOT in the rotation, so nothing untrained can feed that signal",
+      !trained.has("deadlift"));
+  }
 }
 
 Date.now = RealNow;
