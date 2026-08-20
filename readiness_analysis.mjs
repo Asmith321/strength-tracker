@@ -112,7 +112,7 @@ async function buildSyntheticHistory() {
   }
   const rng = mulberry32(20260720);
   const randint = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
-  const seeds = { squat: { weight: 225, reps: 5, rpe: 8 }, bench: { weight: 165, reps: 5, rpe: 8 }, deadlift: { weight: 275, reps: 5, rpe: 8 } };
+  const seeds = { squat: { weight: 225, reps: 5, rpe: 8 }, bench: { weight: 165, reps: 5, rpe: 8 }, rdl: { weight: 185, reps: 8, rpe: 8 }, tbarrow: { weight: 135, reps: 8, rpe: 8 } };
   let p = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 180 });
   const sessions = [];
   const RealNow = Date.now; let clock = RealNow();

@@ -25,7 +25,7 @@ const check = (name, cond, extra = "") => {
   else { fail++; console.log(`  FAIL  ${name}  ${extra}`); }
 };
 
-const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
+const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
 const green = { trainingReadiness: 80 };
 
 console.log("\n== zero-edit submission through the fixed handleLog boundary ==");
@@ -45,14 +45,14 @@ console.log("\n== zero-edit submission through the fixed handleLog boundary ==")
   const before = program.lifts.squat.hist.length;
   const r = ingest(program, ingestLogs, green);
 
-  const squatLog = rx.items.find((it) => it.isMain && it.key === "squat");
+  const squatLog = rx.items.find((it) => it.key === "squat");
   check(`squat logged at RPE ${squatLog.rpe} (>=7) in accumulation: hist entry IS recorded`,
     r.next.lifts.squat.hist.length === before + 1);
   check("squat e1RM was updated from the zero-edit submission", r.next.lifts.squat.e1rm !== program.lifts.squat.e1rm);
-  const rdlLog = rx.items.find((it) => it.key === "rdl"); // an accessory on the same (Squat) day, also unedited
-  check(`rdl (accessory, also unedited, RPE ${rdlLog.rpe}) got a hist entry too`,
-    r.next.lifts.rdl.hist.length === program.lifts.rdl.hist.length + 1);
-  check("no session was silently dropped: rpeMiss reflects real evidence, not null (touched mains exist)", r.rpeMiss != null);
+  const flyLog = rx.items.find((it) => it.key === "cablefly"); // an isolation slot on the same day, also unedited
+  check(`cablefly (isolation, also unedited, RPE ${flyLog.rpe}) got a hist entry too`,
+    r.next.lifts.cablefly.hist.length === program.lifts.cablefly.hist.length + 1);
+  check("no session was silently dropped: rpeMiss reflects real evidence, not null (touched compound logs exist)", r.rpeMiss != null);
 
   // The old (buggy) boundary, for contrast — confirms this test would have
   // caught the regression.

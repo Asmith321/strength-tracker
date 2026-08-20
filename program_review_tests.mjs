@@ -1,12 +1,23 @@
 /* ============================================================================
-   Program-design review pass — verification. Run: node program_review_tests.mjs
-   (wired into `npm test`). Every assertion here fails on the pre-review
-   program and passes on the revised one.
+   Hypertrophy program-design review — verification. Run: node program_review_tests.mjs
+   (wired into `npm test`).
+
+   This file checks the SHIPPED PROGRAM against its stated design, as opposed to
+   engine_fix_tests.mjs which checks engine MECHANISMS. It was rewritten wholesale
+   for the hypertrophy rebuild: the previous version verified a strength program
+   (squat/bench/deadlift mains, block peaking into a 1-2 rep re-test, accessories
+   filling the gaps) against that program's own mandates. Essentially none of
+   those assertions describe the current program, so re-pointing them one by one
+   would have produced a file that passed while testing nothing real.
+
+   Every number asserted below was measured from the engine, not assumed — the
+   session/volume budgets in particular are pulled from real prescribe() output.
    ============================================================================ */
 import {
-  freshProgram, prescribe, ingest, migrateProgram, liftSlopeInfo,
-  LIB, ROTATION, PATTERNS, PATTERN_FREQ, PATTERN_RAMPED_ACC, ACC_REP_TIERS,
-  deliveredWeekly, fixedWeeklySets, rampedSlotSets, effectiveCeiling, landmarksForExperience, buildFeeler,
+  freshProgram, prescribe, ingest, migrateProgram, applyTransition,
+  LIB, ROTATION, ROT, PATTERNS, PATTERN_FREQ, PATTERN_RAMPED_ACC, PATTERN_MAIN,
+  ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, SAME_DAY_GROUP_CAP,
+  deliveredWeekly, fixedWeeklySets, rampedSlotSets, maxDeliverable, landmarksForExperience,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -14,232 +25,260 @@ const check = (name, cond, extra = "") => {
   if (cond) { pass++; console.log(`  PASS  ${name}`); }
   else { fail++; console.log(`  FAIL  ${name}  ${extra}`); }
 };
-const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } };
-const fresh = () => freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 },
+  rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
+const fresh = () => freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
 const green = { trainingReadiness: 80 };
 const inRotation = new Set(ROTATION.flatMap((d) => d.items));
+const lm = landmarksForExperience("intermediate");
 
-console.log("\n== Athlete mandates ==");
+/* The athlete's approved exercise list, verbatim in spirit — nothing outside it
+   may ever be prescribed. Keyed by LIB key so the constraint is machine-checked
+   rather than left to a code comment. */
+const APPROVED = new Set([
+  "cablefly", "dip", "dbshoulderpress", "bench", "triext", "lateralraise", "inclinebench",
+  "latpullover", "shrug", "wristcurl", "reversepecdeck", "bayesiancurl", "preachercurl",
+  "tbarrow", "pullup", "calfraise", "legcurl", "legext", "rdl", "squat", "frontsquat",
+  "bsplit", "cablecrunch", "deadlift",
+]);
+
+console.log("\n== Approved-exercise constraint ==");
 {
-  check("OHP is out of the rotation", !inRotation.has("ohp"));
-  check("ohp stays defined in LIB (history labels)", !!LIB.ohp);
-  check("DB Shoulder Press is the sole front-delt slot (freq 1)", PATTERN_FREQ.front_delts === 1);
-  const lm = landmarksForExperience("intermediate");
-  // AUDIT 3.11: ACC_SET_CAP raised 4 -> 6.
-  check("DB Shoulder Press absorbs the full residual up to the slot cap (6 late-block)",
-    rampedSlotSets("front_delts", "accumulation", 5, lm) === 6);
-  // AUDIT 2.1(a): intensification no longer cuts compound/unilateral accessory reps
-  // (was 6/7) — they hold at 8 in every block; RPE still climbs to mark the block's
-  // added intensity instead of stacking a reps cut on top of it.
-  check(`compound accessories hold at 8 reps in every block (accum ${ACC_REP_TIERS.accumulation.compound.reps}, intens ${ACC_REP_TIERS.intensification.compound.reps})`,
-    ACC_REP_TIERS.accumulation.compound.reps === 8 && ACC_REP_TIERS.intensification.compound.reps === 8);
-  check(`unilateral accessories hold at 8 reps in every block (accum ${ACC_REP_TIERS.accumulation.unilateral.reps}, intens ${ACC_REP_TIERS.intensification.unilateral.reps})`,
-    ACC_REP_TIERS.accumulation.unilateral.reps === 8 && ACC_REP_TIERS.intensification.unilateral.reps === 8);
-  check("isolation stays 10-12 (untouched)", ACC_REP_TIERS.accumulation.isolation.reps === 12 && ACC_REP_TIERS.deload.isolation.reps === 10);
-  check("main-lift reps stay sub-6 in training blocks", ["accumulation", "intensification"].every((b) =>
-    Object.values({ squat: 1, bench: 1, deadlift: 1 }).every(() => true) &&
-    [/* accum */ 5, 5, 4].concat([3, 3, 2]).every((r) => r < 6)));
+  const strays = Object.keys(LIB).filter((k) => !APPROVED.has(k));
+  check("every exercise defined in LIB is on the athlete's approved list", strays.length === 0, strays.join(","));
+  const rotStrays = [...inRotation].filter((k) => !APPROVED.has(k));
+  check("every exercise in the rotation is on the approved list", rotStrays.length === 0, rotStrays.join(","));
+  check("deadlift is defined but carries NO rotation slot (dropped as a hypertrophy tool)",
+    !!LIB.deadlift && !inRotation.has("deadlift"));
+  check("front squat is defined but carries no rotation slot (quads already have 4)",
+    !!LIB.frontsquat && !inRotation.has("frontsquat"));
+  check("retired exercises are gone from LIB entirely, kept only as history labels",
+    !LIB.row && !LIB.cablerow && !LIB.pulldown && !LIB.ohp && !LIB.curl && !LIB.seatedcalf
+    && !!RETIRED_LABELS.cablerow && !!RETIRED_LABELS.ohp);
 }
 
-console.log("\n== Unilateral tier is real again ==");
+console.log("\n== The strength skeleton is gone ==");
 {
-  check("a unilateral exercise exists in the rotation (bsplit)", inRotation.has("bsplit") && LIB.bsplit.repTier === "unilateral");
-  check("bsplit participates in the quads pool (freq 2 with front squat)", PATTERN_FREQ.quads === 2 && LIB.bsplit.volumeGroup === "quads");
-  const lm = landmarksForExperience("intermediate");
-  const ramp = [0, 1, 2, 3, 4, 5].map((c) => deliveredWeekly("quads", "accumulation", c, lm));
-  const ceil = effectiveCeiling("quads", "accumulation", lm);
-  // ceiling value itself is derived (not re-hardcoded) since audit 2.5 (legext
-  // rejoining the rotation) raised quads' fixed contribution and, with it,
-  // maxDeliverable/effectiveCeiling — the property under test (the ramp
-  // actually reaches its own ceiling) is unaffected by that shift.
-  /* AUDIT 3.11: quads is no longer capacity-frozen (ACC_SET_CAP 4->6 pushed
-     capA past MRV for this group), so its ramp is no longer clamped to
-     exactly capA by construction — it now approaches MRV via weeklyTarget's
-     smooth mev->mrv line, split across PATTERN_FREQ.quads=2 ramped slots by
-     round(residual/2). That rounding can overshoot the nominal ceiling by
-     up to 1 set (verified: cyc5 target=18 exactly, residual/2=3.5 rounds to
-     4, delivering 11+4*2=19) — allow that documented slop rather than assert
-     exact equality against a mechanism (hard capacity clamping) this group
-     no longer goes through. */
-  check(`quads delivered ramp reaches (within rounding of) its own ceiling (${ceil}) [${ramp.join(",")}]`,
-    Math.max(...ramp) >= ceil && Math.max(...ramp) <= ceil + 1);
-  const p = fresh(); // bsplit on day 0
-  const it = prescribe(p, green).items.find((i) => i.key === "bsplit");
-  check("bsplit gets a feeler warmup at 6-8-rep loading", it && it.warmup?.type === "feeler");
-  check("no orphaned volume pools: every ramped rotation exercise has a landmark",
-    ROTATION.every((d) => d.items.every((k) => LIB[k].role === "main" || LIB[k].fixedSets || PATTERNS[LIB[k].volumeGroup])));
+  check("no exercise carries role 'main' any more", Object.values(LIB).every((L) => L.role !== "main"));
+  check("every LIB entry has a repTier (nothing falls through the accessory path)",
+    Object.values(LIB).every((L) => ["compound", "unilateral", "isolation"].includes(L.repTier)));
+  check("PATTERN_MAIN is empty — every pool reads its growth from accessory slopes",
+    Object.keys(PATTERN_MAIN).length === 0);
+  check("every landmark group resolves to at least one ramped accessory for its growth signal",
+    Object.keys(PATTERNS).every((g) => (PATTERN_RAMPED_ACC[g] || []).length > 0),
+    Object.keys(PATTERNS).filter((g) => !(PATTERN_RAMPED_ACC[g] || []).length).join(","));
+  check("only accumulation and deload blocks exist", Object.keys(BLOCKS).sort().join(",") === "accumulation,deload");
+  check("intensification/realization are recorded as legacy-only block types",
+    !!LEGACY_BLOCK_TYPES.intensification && !!LEGACY_BLOCK_TYPES.realization
+    && !BLOCKS.intensification && !BLOCKS.realization);
+  check("no block config carries main-lift rep/set schemes",
+    Object.values(BLOCKS).every((b) => b.mainReps === undefined && b.mainSets === undefined));
+  const rx = prescribe(fresh(), green);
+  check("every prescribed item is straight sets (topSetCount === sets, backoffSetCount 0)",
+    rx.items.every((it) => it.topSetCount === it.sets && it.backoffSetCount === 0));
+  check("no prescribed item carries a backoff load distinct from its working load",
+    rx.items.every((it) => it.backoffLoad === it.topLoad));
 }
 
-console.log("\n== Side/rear delt split ==");
+console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
 {
-  check("side_delts is its own landmark pool", !!PATTERNS.side_delts);
-  check("lateral raise drives side_delts", LIB.lateralraise.volumeGroup === "side_delts");
-  check("reverse pec deck stays rear_delts", LIB.reversepecdeck.volumeGroup === "rear_delts");
-  check(`side delts got a second weekly slot (freq ${PATTERN_FREQ.side_delts})`, PATTERN_FREQ.side_delts === 2);
-  check(`rear delts keep two slots (freq ${PATTERN_FREQ.rear_delts})`, PATTERN_FREQ.rear_delts === 2);
-  const lm = landmarksForExperience("intermediate");
-  const side = [0, 2, 5].map((c) => deliveredWeekly("side_delts", "accumulation", c, lm));
-  // AUDIT 3.11: ACC_SET_CAP 4->6 raised the 2-slot capacity ceiling 8->12; side_delts
-  // is still capacity-frozen (capA 12 < MRV 18) so the ramp now plateaus at 12, reached by cyc2.
-  check(`side-delt volume ramps 6→12, plateauing at the raised capacity ceiling [${side.join(",")}]`,
-    side[0] === 6 && side[1] === 12 && side[2] === 12);
+  check(`rotation is ${ROT} days`, ROT === 4);
+  check("each day pairs an upper half with a lower half (no upper-only or lower-only day)", ROTATION.every((d) => {
+    const groups = new Set(d.items.map((k) => LIB[k].volumeGroup));
+    const lower = ["quads", "hamstrings", "calves"].some((g) => groups.has(g));
+    const upper = ["chest", "back", "front_delts", "side_delts", "rear_delts", "biceps", "triceps"].some((g) => groups.has(g));
+    return lower && upper;
+  }));
+  const exposures = {};
+  ROTATION.forEach((d) => {
+    const seen = new Set(d.items.map((k) => LIB[k].volumeGroup));
+    seen.forEach((g) => { exposures[g] = (exposures[g] || 0) + 1; });
+  });
+  Object.keys(PATTERNS).forEach((g) => {
+    check(`${g} is trained on ${exposures[g]} separate days per rotation (>=2)`, exposures[g] >= 2, `got ${exposures[g]}`);
+  });
+  check("chest and back each get 2 training DAYS, not 2 slots on one day",
+    exposures.chest === 2 && exposures.back === 2);
 }
 
-console.log("\n== Old-schema migration (combined pool, missing lifts) ==");
+console.log("\n== Schedule capacity vs. landmarks ==");
 {
-  // simulate a program saved before this pass: combined rear_delts pool with
-  // tuned values, no side_delts, and no bsplit lift record
-  const old = fresh();
-  delete old.landmarks.side_delts;
-  old.landmarks.rear_delts = { label: "Rear / Side Delts", mev: 9, mav: 20, mrv: 27 }; // "tuned" combined-pool values
-  old.landmarkAdjustments = { rear_delts: { dMev: 1, dMrv: 1, signal: "growth strong, fatigue in check" } };
-  delete old.lifts.bsplit;
-  const m = migrateProgram(old);
-  check("side_delts pool added", !!m.landmarks.side_delts);
-  check("combined-pool values reset to canonical rear-only numbers (4/10/16)",
-    m.landmarks.rear_delts.mev === 4 && m.landmarks.rear_delts.mrv === 16);
-  check("stale combined-pool adjustment dropped", !m.landmarkAdjustments.rear_delts);
-  check("missing bsplit lift backfilled from squat seed", m.lifts.bsplit?.e1rm > 0);
-  let crashed = false;
-  try { for (let d = 0; d < 4; d++) { const p = structuredClone(m); p.cycleIndex = d; prescribe(p, green); } }
-  catch { crashed = true; }
-  check("prescribe() runs all 4 days on the migrated program without crashing", !crashed);
+  Object.keys(PATTERNS).forEach((g) => {
+    const cap = maxDeliverable(g, "accumulation");
+    check(`${g}: schedule capacity ${cap} covers its MAV of ${lm[g].mav}`, cap >= lm[g].mav);
+  });
+  check("no landmark group is left without ramped slots", Object.keys(PATTERNS).every((g) => PATTERN_FREQ[g] >= 2));
+  check("triceps has 3 slots so its MAV is not forced into 6 sets of one movement in one session",
+    PATTERN_FREQ.triceps === 3);
 }
 
-console.log("\n== Precision-weighted stall signal ==");
+console.log("\n== The ramp: MEV -> MAV, with MRV as the recovery bound ==");
+{
+  Object.keys(PATTERNS).forEach((g) => {
+    const atStart = deliveredWeekly(g, "accumulation", 0, lm, 1);
+    const atEnd = deliveredWeekly(g, "accumulation", BLOCKS.accumulation.maxCycles - 1, lm, 1);
+    check(`${g} ramps ${atStart} -> ${atEnd}, reaching MAV ${lm[g].mav} and staying under MRV ${lm[g].mrv}`,
+      atEnd > atStart && atEnd >= lm[g].mav && atEnd <= lm[g].mrv);
+  });
+  check("MAV sits strictly between MEV and MRV for every group",
+    Object.keys(PATTERNS).every((g) => lm[g].mev < lm[g].mav && lm[g].mav < lm[g].mrv));
+}
+
+console.log("\n== Effort progression: 3 RIR -> 0-1 RIR, compounds never to failure ==");
+{
+  const A = ACC_REP_TIERS.accumulation;
+  check(`compounds open at RPE ${A.compound.rpe} (~3 RIR)`, A.compound.rpe === 7);
+  check(`compounds cap at RPE ${A.compound.rpeCap} — never true failure on multi-joint work`, A.compound.rpeCap === 9);
+  check(`isolation caps at RPE ${A.isolation.rpeCap} (~0-1 RIR), not a hard 10`, A.isolation.rpeCap === 9.5);
+  check("every accumulation tier ramps effort across the block (all have rpeStep)",
+    ["compound", "unilateral", "isolation"].every((t) => A[t].rpeStep > 0));
+  check("deload drops effort to RPE <= 6.5 on every tier",
+    ["compound", "unilateral", "isolation"].every((t) => ACC_REP_TIERS.deload[t].rpe <= 6.5));
+  // real prescribe() output, not just the table
+  const p = fresh();
+  const first = prescribe({ ...p, block: { ...p.block, cycle: 0 } }, green);
+  const last = prescribe({ ...p, block: { ...p.block, cycle: BLOCKS.accumulation.maxCycles - 1 } }, green);
+  check("no prescribed set anywhere in an accumulation block sits at RPE 10",
+    [first, last].every((rx) => rx.items.every((it) => it.rpe <= 9.5)));
+  const maxFirst = Math.max(...first.items.map((it) => it.rpe));
+  const maxLast = Math.max(...last.items.map((it) => it.rpe));
+  check(`prescribed effort really climbs across the block (max RPE ${maxFirst} -> ${maxLast})`, maxLast > maxFirst);
+  check("rep targets sit in the 8-12 band where the load-vs-growth evidence is flat",
+    [first, last].every((rx) => rx.items.every((it) => it.reps >= 8 && it.reps <= 12)));
+}
+
+console.log("\n== Session and weekly budget (measured from real prescribe output) ==");
 {
   const p = fresh();
-  const rising = (base, n) => Array.from({ length: n }, (_, i) => ({ e: base + i, raw: base + i, b: "accumulation" }));
-  p.lifts.squat.hist = rising(400, 8);
-  p.lifts.bench.hist = rising(280, 8);
-  p.lifts.deadlift.hist = rising(500, 2); // one exposure/rotation → below slope()'s 3-point minimum
-  const r = ingest(p, [], green);
-  const gS = liftSlopeInfo(r.next.lifts.squat).g, gB = liftSlopeInfo(r.next.lifts.bench).g;
-  const expected = (gS + gB) / 2; // deadlift contributes NO fake zero
-  check(`e1rmSlope equals the mean of the lifts with real data (${(r.e1rmSlope * 100).toFixed(3)}%/session)`,
-    Math.abs(r.e1rmSlope - expected) < 1e-9);
-  check("sparse deadlift no longer dilutes the trend by a third", r.e1rmSlope > expected * 0.99);
-  check("front-delt growth pool excludes the out-of-rotation OHP", !(PATTERN_RAMPED_ACC.front_delts || []).includes("ohp"));
-}
-
-console.log("\n== Session budget (ground rule: no unchecked growth) ==");
-{
-  const totals = { 0: [], 5: [] };
-  for (const cyc of [0, 5]) {
-    for (let d = 0; d < 4; d++) {
-      const p = fresh(); p.cycleIndex = d; p.block = { type: "accumulation", cycle: cyc, sessionsInBlock: cyc * 4, nextAfter: null };
-      totals[cyc].push(prescribe(p, green).items.reduce((s, i) => s + i.sets, 0));
+  let peakSession = 0, peakRotation = 0, minSetsAnyItem = Infinity;
+  for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++) {
+    let rot = 0;
+    for (let d = 0; d < ROT; d++) {
+      const rx = prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: c } }, green);
+      const t = rx.items.reduce((s, it) => s + it.sets, 0);
+      rx.items.forEach((it) => { minSetsAnyItem = Math.min(minSetsAnyItem, it.sets); });
+      peakSession = Math.max(peakSession, t); rot += t;
     }
+    peakRotation = Math.max(peakRotation, rot);
   }
-  /* Thresholds raised AGAIN for audit 3.11 (ACC_SET_CAP 4->6, part of the
-     schedule-capacity fix — see the constant's own comment for the research
-     and the session-length tradeoff that picked 6 over 5 or 7). Unlike prior
-     rounds, this one touches every session, not just the days a specific
-     exercise was added to: raising the per-exposure cap lifts every ramped
-     slot's LATE-BLOCK ceiling everywhere at once. Peak day moves from
-     Bench(31, previously the lightest, explicitly guarded as "untouched") to
-     Bench(40) — Bench carries the most ramped-only, low-fixed-contribution
-     groups (front/side/rear delts, chest, back), so it absorbs the largest
-     share of the raised cap. That regression guard is retired: this pass
-     legitimately touches every day, including Bench, by design. Accepted
-     per the explicit session-budget tradeoff already made when ACC_SET_CAP
-     was chosen (see that constant's comment: cap=6 was picked specifically
-     to keep peak growth to +10 sets over the pre-3.11 number rather than the
-     +14 a full RP-ceiling cap=7 would have cost). */
-  /* AUDIT 3.13: tightened back down from 40/145 — the same-day group cap
-     (SAME_DAY_GROUP_CAP) trims back's stacked same-session volume on Bench
-     and Deadlift days, so real peak numbers dropped to 38/141. */
-  check(`no session exceeds 38 sets at peak [${totals[5].join(",")}]`, Math.max(...totals[5]) <= 38);
-  check(`weekly peak total ≤141 sets (${totals[5].reduce((a, b) => a + b, 0)})`, totals[5].reduce((a, b) => a + b, 0) <= 141);
-  check(`early-block sessions stay 15-25 sets [${totals[0].join(",")}]`, totals[0].every((t) => t >= 15 && t <= 25));
+  check(`peak accumulation session stays at or under 40 sets (measured ${peakSession})`, peakSession <= 40);
+  check(`peak rotation total stays at or under 150 sets (measured ${peakRotation})`, peakRotation <= 150);
+  check(`no accumulation exercise is ever prescribed a single working set (min ${minSetsAnyItem})`, minSetsAnyItem >= 2);
+
+  // same-day stacking really is capped
+  for (let d = 0; d < ROT; d++) {
+    const rx = prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: BLOCKS.accumulation.maxCycles - 1 } }, green);
+    const byGroup = {};
+    rx.items.forEach((it) => { if (!LIB[it.key].fixedSets) byGroup[it.volumeGroup] = (byGroup[it.volumeGroup] || 0) + it.sets; });
+    const over = Object.entries(byGroup).filter(([, v]) => v > SAME_DAY_GROUP_CAP);
+    check(`day ${d} (${rx.dayName}): no muscle exceeds the same-session ramped cap of ${SAME_DAY_GROUP_CAP}`,
+      over.length === 0, over.map(([g, v]) => `${g}=${v}`).join(","));
+  }
+  check(`no single slot is ever prescribed more than ACC_SET_CAP (${ACC_SET_CAP})`, (() => {
+    for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++)
+      for (let d = 0; d < ROT; d++)
+        if (prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: c } }, green).items.some((it) => it.sets > ACC_SET_CAP)) return false;
+    return true;
+  })());
 }
 
-console.log("\n== Feeler sanity (root cause of the old 160-violation baseline) ==");
+console.log("\n== Exercise selection loads the target at long muscle length ==");
 {
-  const f = buildFeeler(5, 8, false, "lb");
-  check("feeler at/above working weight is skipped entirely", f === null);
-  const f2 = buildFeeler(100, 8, false, "lb");
-  check("normal feeler still prescribed at ~50%", f2?.sets[0].weight === 50);
+  // The specific stretch-biased choices the design comment claims, machine-checked
+  // so a future edit can't quietly swap one out and leave the rationale stranded.
+  check("overhead triceps extension is the triceps slot (not a pressdown)",
+    (PATTERN_RAMPED_ACC.triceps || []).includes("triext") && LIB.triext.label.includes("Overhead"));
+  check("seated leg curl is the hamstring isolation (hip flexed = lengthened)",
+    LIB.legcurl.label.startsWith("Seated") && LIB.legcurl.volumeGroup === "hamstrings");
+  check("machine lat pullover carries lat work in the lengthened position",
+    inRotation.has("latpullover") && LIB.latpullover.volumeGroup === "back");
+  check("Bayesian cable curl is a biceps slot (elbow behind the torso)", inRotation.has("bayesiancurl"));
+  check("RDL is the hamstring compound", LIB.rdl.volumeGroup === "hamstrings" && inRotation.has("rdl"));
+  check("Bulgarian split squat is the unilateral quad slot", LIB.bsplit.repTier === "unilateral" && inRotation.has("bsplit"));
 }
 
-console.log("\n== bsplit load-logging convention (per-dumbbell, matched pair) ==");
+console.log("\n== Block cycling: accumulation <-> deload only ==");
 {
-  // prescribe() must expose a generic `unilateral` flag driving App.jsx's
-  // "Weight per dumbbell" field label + "lb/dumbbell" scheme text — not a
-  // bsplit-specific UI check, so any future unilateral exercise inherits it
-  // automatically.
-  check("LIB.bsplit is repTier:unilateral", LIB.bsplit.repTier === "unilateral");
   const p = fresh();
-  const items = prescribe(p, green).items;
-  const bs = items.find((i) => i.key === "bsplit");
-  check("prescribe() flags bsplit as unilateral:true", bs?.unilateral === true);
-  const nonUnilateral = items.filter((i) => i.key !== "bsplit");
-  check("every non-unilateral item is unilateral:false (no stray true)", nonUnilateral.every((i) => i.unilateral === false));
-
-  // Seeded first-session load must be sane relative to squat, across a range
-  // of starting strengths — not absurdly heavy (holding squat-sized
-  // dumbbells) or trivially light (an empty-hand set), under the per-
-  // dumbbell convention.
-  const strengthLevels = [
-    { squat: { weight: 135, reps: 5, rpe: 8 }, bench: { weight: 95, reps: 5, rpe: 8 }, deadlift: { weight: 185, reps: 5, rpe: 8 } }, // novice
-    { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, deadlift: { weight: 405, reps: 5, rpe: 8 } }, // intermediate
-    { squat: { weight: 495, reps: 5, rpe: 8 }, bench: { weight: 315, reps: 5, rpe: 8 }, deadlift: { weight: 585, reps: 5, rpe: 8 } }, // advanced
-  ];
-  for (const s of strengthLevels) {
-    const pl = freshProgram({ seeds: s, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
-    const rx = prescribe(pl, green);
-    const bsplitLoad = rx.items.find((i) => i.key === "bsplit").topLoad;
-    const squatLoad = rx.items.find((i) => i.key === "squat").topLoad;
-    const ratio = bsplitLoad / squatLoad;
-    check(`squat ${s.squat.weight}: per-dumbbell bsplit load ${bsplitLoad} lb is a sane fraction of squat top load ${squatLoad} lb (ratio ${ratio.toFixed(3)}, expect 0.10-0.30)`,
-      ratio >= 0.10 && ratio <= 0.30);
-    check(`squat ${s.squat.weight}: bsplit load is not trivially light (>=10 lb)`, bsplitLoad >= 10);
-  }
-  // no-seed fallback (base=100 reference): still a plausible light starting load
-  const pNoSeed = freshProgram({ seeds: {}, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 180 });
-  const noSeedLoad = prescribe(pNoSeed, green).items.find((i) => i.key === "bsplit").topLoad;
-  check(`no-seed fallback bsplit load (${noSeedLoad} lb) is light but non-zero`, noSeedLoad >= 5 && noSeedLoad <= 30);
+  // deload always routes back into accumulation, never into a removed block type
+  // sessionsInBlock = ROT-1 so ingest()'s increment lands on an end-of-cycle
+  // boundary (sessionsInBlock % ROT === 0), which is the only point transitions
+  // are evaluated at.
+  const deloaded = { ...p, block: { type: "deload", cycle: 1, sessionsInBlock: ROT - 1, nextAfter: "realization" },
+    fatigue: { ...p.fatigue, index: 0 } };
+  const rx = prescribe(deloaded, green);
+  const logs = rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe,
+    targetRpe: it.rpe, missedSets: 0, touched: true, backoffSetCount: it.backoffSetCount,
+    backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap }));
+  const { transition } = ingest(deloaded, logs, green);
+  check("deload transitions to accumulation even when a stale nextAfter says 'realization'",
+    transition && transition.to === "accumulation", JSON.stringify(transition));
+  check("deload prescribes materially less volume than late accumulation", (() => {
+    const dl = prescribe({ ...p, block: { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null } }, green)
+      .items.reduce((s, it) => s + it.sets, 0);
+    const acc = prescribe({ ...p, block: { ...p.block, cycle: BLOCKS.accumulation.maxCycles - 1 } }, green)
+      .items.reduce((s, it) => s + it.sets, 0);
+    return dl < acc * 0.6;
+  })());
 }
 
-console.log("\n== AUDIT 2.4: seated calf raise trains the soleus, standing pool unchanged ==");
+console.log("\n== Migration from a saved strength-era program ==");
 {
-  check("seatedcalf exists and shares the calves pool", LIB.seatedcalf?.volumeGroup === "calves");
-  check("seatedcalf is in the rotation (Deadlift day)", inRotation.has("seatedcalf"));
-  check("still exactly 3 calf slots total (1 seated + 2 standing)", PATTERN_FREQ.calves === 3);
-  const day = ROTATION.find((d) => d.name === "Deadlift");
-  check("standing calfraise is off Deadlift day (moved to seated)", !day.items.includes("calfraise"));
-  check("calfraise still trains Squat + Volume days", ROTATION.filter((d) => d.items.includes("calfraise")).length === 2);
-  // migration: an old save has no seatedcalf lift record at all
-  const old = fresh(); delete old.lifts.seatedcalf;
+  // A program as it would have been saved by the pre-rebuild engine.
+  const old = {
+    unit: "lb", goal: "hybrid", experience: "intermediate", bodyweight: 200,
+    landmarks: { quads: { label: "Quads", mev: 5, mav: 14, mrv: 18 }, hamstrings: { label: "Ham", mev: 3, mav: 6, mrv: 12 },
+      chest: { label: "Chest", mev: 5, mav: 14, mrv: 22 }, front_delts: { label: "FD", mev: 2, mav: 7, mrv: 12 },
+      back: { label: "Back", mev: 7, mav: 18, mrv: 25 }, rear_delts: { label: "RD", mev: 4, mav: 10, mrv: 16 },
+      side_delts: { label: "SD", mev: 6, mav: 12, mrv: 18 }, calves: { label: "Calves", mev: 5, mav: 14, mrv: 20 } },
+    lifts: {
+      squat: { e1rm: 400, e1rmRaw: 400, hist: [{ e: 400, raw: 400 }] },
+      bench: { e1rm: 280, e1rmRaw: 280, hist: [{ e: 280, raw: 280 }] },
+      deadlift: { e1rm: 480, e1rmRaw: 480, hist: [{ e: 480, raw: 480 }] },
+      rdl: { e1rm: 408, e1rmRaw: 408, hist: [{ e: 408, raw: 408 }] },
+      row: { e1rm: 210, e1rmRaw: 210, hist: [{ e: 210, raw: 210 }] },
+      cablerow: { e1rm: 210, e1rmRaw: 210, hist: [{ e: 210, raw: 210 }] },
+      pulldown: { e1rm: 196, e1rmRaw: 196, hist: [{ e: 196, raw: 196 }] },
+      curl: { e1rm: 98, e1rmRaw: 98, hist: [{ e: 98, raw: 98 }] },
+      inclinebench: { e1rm: 154, e1rmRaw: 154, hist: [{ e: 154, raw: 154 }] },
+      pullup: { e1rm: 240, e1rmRaw: 240, hist: [{ e: 240, raw: 240 }] },
+      legext: { e1rm: 260, e1rmRaw: 260, hist: [{ e: 260, raw: 260 }] },
+      legcurl: { e1rm: 192, e1rmRaw: 192, hist: [{ e: 192, raw: 192 }] },
+      calfraise: { e1rm: 480, e1rmRaw: 480, hist: [{ e: 480, raw: 480 }] },
+      bsplit: { e1rm: 80, e1rmRaw: 80, hist: [{ e: 80, raw: 80 }] },
+      lateralraise: { e1rm: 34, e1rmRaw: 34, hist: [{ e: 34, raw: 34 }] },
+      reversepecdeck: { e1rm: 42, e1rmRaw: 42, hist: [{ e: 42, raw: 42 }] },
+      cablefly: { e1rm: 84, e1rmRaw: 84, hist: [{ e: 84, raw: 84 }] },
+      dbshoulderpress: { e1rm: 168, e1rmRaw: 168, hist: [{ e: 168, raw: 168 }] },
+      triext: { e1rm: 126, e1rmRaw: 126, hist: [{ e: 126, raw: 126 }] },
+      shrug: { e1rm: 168, e1rmRaw: 168, hist: [{ e: 168, raw: 168 }] },
+      wristcurl: { e1rm: 42, e1rmRaw: 42, hist: [{ e: 42, raw: 42 }] },
+      cablecrunch: { e1rm: 112, e1rmRaw: 112, hist: [{ e: 112, raw: 112 }] },
+      seatedcalf: { e1rm: 240, e1rmRaw: 240, hist: [{ e: 240, raw: 240 }] },
+    },
+    cycleIndex: 2, sessionCount: 40, lastSessionAt: null, avgSessionGapDays: 1.8, sessionsSinceLayoff: null,
+    fatigue: { index: 0.2, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
+    block: { type: "intensification", cycle: 2, sessionsInBlock: 8, nextAfter: "realization" },
+    blockHistory: [], landmarkAdjustments: {}, landmarkLog: [], stallStreaks: {}, stallNotices: {},
+  };
   const m = migrateProgram(old);
-  check("migrateProgram backfills seatedcalf for an old-schema save", m.lifts.seatedcalf?.e1rm > 0);
-  let crashed = false;
-  try { const p = structuredClone(m); p.cycleIndex = 2; prescribe(p, green); } catch { crashed = true; }
-  check("prescribe() runs Deadlift day on the migrated program without crashing", !crashed);
-}
-
-console.log("\n== AUDIT 2.5: leg extension restores rectus femoris work ==");
-{
-  check("legext is back in the rotation (Squat day)", inRotation.has("legext"));
-  check("legext stays a fixedSets accessory, not ramped", LIB.legext.fixedSets === 3);
-  check("legext participates in the quads pool alongside bsplit/squat", LIB.legext.volumeGroup === "quads");
-  const before = fixedWeeklySets("hamstrings", "accumulation"); // unrelated pool, sanity control
-  const quadsFixed = fixedWeeklySets("quads", "accumulation");
-  check(`quads fixedWeeklySets rose to include legext (${quadsFixed} >= 11)`, quadsFixed >= 11);
-  check("unrelated pool (hamstrings) unaffected", before === fixedWeeklySets("hamstrings", "accumulation"));
-  const old = fresh(); delete old.lifts.legext;
-  const m = migrateProgram(old);
-  check("migrateProgram backfills legext for an old-schema save", m.lifts.legext?.e1rm > 0);
-}
-
-console.log("\n== AUDIT 2.2: triceps reach parity with biceps (2 slots each) ==");
-{
-  const triSlots = ROTATION.reduce((n, d) => n + d.items.filter((k) => k === "triext").length, 0);
-  const bicSlots = ROTATION.reduce((n, d) => n + d.items.filter((k) => k === "curl").length, 0);
-  check(`triceps now has ${triSlots} slot(s), matching biceps' ${bicSlots}`, triSlots === bicSlots && triSlots === 2);
-  const day = ROTATION.find((d) => d.volumeDay);
-  check("Volume day carries the new triceps slot alongside its existing curl", day.items.includes("triext") && day.items.includes("curl"));
+  check("a program saved mid-intensification lands in a fresh accumulation block",
+    m.block.type === "accumulation" && m.block.cycle === 0);
+  check("every rotation exercise has a lift record after migration",
+    [...inRotation].every((k) => m.lifts[k]?.e1rm > 0), [...inRotation].filter((k) => !(m.lifts[k]?.e1rm > 0)).join(","));
+  check("T-Bar Row seeds off the old Barbell Row, not off a pressing lift or the 100 fallback",
+    Math.abs(m.lifts.tbarrow.e1rm - 210) < 1, String(m.lifts.tbarrow.e1rm));
+  check("lat pullover seeds off the old Lat Pulldown", Math.abs(m.lifts.latpullover.e1rm - 196 * 0.85) < 1);
+  check("both curls seed off the old Incline DB Curl", m.lifts.bayesiancurl.e1rm === 98 && Math.abs(m.lifts.preachercurl.e1rm - 98 * 1.1) < 1);
+  check("dip seeds off the old incline press", Math.abs(m.lifts.dip.e1rm - 154 * 1.35) < 1);
+  check("biceps and triceps landmarks are backfilled for a program that predates them",
+    m.landmarks.biceps?.mav > 0 && m.landmarks.triceps?.mav > 0);
+  check("retired lifts keep their records (history still resolves)", !!m.lifts.row && !!m.lifts.deadlift);
+  check("the migrated program prescribes without crashing on every rotation day", (() => {
+    for (let d = 0; d < ROT; d++) { const r = prescribe({ ...m, cycleIndex: d }, green); if (!r.items.length) return false; }
+    return true;
+  })());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+if (fail) process.exit(1);

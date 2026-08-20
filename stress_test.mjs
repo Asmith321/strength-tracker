@@ -105,8 +105,8 @@ function checkPrescribe(rep, session, program, rx) {
        assisted bodyweight lift carries the same negative assistance magnitude. */
     if (bad(it.backoffLoad) || (it.backoffLoad < 0 && !(it.bodyweight && it.assistanceNeeded)))
       rep.add("backoffLoad-bad", session, `${tag} backoffLoad=${it.backoffLoad}`);
-    // topSetCount + backoffSetCount === sets (for mains)
-    if (it.isMain && it.topSetCount + it.backoffSetCount !== it.sets)
+    // every exercise is straight sets now: topSetCount === sets, backoffSetCount === 0
+    if (it.topSetCount + it.backoffSetCount !== it.sets)
       rep.add("set-split-mismatch", session, `${tag} top=${it.topSetCount} backoff=${it.backoffSetCount} sets=${it.sets}`);
 
     // barbell load must resolve to a valid plate combination
@@ -250,7 +250,10 @@ function makeLog(rng, it, program, session, forces) {
   }
 
   // ---- forced overrides for injected scenarios ----
-  if (forces.plateau && it.isMain) { topReps = it.reps; topRpe = it.rpe; topWeight = it.topLoad; } // freeze -> flat e1RM
+  // freeze the compound (multi-joint) lifts -> flat e1RM. Was keyed on isMain
+  // before the hypertrophy rebuild removed main lifts; compounds are what the
+  // e1RM trend and the fatigue channel now read, so they are what must freeze.
+  if (forces.plateau && it.repTier === "compound") { topReps = it.reps; topRpe = it.rpe; topWeight = it.topLoad; }
   if (forces.forceNegPullup && it.key === "pullup") topWeight = -randint(rng, 30, 90);             // force assistance path
 
   return { key: it.key, topWeight, topReps, topRpe, targetRpe: it.rpe, missedSets,
@@ -259,9 +262,9 @@ function makeLog(rng, it, program, session, forces) {
 
 /* ============================ THE LONGITUDINAL SIM ============================ */
 const SEEDS = {
-  beginner:     { squat: { weight: 135, reps: 5, rpe: 8 }, bench: { weight: 95,  reps: 5, rpe: 8 }, deadlift: { weight: 185, reps: 5, rpe: 8 } },
-  intermediate: { squat: { weight: 275, reps: 5, rpe: 8 }, bench: { weight: 185, reps: 5, rpe: 8 }, deadlift: { weight: 345, reps: 5, rpe: 8 } },
-  advanced:     { squat: { weight: 425, reps: 3, rpe: 8 }, bench: { weight: 315, reps: 3, rpe: 8 }, deadlift: { weight: 525, reps: 3, rpe: 8 } },
+  beginner:     { squat: { weight: 135, reps: 5, rpe: 8 }, bench: { weight: 95,  reps: 5, rpe: 8 }, rdl: { weight: 115, reps: 8, rpe: 8 }, tbarrow: { weight: 80,  reps: 8, rpe: 8 } },
+  intermediate: { squat: { weight: 275, reps: 5, rpe: 8 }, bench: { weight: 185, reps: 5, rpe: 8 }, rdl: { weight: 225, reps: 8, rpe: 8 }, tbarrow: { weight: 155, reps: 8, rpe: 8 } },
+  advanced:     { squat: { weight: 425, reps: 3, rpe: 8 }, bench: { weight: 315, reps: 3, rpe: 8 }, rdl: { weight: 350, reps: 8, rpe: 8 }, tbarrow: { weight: 245, reps: 8, rpe: 8 } },
 };
 const START_BW = { beginner: 160, intermediate: 185, advanced: 215 };
 
@@ -273,7 +276,7 @@ function runLongSim(tier, seed, N = 450) {
 
   let program;
   try {
-    program = freshProgram({ seeds: SEEDS[tier], experience: tier, unit: "lb", goal: "hybrid", bodyweight: START_BW[tier] });
+    program = freshProgram({ seeds: SEEDS[tier], experience: tier, unit: "lb", goal: "hypertrophy", bodyweight: START_BW[tier] });
   } catch (e) { rep.add("freshProgram-crash", 0, e.message); restoreClock(); return { rep }; }
   program.barWeight = 45;
 
@@ -363,7 +366,7 @@ function runMonotonicGrowth(tier, seed, N = 500) {
   const rep = makeReport(`growth/${tier}`, seed);
   useSimClock();
   CLOCK = Date.UTC(2024, 0, 1);
-  let program = freshProgram({ seeds: SEEDS[tier], experience: tier, unit: "lb", goal: "hybrid", bodyweight: START_BW[tier] });
+  let program = freshProgram({ seeds: SEEDS[tier], experience: tier, unit: "lb", goal: "hypertrophy", bodyweight: START_BW[tier] });
   program.barWeight = 45;
   const lmRange = {};
   for (const p of Object.keys(program.landmarks)) lmRange[p] = { mev: [Infinity, -Infinity], mrv: [Infinity, -Infinity] };
@@ -394,8 +397,8 @@ function runMonotonicGrowth(tier, seed, N = 500) {
 function stressExtremes(seed) {
   const rep = makeReport("extremes", seed);
   useSimClock(); CLOCK = Date.UTC(2024, 0, 1);
-  const base = freshProgram({ seeds: SEEDS.intermediate, experience: "intermediate", unit: "lb", goal: "hybrid", bodyweight: 185 });
-  const phases = ["accumulation", "intensification", "deload", "realization"];
+  const base = freshProgram({ seeds: SEEDS.intermediate, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 185 });
+  const phases = ["accumulation", "deload"];
   let checked = 0;
   for (const bar of [35, 45]) {
     for (const e1rm of [1, 5, 12, 33, 47, 95, 135, 225, 405, 605, 1005, 2005, 3000]) {
@@ -432,12 +435,12 @@ function stressPullup(seed) {
   // sweep bodyweight vs pull-up system strength to hit all three branches
   for (const bw of [120, 160, 200, 260, 320]) {
     for (const sysMult of [0.5, 0.7, 0.85, 1.0, 1.3, 1.8]) {
-      const p = freshProgram({ seeds: SEEDS.beginner, experience: "beginner", unit: "lb", goal: "hybrid", bodyweight: bw });
+      const p = freshProgram({ seeds: SEEDS.beginner, experience: "beginner", unit: "lb", goal: "hypertrophy", bodyweight: bw });
       p.barWeight = 45;
       p.cycleIndex = puDay;
       p.lifts.pullup.e1rm = bw * sysMult;      // pull-up system load relative to bodyweight
       p.lifts.pullup.e1rmRaw = bw * sysMult;
-      for (const phase of ["accumulation", "intensification", "deload", "realization"]) {
+      for (const phase of ["accumulation", "deload"]) {
         p.block = { type: phase, cycle: 1, sessionsInBlock: ROT, nextAfter: null };
         const rx = prescribe(p, { trainingReadiness: 65 });
         checkPrescribe(rep, 0, p, rx);

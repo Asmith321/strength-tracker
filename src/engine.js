@@ -9,15 +9,34 @@
    The LLM only narrates + breaks genuinely borderline transitions (runCoach,
    which stays in App.jsx since it's I/O — a fetch call — not engine math).
 
+   THIS IS A HYPERTROPHY PROGRAM. It was originally a strength program with
+   hypertrophy accessories bolted on (squat/bench/deadlift mains, top single
+   plus backoffs, blocks that peaked into a 1-2 rep re-test). The athlete asked
+   for the most hypertrophic program buildable from a fixed list of approved
+   exercises, with the mandatory big-three skeleton removed — so the main-lift
+   role, the volume day, the intensification block and the realization re-test
+   are all gone. Every exercise is now a ramped accessory chosen for stimulus.
+   See the comments on ROTATION, PATTERNS, ACC_REP_TIERS and BLOCKS for the
+   reasoning and the evidence behind each piece.
+
    • Load = autoregulated RPE → estimated-1RM (Zourdos/Helms RPE chart),
      not fixed %1RM or fixed +5lb increments. e1RM is re-read every session
      from weight×reps×RPE, so load floats with daily readiness + adaptation.
-   • Volume periodized between user-set landmarks (MEV→MAV→MRV weekly hard
-     sets per movement pattern). Accessories carry ramping hypertrophy volume;
-     main lifts stay moderate (strength has stronger diminishing returns).
-   • Block periodization without a peak: accumulation ⇄ intensification, deload
-     between, brief realization re-test. Block length auto-detected from e1RM
-     trend + RPE-creep + readiness suppression.
+     Isolation work additionally runs double progression (hold load, climb
+     reps, then step load) because one plate is a huge jump at those loads.
+   • Volume periodized between landmarks (MEV/MAV/MRV weekly hard sets per
+     MUSCLE). A block ramps from MEV to MAV and deloads; MRV is the recovery
+     ceiling that bounds how far MAV may be auto-tuned, NOT a target — ramping
+     ten muscle groups to their individual MRVs simultaneously exceeds what any
+     athlete recovers from. All three landmarks re-fit every block from the
+     athlete's own growth trend and fatigue.
+   • Effort periodized alongside volume: ~3 reps in reserve at the start of a
+     block to ~0-1 at the end, with multi-joint work capped short of true
+     failure. Proximity to failure has a real dose-response for hypertrophy;
+     absolute failure on compounds costs more fatigue than it returns.
+   • Block periodization without a peak: accumulation → deload → accumulation.
+     Block length auto-detected from growth trend + RPE-creep + readiness
+     suppression rather than a fixed calendar.
    • Readiness (Garmin) is a SECONDARY modifier on daily load + deload timing —
      lifting evidence is preliminary, so it never drives the program alone.
    ════════════════════════════════════════════════════════════════════════ */
@@ -219,7 +238,14 @@ function liftNormSlope(lift) { return liftSlopeInfo(lift).g; }
    length cost than the rest of this correction took on. */
 const PATTERNS = {
   quads:       { label: "Quads",               mev: 5,  mav: 14, mrv: 18 },
-  hamstrings:  { label: "Hamstrings / Post. chain", mev: 3, mav: 6, mrv: 12 },
+  /* HYPERTROPHY REBUILD: raised from 3/6/12. The old numbers were sized around
+     a program where conventional Deadlift was a main lift contributing 4 fixed
+     hamstring sets per rotation; with the strength skeleton removed (see
+     ROTATION) every hamstring set is now ramped accessory work, and RDL +
+     2x seated leg curl is a genuine hypertrophy allocation rather than
+     "whatever is left after the deadlift". Stays inside RP's published
+     hamstring range (MEV 2-4, MAV 2-8, MRV 8-14). */
+  hamstrings:  { label: "Hamstrings / Post. chain", mev: 4, mav: 8, mrv: 14 },
   chest:       { label: "Chest",               mev: 5,  mav: 14, mrv: 22 },
   /* Front delts get indirect stimulus from chest/triceps pressing already
      covered elsewhere in the program — RP's published landmark table gives
@@ -246,9 +272,39 @@ const PATTERNS = {
      (especially with barbell OHP dropped from the rotation), so their direct
      numbers sit higher. migrateProgram() resets an old combined pool to these
      canonical values — old tuned numbers described a different quantity. */
-  rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 10, mrv: 16 },
-  side_delts:  { label: "Side Delts",          mev: 6,  mav: 12, mrv: 18 },
+  /* MAV trimmed 10 -> 9 so that schedule capacity covers it at EVERY experience
+     tier, not just at intermediate: rear delts have 2 ramped slots (capacity 12
+     sets/rotation), and an advanced athlete's 1.25x MAV scaling turned 10 into
+     13 — a target the rotation could never deliver, which is precisely the
+     capacity-vs-landmark mismatch AUDIT 3.6/3.8 spent two passes containing.
+     9 is comfortably inside RP's published rear-delt MAV range (4-12) and the
+     direct number is deliberately modest anyway, because rear delts also take
+     heavy secondary work from all four ramped back slots (T-bar row, pull-up,
+     2x lat pullover) — the same indirect-stimulus reasoning as front_delts. */
+  rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 9,  mrv: 16 },
+  /* HYPERTROPHY REBUILD: MAV/MRV raised from 12/18. RP's published side-delt
+     range is by far the highest of any group (MEV 6-8, MAV 8-24, MRV 24-30) —
+     side delts get essentially no indirect stimulus and tolerate very high
+     direct volume. The old ceiling sat deliberately low because the rotation
+     only had 2 lateral-raise slots to deliver it; this rebuild carries 3, so
+     the landmark no longer has to pretend the capacity isn't there. Still
+     below RP's top end, which the schedule genuinely cannot reach. */
+  side_delts:  { label: "Side Delts",          mev: 6,  mav: 14, mrv: 22 },
   calves:      { label: "Calves",              mev: 5,  mav: 14, mrv: 20 },
+  /* HYPERTROPHY REBUILD: arms are promoted from untracked fixedSets pools to
+     full landmark-tracked pools. In the strength-skeleton program a curl was a
+     3-set afterthought bolted onto a day built around a barbell main; in a
+     program whose entire purpose is hypertrophy, biceps and triceps are
+     primary targets with dedicated slots that should ramp MEV->MRV like every
+     other muscle. Numbers are RP's published arm landmarks (biceps MEV 8,
+     MAV 14-20, MRV 26; triceps MEV 6, MAV 10-14, MRV 18) pulled down at the
+     MEV end: RP sets those direct-set targets for programs where arms are
+     trained largely in isolation, whereas here biceps sit behind 4 ramped
+     back slots and triceps behind 4 ramped pressing slots (bench, incline,
+     dip, overhead press) — the same indirect-stimulus reasoning the
+     front_delts comment above spells out. */
+  biceps:      { label: "Biceps",              mev: 6,  mav: 14, mrv: 20 },
+  triceps:     { label: "Triceps",             mev: 5,  mav: 12, mrv: 18 },
 };
 
 /* ---- experience-based landmark seeding ----
@@ -341,102 +397,159 @@ function landmarksForExperience(tier) {
    + an e1RM re-seed for the incoming variant — a full pass of its own, since
    every variant needs seeds, rep-tier review, and hist continuity handling. */
 const LIB = {
-  squat:        { label: "Back Squat",                    role: "main", barbell: true, volumeGroup: "quads" },
-  bench:        { label: "Bench Press",                   role: "main", barbell: true, volumeGroup: "chest" },
-  deadlift:     { label: "Deadlift",                      role: "main", barbell: true, volumeGroup: "hamstrings" },
+  /* ---- ramped compound accessories (multi-joint, the program's heavy work) ---- */
+  squat:        { label: "Back Squat",                     role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
   rdl:          { label: "Romanian Deadlift",              role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
-  frontsquat:   { label: "Front Squat",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
-  /* out of rotation by athlete preference — DB Shoulder Press carries the
-     front-delt slot; kept defined for History labels/old e1RM records */
-  ohp:          { label: "Overhead Press",                role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "front_delts" },
-  row:          { label: "Barbell Row",                   role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "back" },
-  cablerow:     { label: "Seated Cable Row",               role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
-  pulldown:     { label: "Lat Pulldown",                  role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
-  pullup:       { label: "Pull-Up / Chin-Up",             role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
-  curl:         { label: "Incline Dumbbell Curl",         role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "biceps" },
-  triext:       { label: "Cable Overhead Triceps Extension", role: "acc", barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "triceps" },
-  lateralraise: { label: "Cable Lateral Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
+  bench:        { label: "Bench Press (BB/DB)",            role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
+  inclinebench: { label: "Incline Bench Press (BB/DB)",    role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "chest" },
+  /* Machine dip: chest is the primary mover at the depth this is trained to,
+     with the triceps long head loaded heavily as a secondary. volumeGroup is
+     the PRIMARY mover by the engine's convention, so this counts to chest —
+     the triceps landmark's lowered MEV (see PATTERNS.triceps) is where that
+     secondary work is accounted for. */
+  dip:          { label: "Dip Machine",                    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest", increment: 10 },
+  dbshoulderpress: { label: "DB Overhead Press",           role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
+  tbarrow:      { label: "T-Bar Row",                      role: "acc",  barbell: false, repTier: "compound", volumeGroup: "back", increment: 10 },
+  pullup:       { label: "Pull-Up / Lat Pulldown",         role: "acc",  barbell: false, bodyweight: true, repTier: "compound", volumeGroup: "back" },
   /* LOGGING CONVENTION for this and any future repTier:"unilateral" dumbbell
      exercise: log the weight of ONE dumbbell, assuming a matched pair (one in
      each hand) — the convention lifters already use mentally for split
      squats/lunges, and the one App.jsx's "Weight per dumbbell" field label
      (driven by prescribe()'s `unilateral` flag, not a bsplit-specific check)
      assumes. See ACC_E1RM_MULT.bsplit for how the seed ratio maps to this. */
-  bsplit:       { label: "Bulgarian Split Squat",         role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
-  calfraise:    { label: "Standing Calf Raise",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
-  inclinebench: { label: "Incline Dumbbell Press (~30°)", role: "acc",  barbell: false, repTier: "compound", volumeGroup: "chest" },
-  legcurl:      { label: "Seated Leg Curl",               role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "hamstrings" },
-  /* Restored to the rotation (audit 2.5): every remaining quad exercise
-     (squat x2, front squat, Bulgarian split squat) is simultaneous hip+knee
-     extension. Rectus femoris — the one biarticular quad head — is
-     under-stimulated by that pattern specifically; Kassiano et al. (JSCR)
-     found leg extension produced substantially greater RF growth at all
-     three measured sites than squat (proximal +11.4% vs +2.0%, mid +12.3%
-     vs +5.7%, distal +17.5% vs +7.9%), corroborated directionally by
-     Zabaleta-Korta 2021, Kubo 2019, Ema 2016 — squat still wins on distal VL
-     growth and squat strength, so this adds knee-extension work rather than
-     replacing anything. Caveat: the Kassiano data is 8 weeks in untrained
-     women; treat the magnitude as suggestive, not definitive. fixedSets, not
-     ramped — same treatment as legcurl. */
-  legext:       { label: "Leg Extension",                 role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "quads" },
+  bsplit:       { label: "Bulgarian Split Squat",          role: "acc",  barbell: false, repTier: "unilateral", volumeGroup: "quads" },
+
+  /* ---- ramped isolation accessories ----
+     Several of these are chosen specifically because they load their target at
+     LONG muscle length, which is the exercise-selection variable with the
+     clearest recent evidence behind it (see the stretch-mediated hypertrophy
+     note above ROTATION): overhead triceps extension, seated leg curl, lat
+     pullover, Bayesian curl, and the deep positions of RDL/Bulgarian split
+     squat above. */
+  cablefly:     { label: "Seated Cable Fly",               role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest", increment: 10 },
+  latpullover:  { label: "Machine Lat Pullover",           role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "back", increment: 10 },
+  lateralraise: { label: "Lateral Raise (Machine/DB)",     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
   reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
-  wristcurl:    { label: "Dumbbell Wrist Curl",           role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
-  cablecrunch:  { label: "Cable Crunch",                  role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
-  shrug:        { label: "Dumbbell Shrug",                role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
-  cablefly:     { label: "Cable Fly",                     role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "chest" },
-  dbshoulderpress: { label: "Dumbbell Shoulder Press",    role: "acc",  barbell: false, repTier: "compound", volumeGroup: "front_delts" },
-  /* Seated variant trains the soleus (knee flexed), the larger contributor
-     to plantarflexion at depth — the rotation previously ran three Standing
-     Calf Raise slots (knee extended, gastrocnemius-biased) and zero seated,
-     leaving soleus untrained (audit 2.4). Same volumeGroup as calfraise, so
-     it's a swap inside the existing landmark pool, not a new one — no volume
-     math changes. */
-  seatedcalf:   { label: "Seated Calf Raise",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
+  triext:       { label: "Overhead Cable Triceps Ext.",    role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "triceps" },
+  bayesiancurl: { label: "Bayesian Cable Curl",            role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "biceps", increment: 2.5 },
+  preachercurl: { label: "Preacher Curl",                  role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "biceps", increment: 2.5 },
+  /* Promoted from fixedSets to ramped (was a flat 3 sets). With no squat/
+     deadlift main lift left to carry quad and hamstring volume, these are the
+     pools' primary drivers, not garnish — they ramp MEV->MRV like everything
+     else. Seated leg curl specifically: hip flexion puts the hamstrings at
+     long length, and Maeo et al. found substantially greater hamstring growth
+     seated vs. lying at matched volume. */
+  legcurl:      { label: "Seated Leg Curl",                role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "hamstrings", increment: 10 },
+  /* Leg extension is the one quad exercise that loads rectus femoris (the
+     biarticular head) at all — every other quad slot here is simultaneous
+     hip+knee extension, which under-stimulates RF specifically. Kassiano et
+     al. (JSCR) found leg extension produced substantially greater RF growth
+     than squat at all three measured sites (proximal +11.4% vs +2.0%, mid
+     +12.3% vs +5.7%, distal +17.5% vs +7.9%); squat still wins on distal VL,
+     so the program runs both. Caveat: 8 weeks, untrained women — treat the
+     magnitude as suggestive. */
+  legext:       { label: "Leg Extension",                  role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "quads", increment: 10 },
+  calfraise:    { label: "Standing Calf Raise",            role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "calves" },
+
+  /* ---- fixedSets accessories ----
+     Flat set count, excluded from the landmark pools. These three back muscles
+     that (a) receive very heavy indirect work from the ramped slots above and
+     (b) have exactly one approved exercise each, so there is no second slot for
+     a ramp to distribute volume across even if one were warranted. */
+  shrug:        { label: "DB Shrug",                       role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "traps" },
+  wristcurl:    { label: "Wrist Curl (BB/DB)",             role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "forearms" },
+  cablecrunch:  { label: "Cable Crunch",                   role: "acc",  barbell: false, fixedSets: 3, repTier: "isolation", volumeGroup: "abs" },
+
+  /* ---- defined but OUT OF ROTATION ----
+     Kept so History labels and previously-logged e1RM records still resolve,
+     and so migrateProgram can seed them if they ever return. They contribute
+     nothing to volume math (fixedWeeklySets/PATTERN_FREQ/PATTERN_RAMPED_ACC all
+     read the ROTATION, not LIB). Both are on the athlete's approved list;
+     see the ROTATION comment for why neither carries a slot. */
+  frontsquat:   { label: "Front Squat",                    role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "quads" },
+  deadlift:     { label: "Deadlift",                       role: "acc",  barbell: true,  repTier: "compound", volumeGroup: "hamstrings" },
 };
 
 /* ---- rotation: which lifts each training day trains ----
-   volumeDay: main lifts on this day get a differentiated second exposure —
-   higher reps, RPE-capped (see VOLUME_DAY_* in prescribe) — instead of
-   repeating the week's first heavy top set.
-   Session-balance note: the previous layout peaked Bench day at 31 sets while
-   Squat day sat at 24. Three moves rebalance late-block days to ~28/28/30/23
-   with no net weekly growth: OHP dropped (athlete preference), its D1 space
-   taken by the second lateral-raise slot (side delts lose OHP's indirect work
-   and have no other direct driver); triceps isolation moved D1→D0 (trained
-   fresh instead of pre-fatigued 8th on pressing day — triceps already get
-   heavy indirect work from every D1 press); Bulgarian Split Squat takes leg
-   extension's D0 slot as a ramped unilateral quad slot.
-   AUDIT 2.2/2.4/2.5 additions (peak days now ~31/28/30/26, weekly peak ~115 —
-   see the raised thresholds in program_review_tests.mjs's session-budget
-   section for why that's an accepted cost, not an oversight): legext rejoins
-   D0 for rectus femoris work the all-simultaneous-extension quad slots miss;
-   D2's Standing Calf Raise becomes Seated (soleus vs. gastrocnemius — the
-   pool is unchanged, still 3 calf slots, just one seated); D3 gains a second
-   triceps slot so triceps (was 1 slot) reaches parity with biceps (2 curl
-   slots), a 2:1 split the original review flagged with no stated rationale.
-   AUDIT 3.11: D3 also gains a second RDL slot (hamstrings' only ramped
-   accessory previously appeared once per rotation, the lowest exposure count
-   of any group — PATTERN_FREQ.hamstrings was 1). Research-verified RP
-   guidance recommends 2-3 sessions/week for hamstrings specifically, and this
-   program's schedule-capacity fix (see ACC_SET_CAP) can't reach that any
-   other way for a group with only one ramped slot to begin with — piling
-   more sets onto a single weekly RDL exposure runs into the same per-session
-   diminishing-returns ceiling the capacity fix is itself respecting. Placed
-   on the Volume day next to squat rather than on Deadlift day: Volume day is
-   already this rotation's designated "second exposure" day for the two other
-   main-lift-driven groups (quads via squat, chest via bench), so this follows
-   the same pattern rather than inventing a new one. */
+   HYPERTROPHY REBUILD. The previous rotation was a strength program with
+   accessories attached: three barbell main lifts (squat/bench/deadlift) with
+   top-single-plus-backoff structure, block periodization that peaked into a
+   1-2 rep re-test, and hypertrophy work filling whatever room was left. The
+   athlete asked for the most hypertrophic program buildable from a fixed list
+   of approved exercises, with the mandatory squat/bench/deadlift skeleton
+   removed. That is what this is — every slot is now a ramped accessory chosen
+   for stimulus, not for carrying a strength peak.
+
+   SHAPE: 4 days, each pairing one upper half with one lower half, so every
+   muscle gets exactly 2-3 exposures per rotation:
+     D0 Push · Quads A   D1 Pull · Hinge A   D2 Push · Quads B   D3 Pull · Hinge B
+   The obvious alternative — 2 upper days and 2 lower days — was rejected after
+   counting the approved list: 15 of its 23 exercises are upper-body, so an
+   upper/lower split concentrates ~2/3 of the program into half the sessions
+   (measured at ~49 sets on an upper day against ~20 on a lower one). Splitting
+   each day across both halves balances session length AND gets chest and back
+   to 2 exposures per rotation instead of 1 — the sole reason frequency matters
+   for hypertrophy, given that frequency is not independently anabolic when
+   weekly volume is equated (Schoenfeld/Grgic meta-analyses) but per-SESSION
+   volume does hit diminishing returns (~11 fractional sets/muscle; Robinson,
+   Pelland, Zourdos et al.). Frequency here is a volume-distribution tool, not
+   a stimulus in its own right. Same reason SAME_DAY_GROUP_CAP exists.
+
+   EXERCISE SELECTION is biased toward loading at LONG muscle length wherever
+   the approved list offers the choice, the one exercise-selection variable
+   with clear recent evidence attached: overhead cable triceps extension over
+   any pressdown (Maeo et al. 2022 — ~40% greater triceps growth, long head
+   loaded overhead), seated leg curl over lying (Maeo et al. — hip flexion
+   lengthens the hamstring), machine lat pullover, Bayesian cable curl, plus
+   the deep positions of RDL and Bulgarian split squat. A 2025 systematic
+   review found longer-muscle-length training produced greater hypertrophy in
+   7 of 8 included studies.
+
+   TWO APPROVED EXERCISES CARRY NO SLOT, both deliberately:
+     • Deadlift — dropped. It is a poor hypertrophy tool per unit of fatigue:
+       enormous systemic and lower-back cost, grip-limited, and no single
+       muscle spends much time under tension at long length. RDL delivers the
+       hamstring stimulus with a fraction of the recovery debt, and the back
+       work is better served by T-bar row / pull-up / pullover. This is the
+       one place the rebuild removes something the athlete listed; it is on
+       the list and stays in LIB, so re-adding it is a one-line change.
+     • Front Squat — redundant here. Back squat, Bulgarian split squat and leg
+       extension already give quads 4 ramped slots (24 sets/rotation capacity
+       against an MRV of 18); a fifth quad slot would displace volume from a
+       muscle that still needs it. Kept in LIB as a ready back-squat variant.
+
+   volumeDay is gone with the main lifts — it existed to give a barbell main a
+   differentiated second weekly exposure, and every exercise here now runs the
+   same straight-set prescription every time it appears.
+
+   SLOT BUDGET (ramped slots per rotation x ACC_SET_CAP=6 = capacity, vs the
+   intermediate landmark it has to reach — every group clears its MAV, and the
+   four biggest clear or nearly clear MRV):
+     chest 4 -> 24 (MRV 22)     back 4 -> 24 (MRV 25)    quads 4 -> 24 (MRV 18)
+     hamstrings 3 -> 18 (14)    side_delts 3 -> 18 (22)  biceps 3 -> 18 (20)
+     calves 3 -> 18 (20)        front_delts 2 -> 12 (12) rear_delts 2 -> 12 (16)
+     triceps 2 -> 12 (MAV 12)
+   Groups short of MRV (side/rear delts, biceps, triceps, calves) are all
+   either indirect-stimulus-heavy or limited by having one approved exercise;
+   this is the same deliberate stance the front_delts/rear_delts notes on
+   PATTERNS describe, not an oversight.
+
+   ORDER WITHIN A DAY: compounds before isolation for the same muscle, and no
+   isolation exercise that pre-fatigues a later compound's weak link (e.g.
+   curls never precede a row). The only index-sensitive logic is the
+   earlierPrimed warmup check, which keys off volumeGroup. */
 const ROTATION = [
-  { name: "Squat",            items: ["squat", "rdl", "bsplit", "legcurl", "legext", "calfraise", "triext", "wristcurl", "cablecrunch"] },
-  { name: "Bench",            items: ["bench", "cablerow", "pullup", "inclinebench", "dbshoulderpress", "reversepecdeck", "lateralraise"] },
-  /* row precedes curl: Barbell Row is a compound pull that depends on the
-     elbow flexors as a link in the chain, so training biceps to a hard RPE
-     first pre-fatigues the weakest link and caps the row before the lats do.
-     Order within a day is otherwise free — the only index-sensitive logic is
-     the earlierPrimed warmup check, which keys off volumeGroup (pulldown
-     already primes 'back' ahead of row either way). */
-  { name: "Deadlift",         items: ["deadlift", "frontsquat", "pulldown", "row", "curl", "shrug", "seatedcalf", "reversepecdeck"] },
-  { name: "Squat+Bench Vol.", volumeDay: true, items: ["squat", "rdl", "bench", "curl", "triext", "lateralraise", "cablefly", "calfraise"] },
+  { name: "Push · Quads A", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "squat", "legext", "calfraise", "cablecrunch"] },
+  { name: "Pull · Hinge A", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "rdl", "legcurl", "calfraise", "shrug"] },
+  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "lateralraise", "triext", "bsplit", "legext", "calfraise", "cablecrunch"] },
+  /* triext appears here as well as on both push days: with only one approved
+     triceps exercise, 2 slots forced 6 sets of the same movement into a single
+     session to reach the triceps MAV of 12 — past the point where additional
+     sets of one exercise in one session still buy anything. A third exposure
+     splits the same weekly volume 4/4/4. Landing it on a pull day is not a
+     mismatch: this day already carries lateral raises, and triceps are fully
+     recovered here precisely because they were not the day's pressing work. */
+  { name: "Pull · Hinge B", items: ["pullup", "latpullover", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "legcurl", "lateralraise", "wristcurl"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -448,7 +561,7 @@ const ROT = ROTATION.length;
 const PATTERN_FREQ = (() => {
   const f = {};
   ROTATION.forEach((d) => d.items.forEach((k) => {
-    if (LIB[k].role === "main" || LIB[k].fixedSets) return;
+    if (LIB[k].fixedSets) return;
     const p = LIB[k].volumeGroup; f[p] = (f[p] || 0) + 1;
   }));
   return f;
@@ -474,6 +587,16 @@ const PATTERN_FREQ = (() => {
 const ACC_SET_CAP = 6;
 /* ---- fixedSets accessories still shrink with block volume tier + readiness ---- */
 const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
+/* Fewest sets a RAMPED slot may be prescribed, by block volume tier. Two in
+   accumulation, because a single working set of an exercise is not a
+   prescription any coach would write — it is a warm-up with extra steps, and
+   with 3-4 slots sharing a pool the MEV end of the ramp lands there by
+   arithmetic (chest MEV 5 across 4 slots rounds to 1 apiece). Flooring at 2
+   overshoots MEV slightly in the block's opening cycle, which is harmless in
+   the direction that matters: MEV is a MINIMUM, and the ramp is climbing away
+   from it immediately. Deload keeps a floor of 1 — that block's whole job is
+   to be small, and one set there is a genuine movement-maintenance dose. */
+const RAMPED_SET_FLOOR = { ramp: 2, mev: 2, half: 1 };
 
 /* ---- full-muscle volume accounting ----
    Landmark MEV/MAV/MRV are RP-style FULL-MUSCLE weekly hard-set counts, so
@@ -489,17 +612,22 @@ const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
    was pinned flat from cycle 0 and the atVolCeiling transition could
    mathematically never fire. */
 
-/* Weekly sets a group receives from sources that do NOT ramp: main-lift work
-   (BLOCKS[bt].mainSets per rotation slot) and fixedSets accessories (scaled by
-   the block's volume tier). Green-readiness nominal, same as weeklyTarget. */
+/* Weekly sets a group receives from sources that do NOT ramp: fixedSets
+   accessories only (scaled by the block's volume tier). Green-readiness
+   nominal, same as weeklyTarget. Since the hypertrophy rebuild removed the
+   main lifts, the only groups with a non-zero fixed contribution are the three
+   fixedSets pools (traps/forearms/abs), and those aren't landmark-tracked — so
+   in practice this returns 0 for every landmark group and the ramp carries the
+   whole target. Kept general rather than inlined as 0: fixedSets is still a
+   supported LIB shape, and a future fixedSets accessory on a tracked pool must
+   not silently double-count. */
 function fixedWeeklySets(group, blockType) {
   const cfg = BLOCKS[blockType];
   let total = 0;
   ROTATION.forEach((d) => d.items.forEach((k) => {
     const L = LIB[k];
     if (L.volumeGroup !== group) return;
-    if (L.role === "main") total += cfg.mainSets;
-    else if (L.fixedSets) total += Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel]));
+    if (L.fixedSets) total += Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel]));
   }));
   return total;
 }
@@ -514,72 +642,94 @@ function maxDeliverable(group, blockType = "accumulation") {
   return fixedWeeklySets(group, blockType) + ACC_SET_CAP * (PATTERN_FREQ[group] || 0);
 }
 
-/* ---- per-tier accessory rep + RPE targets ----
-   Both reps and RPE are direct per-tier lookups. Compound + unilateral
-   accessories run 6-8 reps (athlete's stated range — heavier, strength-
-   supporting loading for multi-joint work). Isolation (single-joint, safest
-   near failure) stays 10-12, unchanged.
-   AUDIT 2.1(a): compound/unilateral reps now hold at 8 in EVERY block,
-   including intensification — previously intensification dropped them to
-   6/7, stacking a rep cut on top of the block's existing intensity levers
-   (mains to 2-3 reps, RPE ceiling +1, volLevel -> mev). For a hypertrophy-
-   relevant accessory that's a third simultaneous cut for no added benefit:
-   Pelland et al. (cited in engine-research-summary.md) found strength has
-   far stronger diminishing returns to added volume than hypertrophy does, so
-   intensification's strength-block emphasis has little reason to also
-   compress accessory hypertrophy stimulus. Intensity still rises here — the
-   RPE column climbs (7.5 -> 8, 8 -> 8.5) exactly as before — it now shows up
-   as heavier loads at the same rep count instead of both fewer reps AND a
-   higher RPE. VOL_SCALE's intensification set-count cut (see fixedWeeklySets)
-   is untouched: that's option (b) from the same audit item, and it reads
-   into the volume-landmark math this pass was told not to touch.
-   Isolation effort RAMPS across the block instead of sitting at RPE 10 from
-   day one: rpe is the cycle-0 base, rpeStep advances it per cycle, rpeCap
-   bounds it — accumulation 8 → 10 over 4 cycles, intensification 9 → 10 over
-   2. Failure is earned in the late cycles the same way main-lift RPE climbs,
-   matching the double-progression load rule (see prescribe). */
+/* ---- per-tier rep + RPE targets ----
+   Since the hypertrophy rebuild there is no main-lift path: EVERY exercise is
+   prescribed from this table.
+
+   REPS. Load is close to irrelevant for hypertrophy across roughly 5-30 reps
+   provided sets are taken near failure — meta-analyses spanning ~3 to ~35 reps
+   find effectively identical growth (heavy 8.3% vs light 7.0%, a gap smaller
+   than chance). Load matters for STRENGTH, which this program is no longer
+   built around. So rep targets here are chosen for practicality inside that
+   flat zone, not because a "hypertrophy rep range" exists: compounds at 8
+   (heavy enough to progress load in meaningful steps, light enough that a hard
+   set isn't a maximal-strain event), unilateral at 10 (stability-limited —
+   load stops being the limiter first), isolation at 12 (single-joint work is
+   the safest place to train to true failure, and the double-progression rule
+   in prescribe() needs rep headroom to climb through).
+
+   EFFORT ramps across the mesocycle, all three tiers, which is the other half
+   of the RP-style progression the volume ramp implements: rpe is the cycle-0
+   base, rpeStep advances it per cycle, rpeCap bounds it. Accumulation opens at
+   RPE 7 (~3 reps in reserve) and finishes at RPE 9-10 (~0-1 RIR). This is
+   directly supported: proximity to failure has a meaningful dose-response for
+   hypertrophy specifically (unlike strength, which is largely insensitive to
+   it), with growth improving as RIR falls toward 0 and degrading sharply past
+   ~5 RIR (Robinson et al. 2024 meta-regression). Starting the block at 3 RIR
+   rather than at failure is what makes the volume ramp survivable — you cannot
+   add sets every cycle AND be at 0 RIR from cycle 0.
+   Previously only isolation ramped effort; compounds sat flat at 7.5, which
+   left the heaviest exercises at ~2.5 RIR for an entire block. */
 const ACC_REP_TIERS = {
-  accumulation:    { compound: { reps: 8, rpe: 7.5 }, unilateral: { reps: 8, rpe: 8 },   isolation: { reps: 12, rpe: 8, rpeStep: 0.5, rpeCap: 10 } },
-  intensification: { compound: { reps: 8, rpe: 8 },   unilateral: { reps: 8, rpe: 8.5 }, isolation: { reps: 12, rpe: 9, rpeStep: 0.5, rpeCap: 10 } },
-  deload:          { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
-  realization:     { compound: { reps: 8, rpe: 6 },   unilateral: { reps: 8, rpe: 6.5 }, isolation: { reps: 10, rpe: 7 } },
+  accumulation: {
+    /* Compounds cap at RPE 9 (~1 RIR) and never at 10. Taking multi-joint work
+       to true failure costs far more systemic fatigue per unit of stimulus than
+       it returns, and the same meta-analytic evidence that pushes RIR toward 0
+       also finds absolute failure unnecessary — 1-2 RIR matches training to
+       failure for growth in trained lifters. Isolation caps at 9.5 (~0-1 RIR):
+       single-joint work is where near-failure training is cheap and safe. The
+       previous table ran isolation to a hard RPE 10 from cycle 4 onward, which
+       put EVERY set of EVERY isolation exercise at true failure for the back
+       third of a block — that is the fatigue the deload then has to clear, paid
+       for with stimulus the last half-rep never delivered. */
+    compound:   { reps: 8,  rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
+    unilateral: { reps: 10, rpe: 7,   rpeStep: 0.5, rpeCap: 9 },
+    isolation:  { reps: 12, rpe: 7.5, rpeStep: 0.5, rpeCap: 9.5 },
+  },
+  deload: {
+    compound:   { reps: 8,  rpe: 6 },
+    unilateral: { reps: 10, rpe: 6 },
+    isolation:  { reps: 12, rpe: 6.5 },
+  },
 };
 
-/* ---- block configurations ---- */
+/* ---- block configurations ----
+   HYPERTROPHY REBUILD: the old four-block strength cycle (accumulation →
+   deload → intensification → deload → realization) is gone. Intensification
+   (mains at 2-3 reps, RPE ceiling 9.5, volume cut to MEV) and realization (a
+   1-2 rep max re-test) are peaking constructs — they exist to express strength
+   on a competition lift, and both spend weeks at volumes below what drives
+   growth. Neither has a defensible role in a program whose only goal is
+   hypertrophy, and there is no evidence that interrupting accumulation to test
+   a max improves growth.
+   What remains is the RP hypertrophy mesocycle and nothing else:
+     accumulation (MEV → MRV over 3-6 cycles, RPE 7 → 9-10) → deload → repeat.
+   Volume ramps, effort ramps, then a single low-volume low-effort cycle
+   dissipates fatigue and the next block starts over from MEV — at landmarks
+   the auto-tune has re-fitted from the block that just happened (see
+   adjustLandmarks). backoffDrop/backoffRpeCap are retained on each block only
+   because ingest()'s backoff-drift fatigue channel and the logging UI still
+   read them; with no main lifts nothing is prescribed a backoff set today
+   (backoffSetCount is always 0), so they are inert but harmless. */
 const BLOCKS = {
   accumulation: {
     label: "Accumulation", emphasis: "volume",
-    mainReps: { squat: 5, bench: 5, deadlift: 4 }, mainSets: 4,
-    rpeBase: 7.0, rpeStep: 0.4, rpeCap: 8.5,
-    backoffDrop: 0.06, backoffRpeCap: 8,
+    backoffRpeCap: 9,
     volLevel: "ramp",
     minCycles: 3, maxCycles: 6,
   },
-  intensification: {
-    label: "Intensification", emphasis: "intensity",
-    mainReps: { squat: 3, bench: 3, deadlift: 2 }, mainSets: 4,
-    rpeBase: 8.5, rpeStep: 0.3, rpeCap: 9.5,
-    backoffDrop: 0.08, backoffRpeCap: 8.5,
-    volLevel: "mev",
-    minCycles: 2, maxCycles: 4,
-  },
   deload: {
     label: "Deload", emphasis: "recovery",
-    mainReps: { squat: 4, bench: 4, deadlift: 3 }, mainSets: 2,
-    rpeBase: 6, rpeStep: 0, rpeCap: 6,
-    backoffDrop: 0.1, backoffRpeCap: 6,
-    volLevel: "half",
-    minCycles: 1, maxCycles: 1,
-  },
-  realization: {
-    label: "Re-test", emphasis: "test",
-    mainReps: { squat: 2, bench: 2, deadlift: 1 }, mainSets: 1,
-    rpeBase: 9, rpeStep: 0.5, rpeCap: 9.5,
-    backoffDrop: 0, backoffRpeCap: 9,
+    backoffRpeCap: 6,
     volLevel: "half",
     minCycles: 1, maxCycles: 1,
   },
 };
+/* Block types that existed only in the old strength cycle. migrateProgram()
+   maps a saved program sitting in one of these onto a fresh accumulation
+   block; this set is what it tests against, and what History rendering falls
+   back on for already-logged sessions stamped with an old block name. */
+const LEGACY_BLOCK_TYPES = { intensification: "Intensification", realization: "Re-test" };
 
 /* Weekly TOTAL hard-set target for a landmark group this cycle (full-muscle:
    mains + fixedSets + ramped accessories all count — see the accounting note
@@ -596,7 +746,28 @@ const BLOCKS = {
    opposite. This return value stays a PER-ROTATION figure — scaled UP or DOWN
    so that dividing it back by the same freqScale reconstructs the true weekly
    rate (see rampedSlotSets/deliveredWeekly below, and the ceilingHit/
-   adjustLandmarks call sites that already do that division). */
+   adjustLandmarks call sites that already do that division).
+
+   RAMP ENDPOINT IS MAV, NOT MRV (changed in the hypertrophy rebuild). RP's
+   textbook mesocycle ramps a muscle from MEV toward its MRV, and that is what
+   this used to do — but that model is written per-muscle, for a program where
+   a handful of muscles are being pushed at a time. This program tracks TEN
+   landmark groups and ramps all of them on the same schedule, and the sum of
+   ten individual MRVs is far more than any athlete systemically recovers from:
+   MRV is defined as the volume a muscle can *barely* recover from, so hitting
+   ten of them simultaneously is not ten muscles at their limit, it is one
+   athlete well past theirs. Measured on this rotation, an MRV endpoint
+   delivered 175 sets per rotation and a 47-set peak session; an MAV endpoint
+   delivers a peak in the 120s with every group still inside the 10-20
+   sets/week band where the volume dose-response evidence is strongest, and MAV
+   is in any case the landmark RP itself defines as "the volume that produces
+   the best gains over time" — MRV is a recovery boundary, not a target.
+   MRV keeps three real jobs: it bounds how far MAV can be auto-tuned upward
+   (see adjustLandmarks), it feeds the schedule-capacity math, and it is what
+   the athlete sees as the ceiling on the Status screen.
+   Progression across mesocycles therefore comes from MAV drifting upward
+   block-over-block under the auto-tune, not from the ramp reaching further
+   into a fixed range. */
 function weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale = 1) {
   const lm = landmarks[group]; // group is a landmark key (volumeGroup, e.g. 'back')
   const cfg = BLOCKS[blockType];
@@ -606,7 +777,7 @@ function weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale = 1) 
   else {
     const span = Math.max(1, cfg.maxCycles - 1);
     const frac = Math.min(1, cycleInBlock / span);
-    target = lm.mev + (lm.mrv - lm.mev) * frac;
+    target = lm.mev + (lm.mav - lm.mev) * frac;
   }
   return Math.round(target * freqScale);
 }
@@ -628,7 +799,8 @@ function rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale = 1
   const wk = weeklyTarget(group, blockType, cycleInBlock, landmarks, freqScale);
   const freq = PATTERN_FREQ[group] || 1;
   const residual = wk - fixedWeeklySets(group, blockType);
-  return Math.max(1, Math.min(ACC_SET_CAP, Math.round(residual / freq)));
+  const floor = RAMPED_SET_FLOOR[BLOCKS[blockType].volLevel] ?? 1;
+  return Math.max(floor, Math.min(ACC_SET_CAP, Math.round(residual / freq)));
 }
 
 /* Total weekly sets the schedule actually delivers for `group` this cycle
@@ -646,10 +818,14 @@ function deliveredWeekly(group, blockType, cycleInBlock, landmarks, freqScale = 
     + rampedSlotSets(group, blockType, cycleInBlock, landmarks, freqScale) * (PATTERN_FREQ[group] || 0);
 }
 
-/* The volume ceiling a block can actually reach for `group`: its MRV, unless
-   the schedule saturates first. */
+/* The volume ceiling a block can actually reach for `group`: the top of its
+   ramp, unless the schedule saturates first.
+   Since the hypertrophy rebuild the ramp tops out at MAV, not MRV (see
+   weeklyTarget) — so MAV is what a block can actually reach, and using MRV here
+   would report a ceiling the ramp is deliberately never aiming for. MRV remains
+   the recovery bound on how far MAV may be auto-tuned. */
 function effectiveCeiling(group, blockType, landmarks) {
-  return Math.min(landmarks[group].mrv, maxDeliverable(group, blockType));
+  return Math.min(landmarks[group].mav, maxDeliverable(group, blockType));
 }
 
 /* ---- frequency-aware volume comparison ----
@@ -723,9 +899,17 @@ const GROWTH_POS = 0.001;    // normalized slope above this = still progressing 
    before anything says so. Observation only: see the stall-streak block in
    adjustLandmarks — it never touches exercise selection, MEV/MRV, or e1RM. */
 const STALL_STREAK_THRESHOLD = 3;
-/* landmark group → main lift that carries its growth signal (quads/hamstrings/
-   chest are driven by their main lift's e1RM; other pools read accessory slopes) */
-const PATTERN_MAIN = { quads: "squat", hamstrings: "deadlift", chest: "bench" };
+/* landmark group → the lift that carries its growth signal, for pools where a
+   single exercise is unambiguously the driver. Empty since the hypertrophy
+   rebuild: with no main lifts, no pool has one exercise that dominates it — a
+   4-slot chest pool spread across bench/incline/dip/fly has no more reason to
+   read its growth off bench than off incline. EVERY pool now reads the
+   precision-weighted pool of its ramped accessories' slopes (see
+   patternGrowth), which was already the code path for the 5 pools that never
+   had a main lift. Kept as an empty map rather than deleted so patternGrowth's
+   two-branch shape stays intact and a future single-driver pool is a one-line
+   re-add, not a re-plumb. */
+const PATTERN_MAIN = {};
 /* volumeGroup → its landmark-ramped accessories (role=acc, not fixedSets), for
    the pools that have no main lift to read a slope from. Restricted to
    exercises actually IN the rotation — LIB entries kept only for history
@@ -811,9 +995,28 @@ function adjustLandmarks(program) {
        a rate, so the comparison needs both sides in the same units. */
     const capA = maxDeliverable(p, "accumulation"); // per-rotation
     const capW = capA / freqScale;                  // per-calendar-week, comparable to mev/mav/mrv
-    const reachedCeiling =
-      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale
-        >= Math.min(lm.mrv, capW);
+    /* reachedCeiling asks "was this group's volume limited by something other
+       than the plan?" — the confound that makes flat growth uninformative.
+       Its meaning had to be re-derived for the hypertrophy rebuild, not just
+       re-pointed at a different landmark:
+         • Under the old MRV-endpoint ramp it meant "delivered >= min(mrv,
+           capW)" — we gave this group literally everything available, so a
+           stall here says nothing about the exercise.
+         • Under the MAV endpoint, reaching the ramp's top is the NORMAL end
+           state of every block for every group. Testing delivered >= min(mav,
+           capW) would therefore be true almost always, and — worse — it would
+           become arithmetically identical to volumeAtMav below, so
+           `volumeAtMav && !reachedCeiling` would cancel to a constant false and
+           the stall notice could never fire again. (That degenerate case is
+           exactly what the AUDIT 3.8 comment on volumeAtMav warned about.)
+       So the surviving confound is specifically SCHEDULE CAPACITY: the group
+       wanted its MAV and the rotation could not deliver it. Stalling while
+       receiving the full planned MAV is not a confound at all — it is precisely
+       the evidence the stall notice exists to surface, and this rebuild makes
+       that case reachable where it previously was not. */
+    const deliveredPrev =
+      deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale;
+    const reachedCeiling = capW < lm.mav && deliveredPrev >= capW;
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
 
@@ -888,7 +1091,7 @@ function adjustLandmarks(program) {
       // else: volume/fatigue/ceiling confounded — leave the streak untouched
     }
 
-    let dMev = 0, dMrv = 0, signal = null;
+    let dMev = 0, dMrv = 0, dMav = 0, signal = null;
     if (grew && fatigueComfortable) {
       /* Raises are gated to what the schedule can deliver: drifting MRV above
          maxDeliverable would grow a stored number no prescription can ever
@@ -911,19 +1114,35 @@ function adjustLandmarks(program) {
       const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capW) - 2 && lm.mev + 1 <= lm.mav;
       dMev = canRaiseMev ? 1 : 0;
       dMrv = canRaiseMrv ? 1 : 0;
-      if (dMev || dMrv) signal = canRaiseMrv ? "growth strong, fatigue in check" : "growth strong — schedule at capacity, MEV only";
+      /* MAV drifts too, and this is now the auto-tune's most important output:
+         since the hypertrophy rebuild MAV — not MRV — is where the accumulation
+         ramp tops out (see weeklyTarget), so if MAV never moved, the volume the
+         athlete actually trains would be identical in block 20 as in block 1 no
+         matter how well they grew or recovered. Progressive overload across
+         mesocycles IS this line. Gated the same way the other two are: a raise
+         must stay strictly inside the recovery ceiling (MRV) and inside what
+         the schedule can actually deliver, so MAV can never become a target no
+         prescription can reach. */
+      dMav = (lm.mav + 1 <= mrvAfter - 1 && lm.mav + 1 <= capW) ? 1 : 0;
+      if (dMev || dMrv || dMav) signal = canRaiseMrv ? "growth strong, fatigue in check" : "growth strong — schedule at capacity, MEV only";
     }
-    else if (stalledEarly && fatigueSpikedEarly) { dMrv = -1; signal = "stalled early with fatigue spike"; }
-    if (!dMev && !dMrv) return;
+    else if (stalledEarly && fatigueSpikedEarly) {
+      /* Fatigue spiked before the block ran its length AND growth stalled: pull
+         the recovery ceiling down, and pull the training target down with it —
+         dropping MRV alone would leave the athlete training at exactly the same
+         MAV that just failed them. */
+      dMrv = -1; dMav = -1; signal = "stalled early with fatigue spike";
+    }
+    if (!dMev && !dMrv && !dMav) return;
 
     const before = { mev: lm.mev, mav: lm.mav, mrv: lm.mrv };
     lm.mev = Math.max(2, lm.mev + dMev);           // floor MEV at 2
     lm.mrv = Math.max(lm.mev + 2, lm.mrv + dMrv);  // keep MRV ≥2 above MEV (range can't collapse)
-    lm.mav = Math.min(lm.mrv - 1, Math.max(lm.mev + 1, lm.mav));
+    lm.mav = Math.min(lm.mrv - 1, Math.max(lm.mev + 1, lm.mav + dMav));
     // report the deltas actually realized after the safety clamps
-    const rMev = lm.mev - before.mev, rMrv = lm.mrv - before.mrv;
-    if (!rMev && !rMrv) return;
-    adjustments[p] = { before, after: { mev: lm.mev, mav: lm.mav, mrv: lm.mrv }, dMev: rMev, dMrv: rMrv, signal, at: Date.now() };
+    const rMev = lm.mev - before.mev, rMrv = lm.mrv - before.mrv, rMav = lm.mav - before.mav;
+    if (!rMev && !rMrv && !rMav) return;
+    adjustments[p] = { before, after: { mev: lm.mev, mav: lm.mav, mrv: lm.mrv }, dMev: rMev, dMrv: rMrv, dMav: rMav, signal, at: Date.now() };
   });
   return { landmarks, adjustments, stallStreaks, stallNotices };
 }
@@ -982,6 +1201,21 @@ const READINESS_SET_MULT = { green: 1, amber: 0.85, red: 0.6 };
    it counts once it has; conflating them into one shared literal is exactly
    the kind of accidental coupling this split is meant to prevent. */
 const READINESS_FATIGUE_WEIGHT = 0.3;
+/* Divisor that maps the rpeCreep channel onto 0..1 in the fatigue index: the
+   value of `rpeCreep` a thoroughly bad training week actually produces.
+   It is NOT a free tuning knob — it has to track what feeds the channel, which
+   is `rpeMiss + 0.5 * backoffDrift` (see ingest). It was 1.5 when both terms
+   were live: ~1.0 of top-set RPE overshoot plus ~1.0 of backoff drift at half
+   weight. The hypertrophy rebuild prescribes straight sets everywhere, so
+   nothing is ever assigned a backoff set, backoffDrift is structurally 0, and
+   the input tops out at ~1.0. Leaving the divisor at 1.5 silently capped the
+   channel at 2/3 of its intended contribution and made FATIGUE_SPIKE (0.7)
+   unreachable — measured: a deliberately terrible week (every set +1 RPE over
+   target, readiness 45, 40% of exercises missing reps) peaked at index 0.592,
+   so the fatigue-driven deload could never fire. At 1.0 that same week reaches
+   0.745 and a healthy one still sits near 0.06.
+   MUST be revisited if any exercise is ever prescribed backoff sets again. */
+const RPE_CREEP_FULL_SCALE = 1.0;
 /* How fast fatigue.readSupp itself moves toward each new daily reading —
    distinct from READINESS_FATIGUE_WEIGHT (how much the resulting value counts
    once smoothed). Both are 0.3 today; that's a coincidence of the initial
@@ -1110,12 +1344,6 @@ const FEELER_LOAD_FLOOR_KG = 45;
    should compress, and no group currently stacks a fixedSets item on top of
    already-capped ramped volume for the same muscle on the same day. */
 const SAME_DAY_GROUP_CAP = 10;
-/* Volume-day main-lift override (see ROTATION[3].volumeDay): the second weekly
-   squat/bench exposure runs higher-rep and RPE-capped instead of duplicating
-   the week's first heavy top set — rep bump on the block's base reps, effort
-   capped even when the block's RPE ramp has climbed past it. */
-const VOLUME_DAY_REP_BUMP = 3;
-const VOLUME_DAY_RPE_CAP = 8;
 /* Double-progression rep floor for isolation accessories: load holds while
    reps climb from here to the tier's rep target; hitting the target earns one
    load step and resets reps (see the isolation branch in prescribe). */
@@ -1193,30 +1421,28 @@ function prescribe(program, readiness) {
   const inReturnWindow = gapDays > LAYOFF_THRESHOLD_DAYS
     || (program.sessionsSinceLayoff != null && program.sessionsSinceLayoff < 2);
   const setMult = READINESS_SET_MULT[band] * (inReturnWindow ? RETURN_SET_MULT : 1);
-  const rpeTopBase = clampRpe(Math.min(cfg.rpeCap, cfg.rpeBase + cfg.rpeStep * cyc) + rpeAdj);
-  const rpeTop = inReturnWindow ? Math.min(rpeTopBase, RETURN_RPE_CAP) : rpeTopBase;
 
-  const inTraining = program.block.type === "accumulation" || program.block.type === "intensification";
+  const inTraining = program.block.type === "accumulation";
   const barWeight = program.barWeight || 45;
   const items = day.items.map((key, idx) => {
     const L = LIB[key];
     const lift = program.lifts[key];
-    const isMain = L.role === "main";
     const accTarget = ACC_REP_TIERS[program.block.type][L.repTier];
-    /* isolation effort ramps across the block (rpeStep/rpeCap); other tiers
-       are flat — see ACC_REP_TIERS */
+    /* effort ramps across an accumulation block for every tier (rpeStep/
+       rpeCap); deload is flat — see ACC_REP_TIERS */
     const accRpeBase = accTarget && accTarget.rpeStep
       ? Math.min(accTarget.rpeCap, accTarget.rpe + accTarget.rpeStep * cyc)
       : accTarget?.rpe;
-    const volMain = isMain && day.volumeDay;
-    let reps = isMain ? (cfg.mainReps[key] || 4) + (volMain ? VOLUME_DAY_REP_BUMP : 0) : accTarget.reps;
-    const rpe = isMain
-      ? (volMain ? clampRpe(Math.min(rpeTop, VOLUME_DAY_RPE_CAP)) : rpeTop)
-      : clampRpe(accRpeBase + rpeAdj);
+    let reps = accTarget.reps;
+    /* The post-layoff effort cap applies to the accessory RPE directly now
+       that no main-lift RPE path exists to carry it (it used to be folded into
+       rpeTop). Same intent: a comeback session is not the place to be at 1 RIR
+       on the block's ramped effort target. */
+    const rpeBase = clampRpe(accRpeBase + rpeAdj);
+    const rpe = inReturnWindow ? Math.min(rpeBase, RETURN_RPE_CAP) : rpeBase;
 
     let sets;
-    if (isMain) sets = Math.max(1, Math.round(cfg.mainSets * setMult));
-    else if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
+    if (L.fixedSets) sets = Math.max(1, Math.round(L.fixedSets * VOL_SCALE[cfg.volLevel] * setMult));
     else {
       /* ramped pool accessory: prescribe the residual share (full-muscle
          accounting, frequency-corrected — see rampedSlotSets); readiness
@@ -1224,12 +1450,15 @@ function prescribe(program, readiness) {
       const vg = L.volumeGroup; // shared landmark pool key (e.g. 'back')
       sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale) * setMult));
     }
-    /* Top single + backoff sets are the same prescribed `sets` total, split
-       explicitly rather than left as an ambiguous "sets × reps · back-off
-       weight" label (see ExerciseCard). Only meaningful for mains, which are
-       the only lifts with a distinct backoff weight at all. */
-    const topSetCount = isMain ? 1 : sets;
-    const backoffSetCount = isMain ? Math.max(0, sets - 1) : 0;
+    /* Straight sets: one load, one rep target, one RPE target, `sets` times.
+       The top-single-plus-backoff split existed for the barbell main lifts and
+       went with them — for hypertrophy there is no reason to make the first set
+       structurally different from the rest, and RP-style mesocycles prescribe
+       straight sets throughout. backoffSetCount stays in the item shape (always
+       0) because ingest()'s backoff-drift fatigue channel and the logging UI
+       both branch on it. */
+    const topSetCount = sets;
+    const backoffSetCount = 0;
 
     const effE1rm = lift.e1rm * layoffFactor;
     const step = stepFor(L, unit); // audit 2.7: per-exercise override, defaults to the unit-based 5/2.5 step
@@ -1311,8 +1540,7 @@ function prescribe(program, readiness) {
     } else {
       topLoad = loadFor(effE1rm, reps, rpe, unit, step);
     }
-    const boRaw = isMain ? effE1rm * rpePct(reps, rpe) * (1 - cfg.backoffDrop) : topLoad;
-    const backoffLoad = isMain ? (unit === "kg" ? Math.round(boRaw / 2.5) * 2.5 : Math.round(boRaw / 5) * 5) : topLoad;
+    const backoffLoad = topLoad; // straight sets — no distinct backoff load
 
     /* An earlier exercise this session already primed this one's target
        muscle iff it shares the same volumeGroup (the single canonical
@@ -1335,8 +1563,8 @@ function prescribe(program, readiness) {
       const ramp = type === "full" ? FULL_RAMP : type === "short" ? SHORT_RAMP : MINIMAL_RAMP;
       const rampSets = buildRamp(topLoad, ramp, unit, barWeight);
       if (rampSets) warmup = { type, sets: rampSets };
-    } else if (!isMain && (L.repTier === "compound" || L.repTier === "unilateral"
-                           || topLoad >= (unit === "kg" ? FEELER_LOAD_FLOOR_KG : FEELER_LOAD_FLOOR_LB))) {
+    } else if (L.repTier === "compound" || L.repTier === "unilateral"
+               || topLoad >= (unit === "kg" ? FEELER_LOAD_FLOOR_KG : FEELER_LOAD_FLOOR_LB)) {
       /* unilateral/compound accessories earn a feeler because at 6-8 reps a
          working set is no longer light enough to be its own warmup; isolation
          accessories earn one too once the load itself crosses the floor
@@ -1345,7 +1573,7 @@ function prescribe(program, readiness) {
     }
     // isolation non-barbell accessories below the load floor: no warmup (working sets are light enough)
 
-    return { key, label: L.label, barbell: L.barbell, isMain, volumeGroup: L.volumeGroup,
+    return { key, label: L.label, barbell: L.barbell, repTier: L.repTier, volumeGroup: L.volumeGroup,
       bodyweight: !!L.bodyweight, unilateral: L.repTier === "unilateral", assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup, dpMode };
@@ -1359,7 +1587,7 @@ function prescribe(program, readiness) {
      to land on one day. A no-op for every group that doesn't stack. */
   const rampedByGroup = {};
   items.forEach((it, idx) => {
-    if (it.isMain || LIB[it.key].fixedSets) return;
+    if (LIB[it.key].fixedSets) return;
     (rampedByGroup[it.volumeGroup] = rampedByGroup[it.volumeGroup] || []).push(idx);
   });
   Object.values(rampedByGroup).forEach((idxs) => {
@@ -1367,10 +1595,28 @@ function prescribe(program, readiness) {
     const total = idxs.reduce((s, i) => s + items[i].sets, 0);
     if (total <= SAME_DAY_GROUP_CAP) return;
     const scale = SAME_DAY_GROUP_CAP / total;
-    idxs.forEach((i) => { items[i] = { ...items[i], sets: Math.max(1, Math.round(items[i].sets * scale)) }; });
+    /* topSetCount must be re-derived here, not left at whatever it was when the
+       item was built: it is set to `sets` up in the map above, so scaling `sets`
+       down without it silently breaks the topSetCount + backoffSetCount === sets
+       invariant the logging UI and stress test both rely on (caught by the
+       stress test as set-split-mismatch, e.g. top=6 backoff=0 sets=5). */
+    idxs.forEach((i) => {
+      const sets = Math.max(1, Math.round(items[i].sets * scale));
+      items[i] = { ...items[i], sets, topSetCount: sets };
+    });
   });
 
-  return { dayName: day.name, block: cfg.label, cycle: cyc, rpeTop, band, rpeAdj, setMult, items,
+  /* blockEffortRpe reports the block's ramped effort target for this cycle at
+     the compound tier — what `rpeTop` used to report for the main lifts. It is
+     a display/diagnostic figure (Status screen, readiness_analysis.mjs), not an
+     input to any prescription: each item's own RPE is computed per repTier
+     above. Compound is the representative tier because it is the one whose
+     effort target the athlete feels as "how hard is this block right now". */
+  const compoundTier = ACC_REP_TIERS[program.block.type].compound;
+  const blockEffortRpe = clampRpe((compoundTier.rpeStep
+    ? Math.min(compoundTier.rpeCap, compoundTier.rpe + compoundTier.rpeStep * cyc)
+    : compoundTier.rpe) + rpeAdj);
+  return { dayName: day.name, block: cfg.label, cycle: cyc, blockEffortRpe, band, rpeAdj, setMult, items,
     layoff: layoffFactor < 1 ? { days: Math.round(gapDays), factor: +layoffFactor.toFixed(3) } : null };
 }
 
@@ -1431,7 +1677,13 @@ function ingest(program, logs, readiness) {
       : e1rmFrom(g.topWeight, g.topReps, g.topRpe);
     if (!reading) return;
     lift.e1rmRaw = reading;
-    const alpha = LIB[g.key].role === "main" ? 0.34 : 0.20;
+    /* Faster EWMA for multi-joint work: a compound's logged e1RM is a less
+       noisy estimate of real capability than an isolation lift's (heavier
+       absolute loads, coarser rep ranges, less sensitive to a single
+       cue/setup change), so its readings deserve more weight. Was keyed on
+       role==="main" before the hypertrophy rebuild removed that role; the
+       0.34/0.20 split itself is unchanged. */
+    const alpha = LIB[g.key].repTier === "compound" ? 0.34 : 0.20;
     lift.e1rm = ewma(lift.e1rm, reading, alpha);
     /* hist entries tag the block type (`b`) so liftNormSlope can scope its
        window to the current block and skip cross-boundary rep-range steps */
@@ -1522,13 +1774,27 @@ function ingest(program, logs, readiness) {
      also feed — can be returned below for readiness_analysis.mjs to compare
      against the readiness band/adjustment that was actually applied. null
      means "no evidence this session", not "zero overshoot". */
-  const mainLogs = logs.filter((g) => LIB[g.key]?.role === "main");
+  /* Which logs carry the RPE-creep fatigue signal. This used to be the three
+     barbell main lifts; with those gone it is the multi-joint work — compound
+     and unilateral tiers. Rationale is unchanged from when it was "mains":
+     these are the exercises whose logged RPE overshooting its target actually
+     means systemic fatigue, because they are heavy enough and stable enough
+     that a bad day shows up as effort creep rather than as noise. Isolation
+     work is deliberately excluded: it is prescribed by double progression at
+     RPE 8-10 and is MEANT to run to failure late in a block, so its RPE
+     routinely sits at target-or-above for reasons that are the program working
+     as designed, not fatigue. Folding it in would make fatigue.index climb
+     every accumulation block by construction. */
+  const anchorLogs = logs.filter((g) => {
+    const t = LIB[g.key]?.repTier;
+    return t === "compound" || t === "unilateral";
+  });
   /* AUDIT 3.1: a log missing either RPE (older saved record, or any caller
      that omits targetRpe) yields Math.max(0, x - undefined) = NaN, which the
      EWMA then makes a PERMANENT NaN in fatigue.rpeCreep and fatigue.index.
      Same "no evidence" treatment as an untouched log: drop it from the mean
      rather than letting it poison the channel. */
-  const rpeLogs = mainLogs.filter((g) => g.touched !== false
+  const rpeLogs = anchorLogs.filter((g) => g.touched !== false
     && Number.isFinite(g.topRpe) && Number.isFinite(g.targetRpe));
   let rpeMiss = null, backoffDrift = null;
   if (rpeLogs.length) {
@@ -1546,7 +1812,8 @@ function ingest(program, logs, readiness) {
     next.fatigue.backoffDrift = ewma(next.fatigue.backoffDrift ?? 0, backoffDrift, 0.4);
     next.fatigue.rpeCreep = ewma(next.fatigue.rpeCreep, rpeMiss + 0.5 * backoffDrift, 0.4);
   } else {
-    /* AUDIT 3.4: no touched main logs — nothing supersedes the stored creep,
+    /* AUDIT 3.4: no touched compound/unilateral logs — nothing supersedes the
+       stored creep,
        so time-based recovery applies here INSTEAD of the EWMA, not on top of
        it. This is the only place the pre-EWMA decay used to be justified. */
     next.fatigue.rpeCreep *= (1 - recoveryFactor);
@@ -1567,7 +1834,8 @@ function ingest(program, logs, readiness) {
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
 
   const fatigueIndex = Math.max(0, Math.min(1,
-    0.5 * Math.min(1, next.fatigue.rpeCreep / 1.5) + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
+    0.5 * Math.min(1, next.fatigue.rpeCreep / RPE_CREEP_FULL_SCALE)
+    + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + 0.2 * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
   /* Block-level strength trend: main-lift slopes, PRECISION-WEIGHTED by the
@@ -1621,7 +1889,11 @@ function ingest(program, logs, readiness) {
        unscaled internally (only its own /freqScale below, unchanged). */
     const freqScale = weeklyFreqScale(next.avgSessionGapDays);
     const ceilingHit = (p) => {
-      const ceilTrue = Math.min(next.landmarks[p].mrv, maxDeliverable(p, t) / freqScale);
+      /* The ramp tops out at MAV since the hypertrophy rebuild (see
+         weeklyTarget), so MAV — not MRV — is the volume ceiling a block can
+         actually reach, and comparing delivered volume against MRV here would
+         test against a number the ramp deliberately never aims for. */
+      const ceilTrue = Math.min(next.landmarks[p].mav, maxDeliverable(p, t) / freqScale);
       /* AUDIT 3.6: schedule saturation well below the landmark range is a
          CAPACITY limit, not evidence the athlete accumulated volume
          tolerance — ending the block on it reports "weekly volume reached its
@@ -1629,15 +1901,22 @@ function ingest(program, logs, readiness) {
          hamstrings delivers 6.1 sets/week flat from cycle 0 against an MEV of
          6 and an MRV of 16, and fired this trigger from cycle 2, so every
          accumulation block terminated at minCycles with that reason. Require
-         the reachable ceiling to be at least MAV before it counts; otherwise
-         the block ends on its time/fatigue/stall triggers, which is the
-         honest answer. */
+         the reachable ceiling to be the ramp's full intended top (MAV) before
+         it counts — i.e. the group really did train everything the block
+         planned for it, rather than the schedule running out of slots
+         underneath it; otherwise the block ends on its time/fatigue/stall
+         triggers, which is the honest answer. */
       if (ceilTrue < next.landmarks[p].mav) return false;
       if (deliveredWeekly(p, t, justDone, next.landmarks, freqScale) / freqScale < ceilTrue) return false;
       if (ceilTrue >= next.landmarks[p].mrv) return true;
       return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks, freqScale) / freqScale >= ceilTrue;
     };
-    const atVolCeiling = ["quads", "chest", "hamstrings"].some(ceilingHit);
+    /* The pools whose saturation is treated as "this block has delivered all
+       the volume it can". 'back' joins the original three since the rebuild:
+       it carries 4 ramped slots and the highest MRV of any group, so it is now
+       one of the pools most likely to legitimately saturate first, and leaving
+       it out would let a block run on past its real ceiling. */
+    const atVolCeiling = ["quads", "chest", "hamstrings", "back"].some(ceilingHit);
     const highFatigue = fatigueIndex >= 0.7;
     const grayFatigue = fatigueIndex >= 0.55 && fatigueIndex < 0.7;
     const stalled = e1rmSlope <= 0.001;
@@ -1650,32 +1929,24 @@ function ingest(program, logs, readiness) {
             : highFatigue ? "fatigue index high" : "e1RM progress stalled",
           borderline: grayFatigue && !atVolCeiling && !maxedTime };
       }
-    } else if (t === "intensification") {
-      const enoughTime = cyc >= cfg.minCycles, maxedTime = cyc >= cfg.maxCycles;
-      if (maxedTime || (enoughTime && (highFatigue || stalled))) {
-        transition = { to: "deload",
-          reason: maxedTime ? "max intensification length reached" : highFatigue ? "fatigue index high"
-            : "strength progress stalled at high intensity",
-          borderline: grayFatigue, nextAfter: "realization" };
-      }
     } else if (t === "deload") {
-      /* Fatigue gate before routing out of deload (esp. into a near-max
-         realization/intensification): if fatigue hasn't cleared below
-         FATIGUE_STILL_ELEVATED, extend deload by exactly one more cycle rather
-         than proceeding on schedule. Capped at a single extension so we can't
-         loop indefinitely — if it's still elevated after the extension we
-         proceed anyway but flag it (forcedDespiteFatigue) so it's visible. */
+      /* Fatigue gate before routing out of deload: if fatigue hasn't cleared
+         below FATIGUE_STILL_ELEVATED, extend deload by exactly one more cycle
+         rather than proceeding on schedule. Capped at a single extension so we
+         can't loop indefinitely — if it's still elevated after the extension we
+         proceed anyway but flag it (forcedDespiteFatigue) so it's visible.
+         Since the hypertrophy rebuild the only destination is a new
+         accumulation block: deload no longer routes into an intensification or
+         a max re-test, so nextAfter is vestigial and is not read here. */
       const stillElevated = fatigueIndex >= FATIGUE_STILL_ELEVATED;
       if (stillElevated && !next.block.deloadExtended) {
         next.block.deloadExtended = true; // extend one cycle; no transition this cycle
       } else {
-        transition = { to: next.block.nextAfter || "intensification",
+        transition = { to: "accumulation",
           reason: stillElevated ? "deload complete — fatigue still elevated, proceeding anyway"
             : (next.block.deloadExtended ? "deload extended — fatigue cleared" : "deload complete — fatigue dissipated"),
           forcedDespiteFatigue: stillElevated };
       }
-    } else if (t === "realization") {
-      transition = { to: "accumulation", reason: "maxes re-tested — new accumulation block" };
     }
   }
 
@@ -1733,12 +2004,20 @@ function applyTransition(program, transition) {
    for any exercise added to the rotation after a program was saved (without
    this, prescribe() would crash on the missing lift). Rough on purpose: the
    EWMA re-anchors from the first real session. */
-const ACC_E1RM_REF = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
-  row: "bench", cablerow: "bench", pulldown: "bench", curl: "bench", bsplit: "squat",
-  triext: "bench", lateralraise: "bench", calfraise: "squat", inclinebench: "bench",
-  legcurl: "deadlift", legext: "squat", reversepecdeck: "bench", wristcurl: "bench",
-  cablecrunch: "bench", shrug: "deadlift", seatedcalf: "squat",
-  cablefly: "bench", dbshoulderpress: "bench" };
+const ACC_E1RM_REF = {
+  // lower — referenced off the two seeded lower lifts
+  frontsquat: "squat", bsplit: "squat", legext: "squat", calfraise: "squat",
+  legcurl: "rdl", deadlift: "rdl",
+  // upper push — referenced off bench
+  inclinebench: "bench", dip: "bench", cablefly: "bench", dbshoulderpress: "bench",
+  lateralraise: "bench", triext: "bench", wristcurl: "bench", cablecrunch: "bench",
+  // upper pull — referenced off the seeded row rather than off bench, which is
+  // what the pre-rebuild table did for every pulling movement. A pressing lift
+  // is a poor predictor of pulling capacity; with T-Bar Row seeded directly at
+  // onboarding these no longer have to guess across the push/pull divide.
+  latpullover: "tbarrow", reversepecdeck: "tbarrow",
+  bayesiancurl: "tbarrow", preachercurl: "tbarrow", shrug: "tbarrow",
+};
 /* bsplit: 0.2 is a PER-DUMBBELL fraction of squat e1RM, matching the logging
    convention on LIB.bsplit (one dumbbell, matched pair). Derived from the
    natural estimate of TOTAL added load for a loaded single-leg squat pattern
@@ -1748,12 +2027,14 @@ const ACC_E1RM_REF = { rdl: "deadlift", frontsquat: "squat", ohp: "bench",
    — a plausible opening load, not a guess: any future unilateral dumbbell
    exercise should size its own MULT the same way (estimate total two-hand
    load, then halve for the per-dumbbell logging convention). */
-const ACC_E1RM_MULT = { rdl: 0.85, frontsquat: 0.8, ohp: 0.62, row: 0.75,
-  cablerow: 0.75, pulldown: 0.7, curl: 0.35, bsplit: 0.2,
-  triext: 0.45, lateralraise: 0.12, calfraise: 1.2, inclinebench: 0.55,
-  legcurl: 0.4, legext: 0.65, reversepecdeck: 0.15, wristcurl: 0.15,
-  cablecrunch: 0.4, shrug: 0.35, seatedcalf: 0.6, // seated machines load lighter than standing (different leverage) — rough seed, re-anchors from the first real session
-  cablefly: 0.3, dbshoulderpress: 0.6 };
+const ACC_E1RM_MULT = {
+  frontsquat: 0.8, bsplit: 0.2, legext: 0.65, calfraise: 1.2,
+  legcurl: 0.47, deadlift: 1.18, // rdl is seeded directly; deadlift ~= rdl / 0.85
+  inclinebench: 0.8, dip: 0.75, cablefly: 0.3, dbshoulderpress: 0.6,
+  lateralraise: 0.12, triext: 0.45, wristcurl: 0.15, cablecrunch: 0.4,
+  // pull ratios are relative to T-Bar Row, not bench (see ACC_E1RM_REF)
+  latpullover: 0.6, reversepecdeck: 0.2, bayesiancurl: 0.4, preachercurl: 0.45, shrug: 0.55,
+};
 
 function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   const landmarks = landmarksForExperience(experience);
@@ -1787,6 +2068,34 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
    values (and their most-recent auto-tune deltas) carry over instead of being
    dropped and reseeded from the experience defaults. */
 const LANDMARK_RENAME = { squat: "quads", hinge: "hamstrings", horiz_press: "chest", vert_press: "front_delts" };
+
+/* Exercises the hypertrophy rebuild removed from LIB entirely (they are not on
+   the athlete's approved list, so nothing may prescribe them again). Already-
+   logged sessions still reference these keys, and History/PR rendering resolves
+   a label as `LIB[k]?.label || RETIRED_LABELS[k] || k` — without this map an old
+   session would render the bare key ("cablerow"). Label lookup only: nothing
+   here participates in volume math, seeding, or prescription. */
+const RETIRED_LABELS = {
+  row: "Barbell Row", cablerow: "Seated Cable Row", pulldown: "Lat Pulldown",
+  ohp: "Overhead Press", curl: "Incline Dumbbell Curl", seatedcalf: "Seated Calf Raise",
+};
+
+/* Seeding an exercise the rebuild ADDED, for a program saved before it existed.
+   The generic ACC_E1RM_REF backfill can't do this alone: these five have no
+   pre-rebuild equivalent under their own key, and several reference lifts that
+   are themselves new (bayesiancurl → tbarrow), so a saved program would seed
+   them off the `|| 100` fallback and open at a nonsense load. Each entry is an
+   ordered list of [sourceKeyTheOldProgramMightHave, ratio]; the first source
+   actually present wins, and anything with no source falls through to the
+   generic path. Ratios are rough by design — the e1RM EWMA re-anchors from the
+   first real session, and every one of these errs light rather than heavy. */
+const RETIRED_LIFT_SEEDS = {
+  tbarrow:      [["row", 1.0], ["cablerow", 1.0], ["pulldown", 1.05]],
+  latpullover:  [["pulldown", 0.85], ["cablerow", 0.8]],
+  bayesiancurl: [["curl", 1.0]],
+  preachercurl: [["curl", 1.1]],
+  dip:          [["inclinebench", 1.35], ["bench", 0.75]],
+};
 
 /* Reconcile a loaded program's landmark keys to the current PATTERNS set so
    older saved programs survive landmark-schema changes: first rename any old
@@ -1833,19 +2142,50 @@ function migrateProgram(program) {
      crashes on the first day containing the new exercise. */
   const lifts = { ...(program.lifts || {}) };
   let liftsChanged = false;
+  const seedLift = (k, e1rm) => {
+    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
+    liftsChanged = true;
+  };
+  /* 3a. exercises the hypertrophy rebuild ADDED — seed from the closest lift
+     the saved program already tracks before the generic pass below, which
+     would otherwise fall through to its `|| 100` default (see
+     RETIRED_LIFT_SEEDS). Runs first so that a new lift seeded here can itself
+     serve as the ACC_E1RM_REF base for another new lift in 3b. */
+  Object.entries(RETIRED_LIFT_SEEDS).forEach(([k, sources]) => {
+    if (lifts[k] || !LIB[k]) return;
+    const hit = sources.find(([src]) => lifts[src]?.e1rm > 0);
+    if (hit) seedLift(k, lifts[hit[0]].e1rm * hit[1]);
+  });
+  /* 3b. backfill a lift record for any rotation member added to the program
+     AFTER this save was created — seeded off a reference lift the program
+     already tracks, exactly like freshProgram. Without this, prescribe()
+     dereferences a missing lift and crashes on the first day containing the
+     new exercise. */
   ROTATION.forEach((d) => d.items.forEach((k) => {
     if (lifts[k]) return;
     const base = lifts[ACC_E1RM_REF[k]]?.e1rm || 100;
-    const e1rm = base * (ACC_E1RM_MULT[k] || 0.6);
-    lifts[k] = { e1rm, e1rmRaw: e1rm, hist: [{ e: Math.round(e1rm), raw: Math.round(e1rm) }], volumeGroup: LIB[k].volumeGroup };
-    liftsChanged = true;
+    seedLift(k, base * (ACC_E1RM_MULT[k] || 0.6));
   }));
   // 4. backfill stall-notice tracking for a program saved before this feature existed.
   const stallStreaks = program.stallStreaks || {};
   const stallNotices = program.stallNotices || {};
   const stallFieldsChanged = !program.stallStreaks || !program.stallNotices;
-  return (changed || liftsChanged || stallFieldsChanged)
-    ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts, stallStreaks, stallNotices }
+  /* 5. a program saved mid-intensification or mid-realization is sitting in a
+     block type the hypertrophy rebuild deleted — BLOCKS has no config for it,
+     so prescribe() would dereference undefined on the very next session. Land
+     it at the start of a fresh accumulation block: that is where both of those
+     blocks were headed anyway (realization always transitioned to accumulation,
+     and intensification reached it one deload later), and starting at cycle 0
+     means the volume ramp restarts from MEV rather than resuming mid-ramp at a
+     cycle index the new block never assigned. */
+  let block = program.block;
+  let blockChanged = false;
+  if (block && LEGACY_BLOCK_TYPES[block.type]) {
+    block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+    blockChanged = true;
+  }
+  return (changed || liftsChanged || stallFieldsChanged || blockChanged)
+    ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts, stallStreaks, stallNotices, block }
     : program;
 }
 
@@ -1874,7 +2214,7 @@ export {
   weeklyTarget, fixedWeeklySets, rampedSlotSets, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
-  VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP, DP_MIN_REPS, BW_REPONLY_FLOOR,
+  DP_MIN_REPS, BW_REPONLY_FLOOR, LEGACY_BLOCK_TYPES, RETIRED_LABELS, RETIRED_LIFT_SEEDS,
   DP_RPE_GAP_BIG, DP_RPE_GAP_MED, DP_BUMP_BIG, DP_BUMP_MED, DP_BUMP_SMALL, DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY,
   RETURN_RPE_CAP, RETURN_SET_MULT, FEELER_LOAD_FLOOR_LB, FEELER_LOAD_FLOOR_KG, SAME_DAY_GROUP_CAP,
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
