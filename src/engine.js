@@ -725,16 +725,25 @@ function adjustLandmarks(program) {
        weeklyFreqScale's definition — prescribe() now delivers a frequency-
        corrected ramped-accessory count, so this must match to stay accurate)
        and the /freqScale below still converts that real per-rotation total
-       into a rate; not double-scaling, two different jobs. capA (used
-       unscaled a few lines below for the MRV-raise gate) only gets its OWN
-       /freqScale here, same as before.
+       into a rate; not double-scaling, two different jobs.
        Compared against delivered reality, a capped group correctly reads "at
        ceiling" when its ramp saturates — so a stall there isn't misread as
-       stalling with headroom. */
-    const capA = maxDeliverable(p, "accumulation"); // per-rotation; the MRV-raise gate below stays in these units
+       stalling with headroom.
+       AUDIT 3.3: capW (capA as a per-calendar-week RATE) is now used by the
+       raise gates below too. They previously compared a weekly landmark
+       against raw per-rotation capA, which are only the same number at
+       exactly 4x/week — the gate's own stated purpose is "don't grow a stored
+       number no prescription can ever reach", and at 3x/week it permitted
+       exactly that (beginner quads: gate allowed mrv 16 while the schedule
+       tops out at 14.3 sets/week; at ~2.2x/week, 10.6). An earlier pass
+       deliberately left this unscaled, reasoning that capA is a delivery
+       ceiling rather than a rate — but it is being compared to mrv, which IS
+       a rate, so the comparison needs both sides in the same units. */
+    const capA = maxDeliverable(p, "accumulation"); // per-rotation
+    const capW = capA / freqScale;                  // per-calendar-week, comparable to mev/mav/mrv
     const reachedCeiling =
       deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale
-        >= Math.min(lm.mrv, capA / freqScale);
+        >= Math.min(lm.mrv, capW);
     const grew = g > GROWTH_POS;
     const stalledEarly = g <= GROWTH_POS && !reachedCeiling;
 
@@ -773,6 +782,28 @@ function adjustLandmarks(program) {
          bug the rest of that fix closed everywhere else — comparing a
          hypothetical per-rotation count against a true-weekly landmark. */
       const deliveredThis = deliveredWeekly(p, "accumulation", Math.max(0, cyc - 1), program.landmarks, freqScale) / freqScale;
+      /* AUDIT 3.8 — KNOWN LIMITATION, deliberately NOT "fixed" here.
+         MAV exceeds maxDeliverable for 6 of 8 groups at intermediate defaults
+         (7 of 8 at advanced), so this gate is unsatisfiable for them and the
+         stall-notice feature is effectively dead outside `quads`: a
+         120-session total plateau produces a notice for quads alone while the
+         other seven stall silently.
+         The obvious repair — comparing against min(mav, capW) so "enough
+         volume" means "as much as this schedule can give it" — was tried and
+         is a NO-OP, because `reachedCeiling` below would then always be true
+         at the same moment. Proof: capW <= mav makes both thresholds capW, so
+         volumeAtMav becomes equivalent to reachedCeiling and the
+         `!reachedCeiling` term cancels it; capW > mav leaves this line
+         unchanged. Swept over 3 experience tiers x 3 cadences x 8 groups x 6
+         cycles: the gate's value changes in 303 of 432 scenarios and the
+         streak outcome changes in ZERO of them.
+         The real blocker is that reaching the ceiling is treated as a
+         CONFOUND. For a capacity-limited group that is simply its normal
+         end-of-block state, so it is permanently "confounded" and can never
+         accumulate evidence. Un-confounding it is a semantics change (having
+         given a group everything the schedule holds is arguably the STRONGEST
+         evidence an exercise isn't working, not a reason to abstain), and it
+         belongs with the landmark-vs-schedule decision, not with this pass. */
       const volumeAtMav = deliveredThis >= program.landmarks[p].mav;
       if (volumeAtMav && fatigueComfortable && !reachedCeiling) {
         stallStreaks[p] = (stallStreaks[p] || 0) + 1;
@@ -794,9 +825,20 @@ function adjustLandmarks(program) {
          reach (the pre-fix failure mode). MEV raises are likewise kept ≥2
          below the (possibly capacity-frozen) MRV so they can't drag it up
          through the range clamp below. */
-      const canRaiseMrv = lm.mrv + 1 <= capA;
+      const canRaiseMrv = lm.mrv + 1 <= capW;
       const mrvAfter = lm.mrv + (canRaiseMrv ? 1 : 0);
-      const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capA) - 2;
+      /* AUDIT 3.5: MEV additionally may not climb past MAV. maxDeliverable is
+         below MRV for every group at intermediate/advanced defaults, so
+         canRaiseMrv is permanently false there and the only reachable
+         adjustment in the whole auto-tune was +MEV — a one-way ratchet,
+         verified as 15 landmark changes across a simulated year, every one of
+         them +MEV with MRV never moving. Left unbounded that collapses the
+         MEV->MRV ramp the accumulation block is built on (quads' span fell
+         from 12 sets to 7), shortens accumulation blocks, and permanently
+         raises intensification/deload volume too, since VOL_SCALE keys off
+         MEV. This is containment, not a cure: the root cause is that the
+         landmark table describes volume this ROTATION cannot deliver. */
+      const canRaiseMev = lm.mev + 1 <= Math.min(mrvAfter, capW) - 2 && lm.mev + 1 <= lm.mav;
       dMev = canRaiseMev ? 1 : 0;
       dMrv = canRaiseMrv ? 1 : 0;
       if (dMev || dMrv) signal = canRaiseMrv ? "growth strong, fatigue in check" : "growth strong — schedule at capacity, MEV only";
@@ -1299,10 +1341,26 @@ function ingest(program, logs, readiness) {
   /* Session-specific fatigue is understood to mostly resolve within ~48-72h
      (ACSM-cited resistance training recovery window); we use a 3-day cap as a
      literature-grounded but not precisely-validated constant — gaps beyond it
-     don't earn extra "recovered" credit. */
+     don't earn extra "recovered" credit.
+     AUDIT 3.4: this decay is NO LONGER applied on top of the EWMA below. An
+     EWMA already carries its own retention term (1 - alpha), so multiplying
+     the prior by (1 - recoveryFactor) immediately before it applied recovery
+     TWICE, and the accumulators could then only ever reach a fraction of
+     their own inputs: readSupp settled at 0.424x the readiness deficit at
+     4x/week (0.300x at gaps >= 3 days, where the "multi-session accumulator"
+     was fully wiped every session), and rpeCreep at 0.533x its input, so
+     saturating the /1.5 cap needed a sustained 2.81 RPE points of overshoot.
+     Measured consequence: a realistically bad week (+1 RPE on every top set,
+     +1 backoff drift, missed sets in 40% of exercises, amber readiness 45)
+     peaked at index 0.427 — under FATIGUE_AMBER, let alone FATIGUE_SPIKE —
+     and a full simulated year of ordinary training never exceeded 0.032.
+     That left the fatigue-triggered deload, the borderline-transition coach
+     escalation, the deload extension, and restDaysForFatigue's 2/3-day
+     advice all unreachable in practice. Recovery now applies only where
+     there is no fresh evidence to supersede it (see the rpeCreep block
+     below); readiness is not decayed at all, because today's reading already
+     embeds the athlete's recovery. */
   const recoveryFactor = Math.min(1, daysSinceLast / 3);
-  next.fatigue.rpeCreep *= (1 - recoveryFactor);
-  next.fatigue.readSupp *= (1 - recoveryFactor);
   next.lastSessionAt = now;
   /* Rolling inter-session gap (days), capped so a one-off layoff doesn't wreck
      the average. Consumed by weeklyFreqScale() to frequency-scale the
@@ -1348,8 +1406,10 @@ function ingest(program, logs, readiness) {
 
   /* RPE-creep reads only TOUCHED main logs: an unedited log echoes the target
      back (miss = 0 by construction), so counting it would fake recovery. When
-     no touched mains exist this session, creep is simply left where it was —
-     no evidence either way.
+     no touched mains exist this session, only time-based recovery applies —
+     see the else-branch below (AUDIT 3.4 / 3.T1: the old code claimed creep
+     was "left where it was" in that case, but the unconditional pre-decay
+     above had already cut it — 1.2 became 0.4000 after a single 2-day gap).
      rpeMiss/backoffDrift are hoisted (not just used inline) so this session's
      RAW outcome numbers — not the multi-session EWMA'd fatigue fields they
      also feed — can be returned below for readiness_analysis.mjs to compare
@@ -1378,6 +1438,11 @@ function ingest(program, logs, readiness) {
       ? boLogs.reduce((s, g) => s + Math.max(0, g.backoffRpe - g.backoffRpeCap), 0) / boLogs.length : 0;
     next.fatigue.backoffDrift = ewma(next.fatigue.backoffDrift ?? 0, backoffDrift, 0.4);
     next.fatigue.rpeCreep = ewma(next.fatigue.rpeCreep, rpeMiss + 0.5 * backoffDrift, 0.4);
+  } else {
+    /* AUDIT 3.4: no touched main logs — nothing supersedes the stored creep,
+       so time-based recovery applies here INSTEAD of the EWMA, not on top of
+       it. This is the only place the pre-EWMA decay used to be justified. */
+    next.fatigue.rpeCreep *= (1 - recoveryFactor);
   }
   /* Multi-session readiness-deficit accumulator (fatigue.readSupp): a
      SEPARATE EWMA smoothing rate (READSUPP_EWMA_ALPHA) from
@@ -1450,6 +1515,17 @@ function ingest(program, logs, readiness) {
     const freqScale = weeklyFreqScale(next.avgSessionGapDays);
     const ceilingHit = (p) => {
       const ceilTrue = Math.min(next.landmarks[p].mrv, maxDeliverable(p, t) / freqScale);
+      /* AUDIT 3.6: schedule saturation well below the landmark range is a
+         CAPACITY limit, not evidence the athlete accumulated volume
+         tolerance — ending the block on it reports "weekly volume reached its
+         ceiling" for someone still training at MEV. Measured: at ~2.2x/week
+         hamstrings delivers 6.1 sets/week flat from cycle 0 against an MEV of
+         6 and an MRV of 16, and fired this trigger from cycle 2, so every
+         accumulation block terminated at minCycles with that reason. Require
+         the reachable ceiling to be at least MAV before it counts; otherwise
+         the block ends on its time/fatigue/stall triggers, which is the
+         honest answer. */
+      if (ceilTrue < next.landmarks[p].mav) return false;
       if (deliveredWeekly(p, t, justDone, next.landmarks, freqScale) / freqScale < ceilTrue) return false;
       if (ceilTrue >= next.landmarks[p].mrv) return true;
       return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks, freqScale) / freqScale >= ceilTrue;

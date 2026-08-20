@@ -13,6 +13,7 @@ import {
   VOLUME_DAY_REP_BUMP, VOLUME_DAY_RPE_CAP,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
   FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs,
+  FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -91,30 +92,27 @@ console.log("\n== P0: auto-tune won't drift MRV past deliverable capacity ==");
 
 console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of freqScale ==");
 {
-  /* The reachedCeiling comparison a few lines above in adjustLandmarks DOES
-     convert through weeklyFreqScale (delivered volume and the ceiling are
-     both per-calendar-week quantities being compared to MRV). But capA — the
-     cap the MRV-RAISE gate (canRaiseMrv = lm.mrv + 1 <= capA) checks against
-     — is deliberately left in raw per-rotation maxDeliverable() units,
-     un-divided by freqScale: capA is a schedule-delivery ceiling (how many
-     sets ONE rotation pass can prescribe), not a rate being compared to a
-     weekly landmark, so scaling it would be a category error, not a fix.
+  /* REVERSED BY AUDIT 3.3 — this block previously asserted the OPPOSITE.
+     It used to lock in capA staying in raw per-rotation units inside the
+     MRV-raise gate, on the reasoning that capA is "a schedule-delivery
+     ceiling, not a rate being compared to a weekly landmark, so scaling it
+     would be a category error." That reasoning does not survive inspection:
+     the gate compares capA to `lm.mrv`, and mrv IS a per-calendar-week rate,
+     so both sides have to be in weekly units or the comparison is
+     meaningless. maxDeliverable() counts sets across ONE ROTATION, which
+     spans freqScale weeks — so the weekly capacity is capA/freqScale, and
+     they coincide only at exactly 4x/week.
 
-     A test run at the SAME mrv as the freqScale=1 test above can't actually
-     distinguish "correctly ignores freqScale" from "accidentally scaled but
-     it happened not to matter here": that setup starts at mrv=20, capA=19
-     (quads' fixed contribution rose to 11 sets after audit 2.5 restored
-     legext), so mrv+1=21 already exceeds capA before any scaling is even in
-     play — dividing capA by freqScale (19/1.333≈14.25) still blocks the
-     raise, so a buggy scaled version and the correct unscaled version give
-     the identical answer and the bug would ship invisibly. Closing that
-     blind spot needs a landmark value where scaled vs. unscaled DISAGREE:
-     with capA=19 and freqScale≈1.333, mrv=14 puts mrv+1=15, which is
-     <= capA=19 (unscaled: raise allowed) but > capA/freqScale≈14.25 (a
-     scaled gate would wrongly block it) — so this only passes if capA truly
-     stays unscaled. capA and the straddle point are derived at runtime
-     below rather than hardcoded a second time, so this stays correct if the
-     rotation's quad accounting changes again. */
+     The gate's own stated purpose is "don't drift MRV above a number no
+     prescription can ever reach". Measured with the unscaled comparison, at
+     beginner quads (mrv 15, capA 19) it permitted exactly that:
+       freqScale 1.00 (4x/wk): weekly capacity 19.0 -> mrv 16 IS deliverable
+       freqScale 1.33 (3x/wk): weekly capacity 14.3 -> mrv 16 is NOT
+       freqScale 1.80 (~2.2x/wk): weekly capacity 10.6 -> mrv 16 is NOT
+     i.e. below 4x/week the gate re-opened the exact failure mode it exists
+     to prevent. The straddle construction below is kept — it's still the
+     right way to build a case where scaled and unscaled DISAGREE — but the
+     expected answer is now the scaled one. */
   const p = fresh();
   p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
   p.lifts.squat.e1rm = 312;
@@ -133,14 +131,15 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   const adj = adjustments.quads;
 
   check(`quads adjustment exists at freqScale≈${scale.toFixed(3)} (growth strong)`, !!adj);
-  check(`capA used unscaled: MRV DOES raise here (${p.landmarks.quads.mrv} -> ${adj?.after.mrv}) — would be blocked if capA were divided by freqScale`,
-    adj && adj.dMrv === 1 && adj.after.mrv === straddleMrv + 1);
-  check(`signal reflects a normal (non-capacity-gated) raise ("${adj?.signal}")`,
-    adj?.signal === "growth strong, fatigue in check");
+  check(`capA is converted to a weekly rate: MRV raise is BLOCKED here (stays ${adj?.after.mrv}) because ${straddleMrv + 1} > capA/scale ${(capA / scale).toFixed(2)}`,
+    adj && adj.dMrv === 0 && adj.after.mrv === straddleMrv);
+  check(`signal reports the capacity gate ("${adj?.signal}")`,
+    /capacity/.test(adj?.signal || ""));
 
-  // Companion case: identical scenario at freqScale=1 must produce the SAME
-  // capA-vs-mrv decision — proving the gate's behavior doesn't depend on
-  // freqScale at all, not just that this one non-1 value happens to work.
+  /* Companion case: the SAME landmarks at freqScale=1, where one rotation is
+     exactly one week, must now DIFFER — the raise is allowed there because
+     the schedule really can deliver it weekly. Under the old unscaled gate
+     both cases answered identically, which is precisely what hid the bug. */
   const p1 = fresh();
   p1.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
   p1.lifts.squat.e1rm = 312;
@@ -148,8 +147,10 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   p1.landmarks.quads.mrv = straddleMrv;
   p1.landmarks.quads.mav = straddleMrv - 1;
   const adj1 = adjustLandmarks(p1).adjustments.quads;
-  check(`freqScale=1 companion case: byte-identical dMrv/after.mrv/signal (${adj1?.dMrv},${adj1?.after.mrv},"${adj1?.signal}")`,
-    adj1 && adj1.dMrv === adj.dMrv && adj1.after.mrv === adj.after.mrv && adj1.signal === adj.signal);
+  check(`freqScale=1 companion case DOES raise MRV (${straddleMrv} -> ${adj1?.after.mrv}) — same landmarks, genuinely deliverable at 4x/week`,
+    adj1 && adj1.dMrv === 1 && adj1.after.mrv === straddleMrv + 1);
+  check("the two frequencies now reach DIFFERENT decisions (the unscaled gate could not tell them apart)",
+    adj.dMrv !== adj1.dMrv);
 }
 
 console.log("\n== Stall notice: observation-only tracking (does not change MEV/MRV/exercises) ==");
@@ -546,12 +547,26 @@ console.log("\n== Frequency scaling changes real prescribe()-driven transition t
     return fired;
   };
   const c3 = runCadence(7 / 3), c4 = runCadence(7 / 4), c5 = runCadence(7 / 5);
-  check(`3x/week: reaches the volume ceiling at cyc ${c3?.cyc} ("${c3?.reason}")`,
-    c3?.cyc === 3 && /ceiling/.test(c3?.reason || ""));
+  /* REVISED AGAIN BY AUDIT 3.6. The block above described the pre-3.6
+     behaviour accurately: at low frequency prescribe() needed more sets per
+     rotation to hit the same weekly rate, saturated the unscaled ACC_SET_CAP
+     sooner, and so tripped "weekly volume reached its ceiling" EARLIER in raw
+     cycle terms (3x/week fired at cyc 3 vs 4x/week at cyc 5).
+     That early firing was the bug, not the feature. Saturating a per-exposure
+     schedule cap is a CAPACITY limit; reporting it as "reached its volume
+     ceiling" told a 3x/week athlete they had accumulated volume tolerance
+     while they were still training near MEV — measured at ~2.2x/week,
+     hamstrings sat at 6.1 sets/week (MEV 6, MRV 16) flat from cycle 0 and
+     fired the trigger from cycle 2, truncating every accumulation block to
+     minCycles. ceilingHit now requires the reachable ceiling to be at least
+     MAV, so saturation alone no longer ends the block and the low-frequency
+     athlete gets the same block length as everyone else. */
+  check(`3x/week no longer terminates early on a capacity artifact (cyc ${c3?.cyc}, "${c3?.reason}")`,
+    c3?.cyc === 5 && /ceiling/.test(c3?.reason || ""));
   check(`4x/week (freqScale=1): unchanged baseline — reaches the ceiling at cyc ${c4?.cyc} ("${c4?.reason}")`,
     c4?.cyc === 5 && /ceiling/.test(c4?.reason || ""));
-  check(`3x/week reaches the ceiling STRICTLY SOONER than 4x/week (${c3?.cyc} < ${c4?.cyc}) — lower frequency saturates the unscaled per-exposure cap sooner`,
-    c3.cyc < c4.cyc);
+  check(`3x/week now matches 4x/week rather than firing SOONER (${c3?.cyc} === ${c4?.cyc}) — pre-3.6 this was 3 < 5`,
+    c3.cyc === c4.cyc);
   check(`5x/week: the fix changes real behavior here too — no longer reaches "ceiling" within the block at all (cyc ${c5?.cyc}, "${c5?.reason}"); runs the full accumulation length instead`,
     c5?.cyc === 6 && /max accumulation length/.test(c5?.reason || ""));
 
@@ -978,6 +993,100 @@ console.log("\n== AUDIT 3.7: a layoff is excluded from the frequency estimate, s
   for (let i = 0; i < 12; i++) { CLOCK += 3 * 86400000; q = ingest(q, mkLogs(q), green).next; }
   check(`a genuine 3-day cadence is still learned (gap=${q.avgSessionGapDays.toFixed(2)} -> fs=${wfs(q.avgSessionGapDays).toFixed(2)})`,
     q.avgSessionGapDays > 2.9 && wfs(q.avgSessionGapDays) > 1.2);
+}
+
+console.log("\n== AUDIT 3.4: fatigue channels can reach their nominal weights (recovery is no longer double-applied) ==");
+{
+  /* An EWMA already carries its own retention term, so the old pre-EWMA
+     `*= (1 - recoveryFactor)` applied recovery twice and pinned every channel
+     to a fraction of its input: readSupp settled at 0.424x the readiness
+     deficit at 4x/week, rpeCreep at 0.533x its input. The composite index
+     therefore could not reach the thresholds written against it. */
+  const drive = ({ rpeOver, readiness, missFrac, sessions = 50 }) => {
+    let p = fresh();
+    const rd = { trainingReadiness: readiness };
+    for (let i = 0; i < sessions; i++) {
+      const rx = prescribe(p, rd);
+      const logs = rx.items.map((it, j) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps,
+        topRpe: it.rpe + rpeOver, targetRpe: it.rpe, missedSets: (j / rx.items.length) < missFrac ? 1 : 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: (it.backoffRpeCap ?? it.rpe) + rpeOver, backoffRpeCap: it.backoffRpeCap }));
+      CLOCK += 1.75 * 86400000;
+      p = ingest(p, logs, rd).next;
+    }
+    return p.fatigue;
+  };
+  // readSupp must converge on the FULL deficit, not ~0.42x of it
+  const steady = drive({ rpeOver: 0, readiness: 50, missFrac: 0 });
+  check(`readSupp converges on the true readiness deficit (got ${steady.readSupp.toFixed(3)}, deficit 0.500; pre-fix ~0.212)`,
+    Math.abs(steady.readSupp - 0.5) < 0.02);
+
+  const healthy = drive({ rpeOver: 0, readiness: 80, missFrac: 0 });
+  const bad = drive({ rpeOver: 1, readiness: 45, missFrac: 0.4 });
+  check(`healthy training stays well clear of every threshold (index ${healthy.index.toFixed(3)} < ${FATIGUE_STILL_ELEVATED})`,
+    healthy.index < FATIGUE_STILL_ELEVATED);
+  check(`a realistically bad week now REACHES the deload trigger (index ${bad.index.toFixed(3)} >= ${FATIGUE_SPIKE}) — pre-fix it peaked at 0.427 and the trigger was unreachable`,
+    bad.index >= FATIGUE_SPIKE);
+  check(`the two regimes are cleanly separated (${healthy.index.toFixed(3)} vs ${bad.index.toFixed(3)})`,
+    bad.index - healthy.index > 0.5);
+
+  /* the one place the recovery decay still belongs: no touched mains means
+     nothing supersedes the stored creep, so time decays it — ONCE. */
+  { const p = fresh(); p.fatigue.rpeCreep = 1.2; p.lastSessionAt = CLOCK;
+    CLOCK += 3 * 86400000; // full recoveryFactor of 1
+    const r = ingest(p, [{ key: "curl", topWeight: 60, topReps: 12, topRpe: 8, targetRpe: 8, missedSets: 0, touched: true }], green);
+    check(`no touched mains: creep decays by recovery alone (1.2 -> ${r.next.fatigue.rpeCreep.toFixed(3)})`,
+      r.next.fatigue.rpeCreep === 0); }
+}
+
+console.log("\n== AUDIT 3.5: MEV cannot ratchet past MAV ==");
+{
+  const mk = () => { const p = fresh();
+    p.lifts.squat.hist = [300, 304, 308, 312].map((r) => ({ e: r, raw: r, b: "accumulation" }));
+    p.lifts.squat.e1rm = 312; return p; };
+  // headroom case: MEV well below MAV still raises normally
+  const below = adjustLandmarks(mk()).adjustments.quads;
+  check(`MEV still raises when it sits below MAV (${below?.before.mev} -> ${below?.after.mev})`, below && below.dMev === 1);
+  // at-MAV case: the new guard blocks it
+  const p2 = mk(); p2.landmarks.quads.mev = p2.landmarks.quads.mav; // 14/14
+  const atMav = adjustLandmarks(p2).adjustments.quads;
+  check(`MEV at MAV (${p2.landmarks.quads.mev}/${p2.landmarks.quads.mav}) is NOT raised further (adjustment: ${atMav ? `dMev ${atMav.dMev}` : "none"})`,
+    !atMav || atMav.dMev === 0);
+  /* the ratchet this prevents: MRV is frozen by schedule capacity for every
+     group at intermediate defaults (maxDeliverable < MRV for 8/8), so +MEV
+     was the only reachable adjustment and nothing bounded it. */
+  check("sanity: quads MRV really is capacity-frozen (maxDeliverable < MRV), which is what made the ratchet one-way",
+    maxDeliverable("quads", "accumulation") < landmarksForExperience("intermediate").quads.mrv);
+}
+
+console.log("\n== AUDIT 3.6/3.8: capacity saturation is not mistaken for volume evidence ==");
+{
+  const lm = landmarksForExperience("intermediate");
+  /* 3.6: hamstrings can deliver at most 11 sets/wk against a MAV of 12, so a
+     saturated hamstrings ramp must NOT be reported as "reached its ceiling". */
+  const hamCap = maxDeliverable("hamstrings", "accumulation");
+  check(`hamstrings' reachable ceiling (${hamCap}) is below its MAV (${lm.hamstrings.mav}) — saturation there is a capacity limit, not volume tolerance`,
+    hamCap < lm.hamstrings.mav);
+  /* 3.8 is documented as a KNOWN LIMITATION rather than fixed — this locks in
+     WHY, so the inert repair isn't attempted again. Substituting
+     min(mav, capW) for mav in the stall gate changes the gate's value but
+     never the streak outcome, because reachedCeiling then fires in lockstep. */
+  let unreachable = 0, gateDiffers = 0, streakDiffers = 0;
+  for (const g of Object.keys(lm)) {
+    if (maxDeliverable(g, "accumulation") < lm[g].mav) unreachable++;
+    const capW = maxDeliverable(g, "accumulation"); // freqScale 1 here
+    for (let cyc = 0; cyc < 6; cyc++) {
+      const d = deliveredWeekly(g, "accumulation", cyc, lm, 1);
+      const oldGate = d >= lm[g].mav, newGate = d >= Math.min(lm[g].mav, capW);
+      const reached = d >= Math.min(lm[g].mrv, capW);
+      if (oldGate !== newGate) gateDiffers++;
+      if ((oldGate && !reached) !== (newGate && !reached)) streakDiffers++;
+    }
+  }
+  check(`${unreachable} of ${Object.keys(lm).length} groups have MAV above what the schedule can deliver — the gate is unsatisfiable for them`,
+    unreachable >= 6);
+  check(`the obvious min(mav,capW) repair changes the gate in ${gateDiffers} cases but the streak outcome in ${streakDiffers} — it is a no-op, so the real blocker is reachedCeiling, not this gate`,
+    gateDiffers > 0 && streakDiffers === 0);
 }
 
 Date.now = RealNow;
