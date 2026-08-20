@@ -2279,6 +2279,75 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     acc.topLoad % step === 0 && del.topLoad % step === 0);
 }
 
+{
+  console.log("\n== PROPORTIONAL MISS TRACKING: magnitude is no longer discarded ==");
+  /* missFreq used to be logs.filter(g => g.missedSets > 0).length / logs.length
+     — a per-exercise boolean. Clipping one set of five and failing four of five
+     produced an IDENTICAL fatigue contribution, so the field's own "(reps
+     short)" label described information the engine then threw away. */
+  const runWith = (shortFor) => {
+    let p = fresh();
+    const rx = prescribe(p, green);
+    const logs = rx.items.map((it) => ({
+      key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+      targetReps: it.reps, sets: it.sets, repsShort: shortFor(it), touched: true,
+      backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+      backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+    }));
+    return ingest(p, logs, green).next.fatigue.missFreq;
+  };
+  const none = runWith(() => 0);
+  const one = runWith(() => 1);
+  const half = runWith((it) => Math.floor((it.sets * it.reps) / 2));
+  const all = runWith((it) => it.sets * it.reps);
+  check(`hitting every rep registers no miss signal (${none})`, none === 0);
+  check(`the signal is STRICTLY MONOTONIC in reps missed (${one.toFixed(4)} < ${half.toFixed(4)} < ${all.toFixed(4)})`,
+    one < half && half < all);
+  /* The regression that matters: under the old boolean these three were equal.
+     One rep short across a session must be a small fraction of total failure,
+     not the same number. */
+  check(`one rep short is an order of magnitude below total failure (${(all / one).toFixed(1)}x apart, was 1.0x)`,
+    all / one > 10);
+  check(`the fraction stays bounded in [0,1] even when every rep is missed (${all})`, all >= 0 && all <= 1);
+  // over-reporting must clamp rather than inflate the index past its ceiling
+  const over = runWith((it) => it.sets * it.reps * 5);
+  check(`reporting more reps short than were prescribed clamps instead of overflowing (${over} === ${all})`, over === all);
+  /* Legacy logs carry missedSets (a COUNT OF SETS) and no repsShort. They must
+     still be read, and at their ORIGINAL semantics — a stored 3 meant three
+     sets, not three reps. */
+  {
+    let p = fresh();
+    const rx = prescribe(p, green);
+    const legacy = (n) => ingest(fresh(), rx.items.map((it) => ({
+      key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
+      sets: it.sets, missedSets: n, touched: true, backoffSetCount: it.backoffSetCount,
+      backoffReps: it.reps, backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+    })), green).next.fatigue.missFreq;
+    check(`a legacy log with no misses still reads zero (${legacy(0)})`, legacy(0) === 0);
+    check(`a legacy log with every set missed still reads the maximum (${legacy(99).toFixed(4)} === ${all.toFixed(4)})`,
+      Math.abs(legacy(99) - all) < 1e-9);
+    check(`a legacy partial miss sits strictly between (${legacy(1).toFixed(4)})`,
+      legacy(1) > 0 && legacy(1) < legacy(99));
+  }
+  /* Reps and RPE must describe the SAME set for e1rmFrom to be meaningful. The
+     UI labels now say so; this pins the engine side — the pair is consumed
+     together, so a log claiming a high rep count at a high RPE yields a higher
+     e1RM than the same RPE at fewer reps. */
+  {
+    const est = (reps) => {
+      const p = fresh();
+      const it = prescribe(p, green).items.find((i) => i.key === "bench");
+      return ingest(p, [{ key: "bench", topWeight: it.topLoad, topReps: reps, topRpe: 9,
+        targetRpe: it.rpe, targetReps: it.reps, sets: it.sets, repsShort: 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap }], green)
+        .next.lifts.bench.e1rmRaw;
+    };
+    check(`more reps at the same RPE implies a higher max (${est(6).toFixed(1)} < ${est(12).toFixed(1)})`,
+      est(6) < est(12));
+  }
+}
+
 Date.now = RealNow;
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

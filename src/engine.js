@@ -2064,7 +2064,33 @@ function ingest(program, logs, readiness) {
     next.fatigue.readSupp = ewma(next.fatigue.readSupp, 1 - rScore, READSUPP_EWMA_ALPHA);
     next.fatigue.hasReadiness = true;
   }
-  const missFreq = logs.length ? logs.filter((g) => g.missedSets > 0).length / logs.length : 0;
+  /* PROPORTIONAL MISS TRACKING. This used to be
+       logs.filter((g) => g.missedSets > 0).length / logs.length
+     — a per-exercise BOOLEAN. The magnitude was discarded entirely, so missing
+     one set of five and missing four of five produced an identical fatigue
+     contribution, and the field's own "(reps short)" label described
+     information the engine then threw away. Missing most of a session is
+     categorically worse evidence than clipping one set, and the fatigue index
+     could not see the difference.
+     Now each exercise contributes the FRACTION of its prescribed reps that went
+     unperformed — repsShort / (sets x target reps) — and missFreq is the mean
+     of those fractions. Still bounded [0,1], so READINESS_FATIGUE_WEIGHT and
+     the 0.2 weighting below are unchanged and every fatigue threshold keeps its
+     meaning.
+     Legacy logs carry `missedSets` (a COUNT OF SETS) instead of `repsShort`.
+     Those are read at their original semantics rather than silently
+     reinterpreted as reps — a stored 3 meant three sets, not three reps, and
+     treating it as reps would understate a historical bad session by roughly
+     the rep target. Converted as "those sets fell short", i.e. the same
+     per-exercise fraction the old boolean implied. */
+  const missFrac = (g) => {
+    const target = (g.sets ?? 1) * (g.targetReps ?? g.topReps ?? 0);
+    if (g.repsShort != null && target > 0)
+      return Math.max(0, Math.min(1, g.repsShort / target));
+    if (g.missedSets > 0) return Math.max(0, Math.min(1, g.missedSets / (g.sets ?? 1)));
+    return 0;
+  };
+  const missFreq = logs.length ? logs.reduce((s, g) => s + missFrac(g), 0) / logs.length : 0;
   next.fatigue.missFreq = ewma(next.fatigue.missFreq, missFreq, 0.4);
 
   /* T2-3: with no readiness data the readiness term is structurally zero, so

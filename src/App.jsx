@@ -256,7 +256,7 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
   const logSummary = (it.dpMode
     ? `${it.sets} × ${log.topReps} @ ${logLoadScheme} (RPE ${log.topRpe})`
     : `${it.sets} × ${log.topReps} @ RPE ${log.topRpe} · ${logLoadScheme}`)
-    + (log.missedSets > 0 ? ` · ${log.missedSets} missed` : "");
+    + (log.repsShort > 0 ? ` · ${log.repsShort} reps short` : "");
   return (
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
@@ -303,9 +303,23 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
           ) : (
             <>
               <label className="fieldrow sm"><span>{it.bodyweight ? "Added / assist weight" : (it.unilateral || it.perDumbbell) ? "Weight per dumbbell" : "Working weight"}</span><Stepper value={log.topWeight} set={(v) => update({ topWeight: v })} min={it.bodyweight ? -200 : 0} step={5} suffix=" lb" /></label>
-              <label className="fieldrow sm"><span>Reps (per set)</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={20} /></label>
+              {/* Reps and RPE are a MATCHED PAIR describing ONE set — the
+                  engine feeds them to e1rmFrom(weight, reps, rpe) together, so
+                  they must come from the same set or the estimate describes a
+                  set that never happened. This said "Reps (per set)" while its
+                  neighbour said "RPE (hardest set)": logging 12 reps from set
+                  one alongside the RPE 9 of a final set of 8 had the engine
+                  back-solve a max from 12 reps @ RPE 9, overstating strength
+                  for anyone whose reps decline across straight sets. Both now
+                  name the same set. */}
+              <label className="fieldrow sm"><span>Reps (hardest set)</span><Stepper value={log.topReps} set={(v) => update({ topReps: v })} min={1} max={20} /></label>
               <label className="fieldrow sm"><span>RPE (hardest set)</span><Stepper value={log.topRpe} set={(v) => update({ topRpe: v })} min={5} max={10} step={0.5} /></label>
-              <label className="fieldrow sm"><span>Sets missed (reps short)</span><Stepper value={log.missedSets} set={(v) => update({ missedSets: v })} min={0} max={it.sets} /></label>
+              {/* Total reps left on the table across ALL sets, which is where
+                  the other sets are accounted for now that reps/RPE describe
+                  only the hardest one. Replaces a "sets missed" count the
+                  engine read as a boolean — see the missFrac comment in
+                  ingest(). Capped at the session's full prescription. */}
+              <label className="fieldrow sm"><span>Reps short (all sets)</span><Stepper value={log.repsShort ?? 0} set={(v) => update({ repsShort: v })} min={0} max={it.sets * it.reps} /></label>
               {/* Backoff fields render only if something is ever prescribed a
                   distinct backoff set. Nothing is today (straight sets
                   everywhere — see prescribe), so this branch is currently
@@ -360,12 +374,12 @@ function Today({ program, sessions, onLog }) {
   const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
 
   useEffect(() => {
-    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, missedSets: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap })));
+    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, targetReps: it.reps, repsShort: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap })));
     // eslint-disable-next-line
   }, [program.sessionCount]);
 
   useEffect(() => {
-    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, missedSets: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe, backoffRpeCap: rx.items[i].backoffRpeCap } : l)));
+    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, targetReps: rx.items[i].reps, repsShort: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe, backoffRpeCap: rx.items[i].backoffRpeCap } : l)));
     // eslint-disable-next-line
   }, [rx.band]);
 
@@ -658,7 +672,7 @@ export default function App() {
     const { next, transition, fatigueIndex, e1rmSlope, rScore, prs, rpeMiss, backoffDrift, missFreq } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
-        lifts: logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, missed: l.missedSets })),
+        lifts: logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, repsShort: l.repsShort, ofReps: (l.sets ?? 1) * (l.targetReps ?? l.topReps) })),
         trainingReadiness: readiness.trainingReadiness },
       ...sessions.slice(-4).reverse().map((s) => ({ block: s.block, lifts: s.logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe })) })),
     ];
@@ -679,7 +693,7 @@ export default function App() {
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
-      logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, missedSets: l.missedSets,
+      logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, repsShort: l.repsShort, targetReps: l.targetReps, sets: l.sets,
         backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: true })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
       /* Readiness instrumentation for readiness_analysis.mjs: the band/score
