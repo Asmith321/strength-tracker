@@ -11,7 +11,7 @@ import {
   FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA, SAME_DAY_GROUP_CAP as SDGC,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
-  E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, STALL_STREAK_THRESHOLD,
+  E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, DP_WINDOW, STALL_STREAK_THRESHOLD,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
   FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs, MEV_MAV_MAX_RATIO,
   FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP, FATIGUE_AMBER,
@@ -2465,6 +2465,38 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     check(`sanity: the rep excess (${excess}) is odd, so floor and ceil disagree`, excess % 2 === 1);
     check(`overshooting the rep target by ${excess} earns ${wantSteps} load steps, not ${wantSteps + 1} (topLoad ${it.topLoad} === ${anchor + step * wantSteps})`,
       it.topLoad === anchor + step * wantSteps);
+  }
+}
+
+{
+  console.log("\n== DP WINDOW: width is the invariant, not the floor ==");
+  /* DP_MIN_REPS used to be the absolute number 8. When the isolation rep target
+     moved 12 -> 10 the window silently narrowed from 5 steps to 3, because the
+     constant encoded a coincidence rather than the intent. It is now derived,
+     so the WIDTH is what must be pinned — and pinned LITERALLY, since asserting
+     `DP_MIN_REPS === isolationTarget - DP_WINDOW` would just restate the
+     definition and pass under any value. */
+  check(`DP_WINDOW is 4 (measured: wider windows thrash less, see the engine comment)`, DP_WINDOW === 4);
+  check(`the floor derives from the isolation target (${ACC_REP_TIERS.accumulation.isolation.reps} - ${DP_WINDOW} = ${DP_MIN_REPS})`,
+    DP_MIN_REPS === 6);
+  /* The property that makes deriving worthwhile: the window survives a change
+     to the rep target. Checked against the PREVIOUS target, which must
+     reproduce the value this constant historically had. */
+  check("at the previous 12-rep isolation target the same rule yields the historical floor of 8",
+    12 - DP_WINDOW === 8);
+  check("the window leaves at least 3 distinct rep counts to climb through",
+    ACC_REP_TIERS.accumulation.isolation.reps - DP_MIN_REPS >= 3);
+  /* End-to-end: hitting the target resets to the bottom of the window, and the
+     bottom is genuinely below the target (a zero-width window would mean every
+     session earns a load step). */
+  {
+    const p = fresh();
+    p.cycleIndex = dayWith("lateralraise");
+    p.block = { type: "accumulation", cycle: 1, sessionsInBlock: ROT, nextAfter: null };
+    p.lifts.lateralraise = { ...p.lifts.lateralraise, last: { w: 30, reps: ACC_REP_TIERS.accumulation.isolation.reps, rpe: 10 } };
+    const it = prescribe(p, green).items.find((i) => i.key === "lateralraise");
+    check(`hitting the rep target resets to the window bottom (${it.reps}) and steps the load (${it.topLoad} > 30)`,
+      it.reps === DP_MIN_REPS && it.topLoad > 30);
   }
 }
 
