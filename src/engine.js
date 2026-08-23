@@ -448,10 +448,21 @@ const LIB = {
      tension through the stretched position — so running both across the week
      is a real variation, not a relabel. `lateralraise` stays the machine
      version to keep e1RM history on the key that has always carried this slot. */
-  lateralraise: { label: "Machine Lateral Raise",          role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
+  /* increment 5, not 2.5: the athlete's machine stacks in clean 5 lb plates, so
+     a 2.5 grid prescribed weights the equipment cannot actually be set to. An
+     increment is a property of the hardware in the room, not a preference. */
+  lateralraise: { label: "Machine Lateral Raise",          role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 5 },
   dblateralraise: { label: "DB Lateral Raise",             role: "acc",  barbell: false, perDumbbell: true, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
   reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
   triext:       { label: "Overhead Cable Triceps Ext.",    role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "triceps" },
+  /* Added at the athlete's request. increment 2.5 because this stack lands on
+     half values (47.5, 52.5, ...). Takes over ONE of triext's three slots
+     rather than adding a fourth: triceps volume is already tuned to its MAV,
+     so an extra slot would only spread the same sets thinner across a longer
+     session. Pushdown is elbow extension with the shoulder neutral, against
+     triext's overhead position — different long-head length, so the pair is a
+     genuine variation rather than a relabel. */
+  triceppushdown: { label: "Triceps Pushdown",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "triceps", increment: 2.5 },
   bayesiancurl: { label: "Bayesian Cable Curl",            role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "biceps", increment: 2.5 },
   preachercurl: { label: "Preacher Curl",                  role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "biceps", increment: 2.5 },
   /* Promoted from fixedSets to ramped (was a flat 3 sets). With no squat/
@@ -461,6 +472,15 @@ const LIB = {
      long length, and Maeo et al. found substantially greater hamstring growth
      seated vs. lying at matched volume. */
   legcurl:      { label: "Seated Leg Curl",                role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "hamstrings", increment: 10 },
+  /* Added at the athlete's request. Modelled `bodyweight: true` — the same
+     path pull-ups use — because the resistance IS the athlete's own mass and
+     progression runs through assistance rather than added plates: a negative
+     load means "this much help from a band or partner", which the logging
+     screen already labels correctly. Takes over one of legcurl's two slots
+     rather than adding a third, for the same volume reason as the pushdown
+     above. Knee flexion under a long eccentric, where the seated curl is
+     concentric-dominant at a fixed hip angle. */
+  nordic:       { label: "Assisted Nordic Curl",           role: "acc",  barbell: false, bodyweight: true, repTier: "isolation", volumeGroup: "hamstrings" },
   /* Leg extension is the one quad exercise that loads rectus femoris (the
      biarticular head) at all — every other quad slot here is simultaneous
      hip+knee extension, which under-stimulates RF specifically. Kassiano et
@@ -577,7 +597,7 @@ const LIB = {
 const ROTATION = [
   { name: "Push · Quads A", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "squat", "legext", "calfraise", "cablecrunch"] },
   { name: "Pull · Hinge A", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "rdl", "legcurl", "calfraise", "shrug"] },
-  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "dblateralraise", "triext", "bsplit", "legext", "calfraise", "cablecrunch"] },
+  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "dblateralraise", "triceppushdown", "bsplit", "legext", "calfraise", "cablecrunch"] },
   /* triext appears here as well as on both push days: with only one approved
      triceps exercise, 2 slots forced 6 sets of the same movement into a single
      session to reach the triceps MAV of 12 — past the point where additional
@@ -585,7 +605,7 @@ const ROTATION = [
      splits the same weekly volume 4/4/4. Landing it on a pull day is not a
      mismatch: this day already carries lateral raises, and triceps are fully
      recovered here precisely because they were not the day's pressing work. */
-  { name: "Pull · Hinge B", items: ["pullup", "pulldown", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "legcurl", "lateralraise", "wristcurl"] },
+  { name: "Pull · Hinge B", items: ["pullup", "pulldown", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "nordic", "lateralraise", "wristcurl"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -2344,7 +2364,7 @@ const ACC_E1RM_REF = {
   // upper push — referenced off bench
   inclinebench: "bench", inclinebb: "bench", dbbench: "bench", dip: "bench",
   cablefly: "bench", dbshoulderpress: "bench",
-  lateralraise: "bench", dblateralraise: "bench", triext: "bench",
+  lateralraise: "bench", dblateralraise: "bench", triext: "bench", triceppushdown: "bench",
   wristcurl: "bench", bbwristcurl: "bench", cablecrunch: "bench",
   // upper pull — referenced off the seeded row rather than off bench, which is
   // what the pre-rebuild table did for every pulling movement. A pressing lift
@@ -2373,7 +2393,7 @@ const ACC_E1RM_MULT = {
      halved TOTAL estimate rather than a guess. */
   inclinebench: 0.4, inclinebb: 0.8, dbbench: 0.42, dip: 0.75,
   cablefly: 0.3, dbshoulderpress: 0.3,
-  lateralraise: 0.12, dblateralraise: 0.1, triext: 0.45,
+  lateralraise: 0.12, dblateralraise: 0.1, triext: 0.45, triceppushdown: 0.42,
   wristcurl: 0.1, bbwristcurl: 0.15, cablecrunch: 0.4,
   // pull ratios are relative to T-Bar Row, not bench (see ACC_E1RM_REF)
   latpullover: 0.6, pulldown: 0.95, reversepecdeck: 0.2,

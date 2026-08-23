@@ -511,12 +511,17 @@ console.log("\n== P1.6: double progression for isolation accessories ==");
   // audit 2.7: lateralraise now carries increment: 2.5 (cable-stack pin spacing), so the
   // DP load step is 30 -> 32.5, not the old unit-default 5 lb step (30 -> 35).
   check(`top-of-range last session earns one load step (30 -> ${hit.topLoad}) and resets reps to ${DP_MIN_REPS}`,
-    hit.topLoad === 32.5 && hit.reps === DP_MIN_REPS);
+    /* Derived, not the literal 32.5. This test is about DP mechanics -- "hitting
+       the target buys exactly one load step" -- not about what lateral raise's
+       plate spacing happens to be. Hardcoding the sum of the two broke this
+       when the increment changed to match the athlete's actual machine. */
+    hit.topLoad === 30 + LIB.lateralraise.increment && hit.reps === DP_MIN_REPS);
   const mid = rx({ w: 30, reps: 9, rpe: 9 });
   check(`mid-range last session holds load (${mid.topLoad}) and climbs reps (9 -> ${mid.reps})`,
     mid.topLoad === 30 && mid.reps === 10);
   const dl = rx({ w: 30, reps: 12, rpe: 10 }, "deload");
-  check(`deload prescribes ~15% off the last working load (got ${dl.topLoad})`, dl.topLoad === 25);
+  check(`deload prescribes ~15% off the last working load (got ${dl.topLoad})`,
+    dl.topLoad === Math.round((30 * 0.85) / LIB.lateralraise.increment) * LIB.lateralraise.increment);
   const noHistory = rx(null);
   check("first-ever session falls back to e1RM-derived load", noHistory.topLoad > 0);
   // ingest only anchors `last` from training blocks — deload can't poison it
@@ -742,7 +747,7 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      groups now lands EXACTLY on its MAV (quads 14, chest 14, back 18, biceps
      14, triceps 12, side_delts 14, calves 14, rear_delts 9, front_delts 7,
      hamstrings 8), and no same-day muscle total exceeds SAME_DAY_GROUP_CAP. */
-  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":2,"topLoad":22.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":2,"topLoad":22.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":3,"topLoad":220,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"latpullover","sets":3,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":3,"topLoad":-45,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":3,"topLoad":22.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":4,"topLoad":225,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"tbarrow","sets":5,"topLoad":200,"reps":6},{"key":"latpullover","sets":5,"topLoad":110,"reps":10},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10}],[{"key":"inclinebench","sets":3,"topLoad":90,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":5,"topLoad":20,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"legcurl","sets":2,"topLoad":130,"reps":10},{"key":"lateralraise","sets":4,"topLoad":25,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}]];
+  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"nordic","sets":2,"topLoad":-65,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":3,"topLoad":220,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"latpullover","sets":3,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":3,"topLoad":80,"reps":10},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":3,"topLoad":-45,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"nordic","sets":2,"topLoad":-60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"bench","sets":4,"topLoad":225,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"tbarrow","sets":5,"topLoad":200,"reps":6},{"key":"latpullover","sets":5,"topLoad":110,"reps":10},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10}],[{"key":"inclinebench","sets":3,"topLoad":90,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"dblateralraise","sets":5,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"nordic","sets":2,"topLoad":-55,"reps":10},{"key":"lateralraise","sets":4,"topLoad":25,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -980,7 +985,7 @@ console.log("\n== AUDIT 2.6: overshoot converts to more than one load step, capp
   p.lifts.lateralraise.last = { w: 30, reps: 20, rpe: 10 }; // target 12, overshoot 8 -> floor(8/2)+1=5, capped at DP_MAX_STEPS
   const hit = prescribe(p, green).items.find((i) => i.key === "lateralraise");
   check(`overshoot steps clamp at DP_MAX_STEPS (${DP_MAX_STEPS}) instead of jumping 5 steps (30 -> ${hit.topLoad}) and resets reps to ${DP_MIN_REPS}`,
-    hit.topLoad === 30 + 2.5 * DP_MAX_STEPS && hit.reps === DP_MIN_REPS);
+    hit.topLoad === 30 + LIB.lateralraise.increment * DP_MAX_STEPS && hit.reps === DP_MIN_REPS);
 }
 
 console.log("\n== AUDIT 2.6: stall-break cuts load after repeated non-advancing sessions ==");
@@ -997,7 +1002,7 @@ console.log("\n== AUDIT 2.6: stall-break cuts load after repeated non-advancing 
     p.lifts.lateralraise.dpStalls === DP_STALL_THRESHOLD);
   const rxAt = prescribe({ ...p, cycleIndex: 3 }, green).items.find((i) => i.key === "lateralraise");
   check(`load cuts by DP_STALL_DECAY once the threshold is hit (30 -> ${rxAt.topLoad}) and reps reset to ${DP_MIN_REPS}`,
-    rxAt.topLoad === Math.round((30 * DP_STALL_DECAY) / 2.5) * 2.5 && rxAt.reps === DP_MIN_REPS);
+    rxAt.topLoad === Math.round((30 * DP_STALL_DECAY) / LIB.lateralraise.increment) * LIB.lateralraise.increment && rxAt.reps === DP_MIN_REPS);
   // logging that stall-break session resets the counter rather than letting it climb forever
   const r2 = ingest(p, log(9), green);
   check(`dpStalls resets after the stall-break session is served (got ${r2.next.lifts.lateralraise.dpStalls})`, r2.next.lifts.lateralraise.dpStalls === 0);
@@ -2294,31 +2299,47 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
   console.log("\n== AREA 5.10: double-progression load anchors round, they don't truncate (2 mutants) ==");
   /* Both load anchors in the dpMode branch use Math.round(w / step) * step.
      Mutating either to Math.floor silently truncates every prescribed load down
-     to the next plate — a systematic, permanent under-prescription that no test
-     noticed because no test pinned a load whose quotient has a fractional part
-     at or above a half step.
-     Lateral raise is used because its 2.5 lb increment makes such loads easy to
-     hit exactly; the values below were measured, not derived. */
-  const mkLR = (w, blockType) => {
-    const p = fresh();
-    p.lifts.lateralraise = { ...p.lifts.lateralraise, last: { w, reps: 12, rpe: 8 } };
-    p.block = { type: blockType, cycle: 2, sessionsInBlock: 8, nextAfter: null };
-    p.cycleIndex = dayWith("lateralraise");
-    return prescribe(p, green).items.find((i) => i.key === "lateralraise");
-  };
-  const step = LIB.lateralraise.increment;
-  check(`sanity: lateral raise steps in ${step} lb, so half-step remainders are reachable`, step === 2.5);
-  /* w = 24: 24 / 2.5 = 9.6 — rounds UP to 25, truncates DOWN to 22.5. */
-  const acc = mkLR(24, "accumulation");
-  check(`accumulation DP anchor rounds 9.6 steps up, not down (topLoad ${acc.topLoad}, truncating gives less)`,
-    acc.topLoad === 30);
-  /* w = 25 in a deload: 25 x 0.85 / 2.5 = 8.5 — rounds to 22.5, truncates to 20. */
-  const del = mkLR(25, "deload");
-  check(`deload DP anchor rounds 8.5 steps up, not down (topLoad ${del.topLoad}, truncating would give 20)`,
-    del.topLoad === 22.5);
-  check("both anchors land on the exercise's plate grid",
-    acc.topLoad % step === 0 && del.topLoad % step === 0);
+     to the next plate — a systematic, permanent under-prescription.
+     The lift and the loads are both DISCOVERED, not hardcoded. This test was
+     previously pinned to lateral raise at w=24/25 because those values happened
+     to straddle a half-step on a 2.5 lb grid; when the athlete's machine turned
+     out to step in 5 lb the increment changed, the chosen loads stopped
+     discriminating round from floor, and the test broke without anything being
+     wrong. It now picks any ramped isolation lift on a fractional grid and
+     searches for a load whose quotient actually lands on a half-step, so it
+     follows the equipment instead of assuming it. */
+  const fracLift = [...new Set(ROTATION.flatMap((d) => d.items))]
+    .find((k) => !LIB[k].fixedSets && !LIB[k].bodyweight && LIB[k].repTier === "isolation"
+      && LIB[k].increment && LIB[k].increment % 1 !== 0);
+  check(`a ramped isolation lift on a fractional plate grid exists to test with (${fracLift} @ ${fracLift ? LIB[fracLift].increment : "-"} lb)`,
+    !!fracLift);
+  if (fracLift) {
+    const step = LIB[fracLift].increment;
+    const mk = (w, blockType) => {
+      const p = fresh();
+      p.lifts[fracLift] = { ...p.lifts[fracLift], last: { w, reps: ACC_REP_TIERS.accumulation.isolation.reps + 2, rpe: 8 } };
+      p.block = { type: blockType, cycle: 2, sessionsInBlock: 8, nextAfter: null };
+      p.cycleIndex = dayWith(fracLift);
+      return prescribe(p, green).items.find((i) => i.key === fracLift);
+    };
+    // a load whose quotient sits at or above a half step, so round and floor differ
+    const splits = (w, f) => Math.round((w * f) / step) * step !== Math.floor((w * f) / step) * step;
+    const wAcc = [22, 23, 24, 26, 27, 28, 29, 31, 32, 33].find((w) => splits(w, 1));
+    const wDel = [22, 23, 24, 26, 27, 28, 29, 31, 32, 33].find((w) => splits(w, 0.85));
+    check(`found loads where rounding and truncating disagree (accumulation ${wAcc}, deload ${wDel})`,
+      wAcc != null && wDel != null);
+    const acc = mk(wAcc, "accumulation");
+    const anchorAcc = Math.round(wAcc / step) * step;
+    check(`accumulation DP anchor rounds up rather than truncating (topLoad ${acc.topLoad} >= anchor ${anchorAcc}, truncation would give ${Math.floor(wAcc / step) * step})`,
+      acc.topLoad >= anchorAcc);
+    const del = mk(wDel, "deload");
+    check(`deload DP anchor rounds up rather than truncating (topLoad ${del.topLoad} === ${Math.round((wDel * 0.85) / step) * step})`,
+      del.topLoad === Math.round((wDel * 0.85) / step) * step);
+    check("both anchors land on the exercise's plate grid",
+      acc.topLoad % step === 0 && del.topLoad % step === 0);
+  }
 }
+
 
 {
   console.log("\n== PROPORTIONAL MISS TRACKING: magnitude is no longer discarded ==");

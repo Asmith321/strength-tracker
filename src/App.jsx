@@ -8,6 +8,7 @@ import {
   Timer, X, Award, Download, LogOut,
 } from "lucide-react";
 import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from "./storage.js";
+import { readDraft, writeDraft, clearDraft, draftMatches } from "./draft.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
   prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
@@ -48,6 +49,7 @@ async function runCoach({ rx, fatigueIndex, e1rmSlope, rScore, transition, recen
 /* ════════════ STORAGE ════════════ */
 const K_PROGRAM = "strength.engine.program.v1";
 const K_SESSIONS = "strength.engine.sessions.v1";
+
 /* Errors PROPAGATE here (no swallowing): a null return means "no row exists",
    an exception means "the load failed". The caller MUST distinguish these — a
    failed load must never be mistaken for an empty account (which would render
@@ -203,10 +205,9 @@ function Onboarding({ onDone }) {
    al. 2016). Multi-joint work needs the most because it is the most limited by
    systemic recovery between sets; single-joint work recovers fastest. Replaces
    the old flat "3:00 for a main, 1:30 for everything else". */
-const REST_SECONDS = { compound: 150, unilateral: 120, isolation: 90 };
 const REST_LABEL = { compound: "2:30", unilateral: "2:00", isolation: "1:30" };
 
-function ExerciseCard({ it, log, update, barWeight, onRest }) {
+function ExerciseCard({ it, log, update, barWeight }) {
   /* Compounds open by default — they are the session's headline work and the
      exercises most likely to need a warmup ramp expanded. Isolation work stays
      collapsed. (This used to key off isMain, which no longer exists.) */
@@ -261,7 +262,13 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
     <div className="exer">
       <div className="exer-head" onClick={() => setOpen(!open)}>
         <div>
-          <div className="exer-name">{it.label}</div>
+          <div className="exer-name">
+            {it.label}
+            {/* Status reads from the COLLAPSED card, so a glance down the list
+                answers "where am I?" without opening anything. */}
+            {log.done && <span className="pill pill-done mono">LOGGED</span>}
+            {log.skipped && <span className="pill pill-skip mono">SKIPPED</span>}
+          </div>
           <div className="exer-scheme mono">{scheme}</div>
         </div>
         {open ? <ChevronDown size={17} color="#8A909C" /> : <ChevronRight size={17} color="#8A909C" />}
@@ -338,7 +345,29 @@ function ExerciseCard({ it, log, update, barWeight, onRest }) {
               )}
             </>
           )}
-          <button className="restbtn mono" onClick={() => onRest(it)}><Timer size={13} /> REST {REST_LABEL[it.repTier] || "1:30"}</button>
+          {/* The rest TIMER button is gone (unused in practice), but the rest
+              GUIDANCE stays — the interval is one of the few session variables
+              with a clear hypertrophy effect, so losing the number along with
+              the button would have quietly removed real coaching. */}
+          <div className="cardactions">
+            <button
+              type="button"
+              className={"logbtn mono" + (log.done ? " is-done" : "")}
+              aria-pressed={!!log.done}
+              onClick={() => update({ done: !log.done, skipped: false })}
+            >
+              {log.done ? <><Check size={13} /> LOGGED</> : "LOG EXERCISE"}
+            </button>
+            <button
+              type="button"
+              className={"skipbtn mono" + (log.skipped ? " is-skipped" : "")}
+              aria-pressed={!!log.skipped}
+              onClick={() => update({ skipped: !log.skipped, done: false })}
+            >
+              {log.skipped ? "SKIPPED" : "DIDN'T DO"}
+            </button>
+            <span className="restcue mono">rest {REST_LABEL[it.repTier] || "1:30"}</span>
+          </div>
         </div>
       )}
     </div>
@@ -355,31 +384,53 @@ function Gauge({ value, label, color }) {
   );
 }
 
-const fmtSecs = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 function Today({ program, sessions, onLog }) {
   const [readiness, setReadiness] = useState({ trainingReadiness: 65 });
   const rx = useMemo(() => prescribe(program, readiness), [program, readiness]);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [rest, setRest] = useState(null); // { label, left }
+  const [restored, setRestored] = useState(false);
 
+
+
+  /* Seed the session's logs — from a saved draft if one exists for THIS
+     session, otherwise from the prescription.
+     The draft is keyed on sessionCount so a stale draft can never bleed into a
+     different session: finish session 12, and a leftover draft for 12 is
+     ignored when 13 opens. Exercise keys are checked too, because the rotation
+     can change under a draft (a swapped exercise, a migrated program) and
+     restoring a log against the wrong exercise would attribute the athlete's
+     numbers to a lift they never did. */
   useEffect(() => {
-    if (!rest || rest.left <= 0) return;
-    const id = setInterval(() => setRest((r) => (r ? { ...r, left: Math.max(0, r.left - 1) } : r)), 1000);
-    return () => clearInterval(id);
-  }, [rest !== null && rest.left > 0]);
-
-  const startRest = (it) => setRest({ label: it.label, left: REST_SECONDS[it.repTier] || 90 });
-  const nudgeRest = (d) => setRest((r) => (r ? { ...r, left: Math.max(0, r.left + d) } : r));
-
-  useEffect(() => {
-    setLogs(rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, targetReps: it.reps, repsShort: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap })));
+    const fresh = () => rx.items.map((it) => ({ key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe, targetReps: it.reps, repsShort: 0, sets: it.sets, backoffSetCount: it.backoffSetCount, backoffReps: it.reps, backoffRpe: it.rpe, backoffRpeCap: it.backoffRpeCap, done: false, skipped: false }));
+    const d = readDraft();
+    if (draftMatches(d, program.sessionCount, rx.items.map((it) => it.key))) {
+      setLogs(d.logs);
+      if (d.readiness && Number.isFinite(d.readiness.trainingReadiness)) setReadiness(d.readiness);
+      setRestored(true);
+    } else {
+      setLogs(fresh());
+      setRestored(false);
+    }
     // eslint-disable-next-line
   }, [program.sessionCount]);
 
+  /* Persist on EVERY change. No debounce: the payload is a few hundred bytes
+     and the failure this guards against (the OS suspending the tab without
+     warning) gives no opportunity to flush a pending timer. */
   useEffect(() => {
-    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, targetReps: rx.items[i].reps, repsShort: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe, backoffRpeCap: rx.items[i].backoffRpeCap } : l)));
+    if (!logs.length) return;
+    writeDraft({ sessionCount: program.sessionCount, logs, readiness, savedAt: Date.now() });
+  }, [logs, readiness, program.sessionCount]);
+
+  useEffect(() => {
+    /* Re-seeds the numbers on an untouched card when readiness changes the
+       prescription. `done`/`skipped` are carried across rather than reset:
+       they record what the athlete DID, which a change in today's readiness
+       has no business undoing — marking an exercise skipped and then nudging
+       the readiness slider must not silently un-skip it. */
+    setLogs((L) => L.map((l, i) => (l && l._touched ? l : rx.items[i] ? { key: rx.items[i].key, topWeight: rx.items[i].topLoad, topReps: rx.items[i].reps, topRpe: rx.items[i].rpe, targetRpe: rx.items[i].rpe, targetReps: rx.items[i].reps, repsShort: 0, sets: rx.items[i].sets, backoffSetCount: rx.items[i].backoffSetCount, backoffReps: rx.items[i].reps, backoffRpe: rx.items[i].rpe, backoffRpeCap: rx.items[i].backoffRpeCap, done: l?.done ?? false, skipped: l?.skipped ?? false } : l)));
     // eslint-disable-next-line
   }, [rx.band]);
 
@@ -393,6 +444,13 @@ function Today({ program, sessions, onLog }) {
         <span className="phase mono" style={{ borderColor: bandColor }}>{rx.block} · cycle {rx.cycle + 1}</span>
         <span className="mono dim">top RPE {rx.rpeTop}</span>
       </div>
+
+      {/* Say so when work was recovered, rather than silently repopulating the
+          fields — an athlete who watched the app die mid-session needs to know
+          the numbers on screen are theirs and not a fresh prescription. */}
+      {restored && (
+        <div className="restored mono"><Check size={12} /> RESTORED YOUR IN-PROGRESS SESSION</div>
+      )}
 
       {program.lastCoach && (
         <div className={"coach " + (program.lastCoach === COACH_OFFLINE_NOTE ? "coach-off " : "") + (program.block.type === "deload" ? "coach-alert" : "")}>
@@ -411,7 +469,7 @@ function Today({ program, sessions, onLog }) {
         </div>
       )}
 
-      {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} barWeight={program.barWeight || 45} onRest={startRest} />)}
+      {rx.items.map((it, i) => logs[i] && <ExerciseCard key={it.key + i} it={it} log={logs[i]} update={(p) => upd(i, p)} barWeight={program.barWeight || 45} />)}
 
       <div className="eyebrow mt">READINESS — Garmin Training Readiness Score</div>
       <div className="panel">
@@ -425,16 +483,6 @@ function Today({ program, sessions, onLog }) {
         {busy ? "Coach reviewing…" : "Log session"}
       </button>
 
-      {rest && (
-        <div className={"resttimer mono" + (rest.left === 0 ? " done" : "")}>
-          <Timer size={14} color={rest.left === 0 ? "#3FA85F" : "#8A909C"} />
-          <span className="rt-label">{rest.left === 0 ? "REST DONE" : rest.label}</span>
-          <span className="rt-time">{fmtSecs(rest.left)}</span>
-          <button onClick={() => nudgeRest(-15)}>−15</button>
-          <button onClick={() => nudgeRest(15)}>+15</button>
-          <button onClick={() => setRest(null)}><X size={14} /></button>
-        </div>
-      )}
     </div>
   );
 }
@@ -668,11 +716,19 @@ export default function App() {
        function below — tracking which fields the athlete edited so the
        readiness-resync effect doesn't clobber their edits; it is NOT a
        signal about whether the session itself is real data.) */
-    const ingestLogs = logs.map((l) => ({ ...l, touched: true }));
+    /* A SKIPPED exercise is withheld from the engine entirely rather than
+       logged as a failure. The distinction matters in both directions: it must
+       not feed the e1RM estimate (no set happened, so there is nothing to
+       measure), and it must not feed the fatigue index either — work you never
+       started is not evidence that you are breaking down, which is exactly
+       what logging it as "all reps short" would have claimed. It is still
+       written to the session record below, so the history shows what was
+       actually trained. */
+    const ingestLogs = logs.filter((l) => !l.skipped).map((l) => ({ ...l, touched: true }));
     const { next, transition, fatigueIndex, e1rmSlope, rScore, prs, rpeMiss, backoffDrift, missFreq } = ingest(program, ingestLogs, readiness);
     const recent = [
       { block: rx.block, fatigue: +fatigueIndex.toFixed(2),
-        lifts: logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, repsShort: l.repsShort, ofReps: (l.sets ?? 1) * (l.targetReps ?? l.topReps) })),
+        lifts: logs.filter((l) => !l.skipped && LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe, target: l.targetRpe, repsShort: l.repsShort, ofReps: (l.sets ?? 1) * (l.targetReps ?? l.topReps) })),
         trainingReadiness: readiness.trainingReadiness },
       ...sessions.slice(-4).reverse().map((s) => ({ block: s.block, lifts: s.logs.filter((l) => LIB[l.key]?.repTier === "compound").map((l) => ({ lift: l.key, w: l.topWeight, reps: l.topReps, rpe: l.topRpe })) })),
     ];
@@ -694,7 +750,7 @@ export default function App() {
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
       logs: logs.map((l) => ({ key: l.key, topWeight: l.topWeight, topReps: l.topReps, topRpe: l.topRpe, repsShort: l.repsShort, targetReps: l.targetReps, sets: l.sets,
-        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: true })),
+        backoffSetCount: l.backoffSetCount || 0, backoffReps: l.backoffReps, backoffRpe: l.backoffRpe, touched: true, skipped: !!l.skipped })),
       readiness, coach: coach.note, transition: appliedTransition, prs: prs.length ? prs : null,
       /* Readiness instrumentation for readiness_analysis.mjs: the band/score
          and adjustment that were ACTUALLY applied to this session's
@@ -716,6 +772,11 @@ export default function App() {
     // Check the write: if it fails, surface a save error rather than silently
     // proceeding as though the session was safely logged.
     await persist(finalProgram, newSessions);
+    /* Drop the in-progress draft only AFTER the session has been persisted.
+       Clearing it earlier would open a window where a failed cloud write has
+       already destroyed the local copy — the athlete's whole session lost to
+       an error that the retry screen is there to recover from. */
+    clearDraft();
     setTab("today");
   };
 
@@ -828,7 +889,7 @@ export default function App() {
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-.root{--bg:#121419;--surface:#1A1D24;--surface2:#22262F;--line:#2E333D;--text:#E6E8EC;--dim:#8A909C;
+.root{--bg:#121419;--surface:#1A1D24;--surface2:#22262F;--line:#2E333D;--text:#E6E8EC;--dim:#8A909C;--accent:#3FA85F;
   max-width:460px;margin:0 auto;min-height:100vh;background:var(--bg);color:var(--text);
   font-family:'Inter',system-ui,sans-serif;position:relative;padding-bottom:80px;}
 .root *{box-sizing:border-box;}
@@ -893,13 +954,21 @@ const CSS = `
 .sw-text{flex:1;}
 .savewarn button{background:var(--surface2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:4px 8px;font-size:11px;cursor:pointer;display:flex;align-items:center;}
 .plates{font-size:10.5px;color:var(--dim);letter-spacing:.04em;padding:2px 4px 6px;}
-.restbtn{width:100%;height:44px;margin-top:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--dim);font-size:11.5px;letter-spacing:.1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
-.restbtn:active{background:var(--line);}
-.resttimer{position:fixed;bottom:72px;left:50%;transform:translateX(-50%);width:calc(100% - 28px);max-width:432px;display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:6px 10px;z-index:6;font-size:12px;box-shadow:0 8px 22px rgba(0,0,0,.45);}
-.rt-label{flex:1;color:var(--dim);font-size:10.5px;letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase;}
-.rt-time{font-size:17px;font-weight:500;min-width:48px;text-align:center;}
-.resttimer.done .rt-time{color:#3FA85F;}
-.resttimer button{min-width:44px;height:44px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;display:flex;align-items:center;justify-content:center;}
+/* per-exercise commit / skip, in the slot the rest timer used to occupy */
+.cardactions{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.logbtn{flex:1 1 auto;min-width:132px;height:44px;border:1px solid var(--accent);border-radius:10px;background:transparent;color:var(--accent);font-size:11.5px;letter-spacing:.1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+.logbtn:active{background:var(--line);}
+.logbtn.is-done{background:var(--accent);border-color:var(--accent);color:#0E1116;}
+.skipbtn{flex:0 0 auto;height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:transparent;color:var(--dim);font-size:11.5px;letter-spacing:.1em;cursor:pointer;}
+.skipbtn:active{background:var(--line);}
+.skipbtn.is-skipped{border-color:#D7443E;color:#D7443E;}
+/* NB: distinct from .restnote, which is the 'Rest until <date>' advisory
+   banner further down — same name meant this inherited its gold left border. */
+.restcue{flex:1 0 100%;text-align:center;color:var(--dim);font-size:10.5px;letter-spacing:.08em;opacity:.75;}
+.pill{margin-left:8px;padding:2px 6px;border-radius:4px;font-size:9px;letter-spacing:.1em;vertical-align:middle;}
+.pill-done{background:rgba(63,168,95,.16);color:#3FA85F;}
+.pill-skip{background:rgba(215,68,62,.14);color:#D7443E;}
+.restored{display:flex;align-items:center;gap:7px;margin:0 0 12px;padding:9px 11px;border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;background:var(--surface2);color:var(--dim);font-size:11px;letter-spacing:.04em;}
 .readout{font-size:11.5px;text-align:center;padding:6px 0 0;}
 .gauge{margin:10px 0;}
 .gauge-label{font-size:10.5px;letter-spacing:.08em;color:var(--dim);margin-bottom:5px;}

@@ -55,6 +55,12 @@ const APPROVED = new Set([
   "pullup", "pulldown",
   // front/back squat -> two exercises
   "squat", "frontsquat",
+  /* Added by the athlete after their first real session, extending the
+     original list rather than working around it. Recorded here so the
+     constraint stays a constraint: this test is what stops an exercise being
+     slipped into the program without the athlete asking for it, and it did
+     catch both of these before they shipped. */
+  "triceppushdown", "nordic",
 ]);
 
 console.log("\n== Approved-exercise constraint ==");
