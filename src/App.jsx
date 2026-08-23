@@ -11,7 +11,7 @@ import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from 
 import { readDraft, writeDraft, clearDraft, draftMatches } from "./draft.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
-  prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
+  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -463,9 +463,21 @@ function Today({ program, sessions, onLog }) {
         <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || RETIRED_LABELS[k] || k).join(", ")}</div>
       )}
 
-      {program.lastRestUntil && (
+      {/* Names the DATE to train next and the cadence that date is steering
+          toward, so the two can be sanity-checked against each other. The old
+          banner said "Rest until <date>" from a flat 1/2/3-day minimum, which
+          read as a recommendation and pointed at 7 sessions/week at normal
+          fatigue. Still advisory — nothing here blocks logging early. */}
+      {program.nextSessionAt && (
         <div className="restnote mono">
-          <Timer size={13} /> Rest until {new Date(program.lastRestUntil).toLocaleDateString("en-US", { month: "long", day: "numeric" })} — advisory only, log anytime
+          <Timer size={13} />
+          <span>
+            Next session {new Date(program.nextSessionAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+            {program.nextSessionPerWeek >= 3.5
+              ? ` — on pace for ${program.nextSessionPerWeek.toFixed(0)} sessions/week`
+              : " — stretched to let fatigue clear"}
+            . Advisory only, log anytime.
+          </span>
         </div>
       )}
 
@@ -744,8 +756,12 @@ export default function App() {
     }
     finalProgram.lastCoach = coach.note;
     finalProgram.lastPRs = prs.length ? prs : null;
-    const restDays = restDaysForFatigue(fatigueIndex);
-    finalProgram.lastRestUntil = Date.now() + restDays * 86400000;
+    /* Fractional days, added to the timestamp — see nextSessionGapDays. The
+       1.75 must NOT be rounded here: keeping it is what makes the advised date
+       alternate Mon/Wed/Fri/Sun and land on 4 sessions per 7 days. */
+    finalProgram.nextSessionAt = nextSessionTargetAt(program.nextSessionAt, Date.now(), fatigueIndex);
+    finalProgram.nextSessionPerWeek = targetSessionsPerWeek(fatigueIndex);
+    delete finalProgram.lastRestUntil;   // superseded; drop so the old banner can't linger
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,

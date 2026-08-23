@@ -2006,7 +2006,7 @@ function ingest(program, logs, readiness) {
      peaked at index 0.427 — under FATIGUE_AMBER, let alone FATIGUE_SPIKE —
      and a full simulated year of ordinary training never exceeded 0.032.
      That left the fatigue-triggered deload, the borderline-transition coach
-     escalation, the deload extension, and restDaysForFatigue's 2/3-day
+     escalation, the deload extension, and the next-session advisory's stretched
      advice all unreachable in practice. Recovery now applies only where
      there is no fresh evidence to supersede it (see the rpeCreep block
      below); readiness is not decayed at all, because today's reading already
@@ -2311,16 +2311,78 @@ function ingest(program, logs, readiness) {
   return { next, transition, fatigueIndex, rScore, e1rmSlope, prs, rpeMiss, backoffDrift, missFreq };
 }
 
-/* ---- post-session rest advisory ----
+/* ---- next-session advisory ----
    Advisory only — the engine never blocks or restricts logging a session
-   before the recommended date; this just informs the athlete. Reuses the
-   same fatigue thresholds (FATIGUE_AMBER, FATIGUE_SPIKE) the block-transition
-   and landmark-adjustment logic already key off of, so "amber"/"high" mean
-   the same thing everywhere in the app. */
-function restDaysForFatigue(fatigueIndex) {
-  if (fatigueIndex >= FATIGUE_SPIKE) return 3;
-  if (fatigueIndex >= FATIGUE_AMBER) return 2;
-  return 1;
+   before the recommended date; this just informs the athlete.
+
+   REPLACES restDaysForFatigue, which returned a flat 1/2/3 days and pointed at
+   the wrong cadence in both readings. The athlete caught this: at normal
+   fatigue it returned 1, and `now + 1 day` literally means "train again
+   tomorrow" — 7 sessions/week, nearly double what the volume math is built
+   for. Read the other way, as English ("take one rest day"), it lands on a
+   2-day gap and 3.5 sessions/week. The program is tuned for 4. The old number
+   was a MINIMUM SAFE GAP being displayed as a recommendation, and it happened
+   to name the design cadence under neither interpretation.
+
+   The target is now anchored on the schedule the volume math actually assumes.
+   weeklyFreqScale is 1.0 — the unscaled centre of the whole volume system — at
+   exactly ROT sessions per 7 days, i.e. a gap of 7/ROT days. At ROT = 4 that
+   is 1.75 days: every muscle gets its two exposures per rotation spread over
+   7 days, which is the 2x/week the frequency evidence supports.
+
+   THE FRACTION IS LOAD-BEARING — do not round it to whole days. Keeping 1.75
+   and adding it to the last session's TIMESTAMP makes the advised date
+   alternate on its own: log Monday evening, the target lands Wednesday
+   morning; log Wednesday evening, it lands Friday morning; then Sunday, then
+   Tuesday. Mon/Wed/Fri/Sun is 4 sessions in 7 days. Rounding to 2 whole days
+   would silently settle at 3.5/week and drift a muscle exposure below target
+   every fortnight. */
+const TARGET_SESSION_GAP_DAYS = 7 / ROT;
+/* Fatigue stretches the gap rather than replacing it, so a tired athlete slows
+   down from their own cadence instead of being handed an unrelated number.
+   1.6x and 2.3x land a normal 1.75-day gap on ~2.8 and ~4.0 days — close to
+   the old 2/3-day advisories at those fatigue levels, so the felt behaviour
+   when genuinely beaten up is roughly preserved. */
+const FATIGUE_GAP_STRETCH = { amber: 1.6, spike: 2.3 };
+function nextSessionGapDays(fatigueIndex) {
+  const stretch = fatigueIndex >= FATIGUE_SPIKE ? FATIGUE_GAP_STRETCH.spike
+    : fatigueIndex >= FATIGUE_AMBER ? FATIGUE_GAP_STRETCH.amber
+    : 1;
+  return TARGET_SESSION_GAP_DAYS * stretch;
+}
+
+/* The advisory TIMESTAMP, and the reason this is not simply
+   `loggedAt + gap`. People train at a habitual time of day. Add 1.75 days to a
+   6pm session and you get 9am two days later; the athlete trains that evening
+   instead, and the next calculation starts from THAT evening — so the fraction
+   is discarded on every round-trip and every gap silently becomes exactly two
+   calendar days. That is 3.5 sessions/week, the very shortfall this function
+   exists to correct. (Caught by the four-week assertion in engine_fix_tests,
+   not by reading — the one-week count looks correct either way, because
+   counting from a session start always catches 4.)
+
+   Anchoring on the PREVIOUS TARGET instead lets the fractional schedule
+   accumulate: targets fall at 1.75-day intervals regardless of when the
+   athlete actually trains, so the advised DATES walk through the week and
+   average out to ROT sessions per 7 days.
+
+   RE-ANCHOR ON DRIFT. If the athlete is more than a rotation off schedule —
+   illness, travel, a week off — continuing to add to a stale target would
+   advise a date in the past and then chase it. Past that threshold the
+   schedule restarts from now, which is also what makes a returning athlete's
+   first advisory sensible rather than an apology for the fortnight they
+   missed. */
+function nextSessionTargetAt(prevTargetAt, now, fatigueIndex) {
+  const gapMs = nextSessionGapDays(fatigueIndex) * 86400000;
+  const driftLimitMs = TARGET_SESSION_GAP_DAYS * ROT * 86400000;
+  const onSchedule = Number.isFinite(prevTargetAt) && Math.abs(now - prevTargetAt) < driftLimitMs;
+  return (onSchedule ? prevTargetAt : now) + gapMs;
+}
+/* Sessions per week the advisory is steering toward, for display. Derived from
+   the same constant so the number shown to the athlete can never disagree with
+   the date they are given. */
+function targetSessionsPerWeek(fatigueIndex) {
+  return 7 / nextSessionGapDays(fatigueIndex);
 }
 
 function applyTransition(program, transition) {
@@ -2652,7 +2714,7 @@ export {
   PATTERN_MAIN, PATTERN_RAMPED_ACC, patternGrowth, adjustLandmarks,
   readinessScore, readinessBand, READINESS_RPE_ADJ, READINESS_SET_MULT, READINESS_FATIGUE_WEIGHT, READSUPP_EWMA_ALPHA,
   FULL_RAMP, SHORT_RAMP, MINIMAL_RAMP, buildRamp, buildFeeler,
-  prescribe, ingest, restDaysForFatigue, applyTransition, freshProgram,
+  prescribe, ingest, nextSessionGapDays, nextSessionTargetAt, targetSessionsPerWeek, TARGET_SESSION_GAP_DAYS, applyTransition, freshProgram,
   LANDMARK_RENAME, migrateProgram,
   PLATES, platesForSide, plateText,
 };

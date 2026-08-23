@@ -9,6 +9,7 @@ import {
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience, rampedSlotSets,
   rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
   FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA, SAME_DAY_GROUP_CAP as SDGC,
+  nextSessionGapDays, nextSessionTargetAt, targetSessionsPerWeek, TARGET_SESSION_GAP_DAYS,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
   buildRamp, FULL_RAMP, rpePct, repsAtPct, e1rmFromBW, BW_REPONLY_FLOOR,
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, DP_WINDOW, STALL_STREAK_THRESHOLD,
@@ -2518,6 +2519,96 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     const it = prescribe(p, green).items.find((i) => i.key === "lateralraise");
     check(`hitting the rep target resets to the window bottom (${it.reps}) and steps the load (${it.topLoad} > 30)`,
       it.reps === DP_MIN_REPS && it.topLoad > 30);
+  }
+}
+
+{
+  console.log("\n== NEXT-SESSION ADVISORY: points at the cadence the volume math assumes ==");
+  /* The advisory it replaces (restDaysForFatigue) had NO tests at all, which is
+     how it shipped naming the wrong cadence under both readings: it returned a
+     flat 1 day at normal fatigue, and `now + 1 day` means "train tomorrow" —
+     7 sessions/week against a program built for 4. The athlete found it by
+     reasoning about their own training, not by anything here. */
+  check(`the target gap derives from the rotation length (7 / ${ROT} = ${TARGET_SESSION_GAP_DAYS})`,
+    TARGET_SESSION_GAP_DAYS === 7 / ROT);
+  /* Anchored to weeklyFreqScale's own centre: the gap the advisory recommends
+     must be exactly the gap at which the volume system applies no correction.
+     If these two ever disagree, the app is telling the athlete to train at a
+     cadence its own volume math is compensating against. */
+  check(`that gap is where weeklyFreqScale is exactly 1.0 (${weeklyFreqScale(TARGET_SESSION_GAP_DAYS)})`,
+    Math.abs(weeklyFreqScale(TARGET_SESSION_GAP_DAYS) - 1) < 1e-9);
+  check(`normal fatigue targets ${ROT} sessions/week (${targetSessionsPerWeek(0.3).toFixed(2)})`,
+    Math.abs(targetSessionsPerWeek(0.3) - ROT) < 1e-9);
+
+  // fatigue stretches the gap, monotonically, and only in one direction
+  const gNorm = nextSessionGapDays(0.3), gAmber = nextSessionGapDays(0.6), gSpike = nextSessionGapDays(0.85);
+  check(`fatigue stretches the gap monotonically (${gNorm.toFixed(2)} < ${gAmber.toFixed(2)} < ${gSpike.toFixed(2)} days)`,
+    gNorm < gAmber && gAmber < gSpike);
+  check("a rested athlete is never told to wait longer than the target",
+    nextSessionGapDays(0) === TARGET_SESSION_GAP_DAYS);
+  check(`a spiked athlete is told to wait roughly the old 3-4 day advisory (${gSpike.toFixed(1)} days)`,
+    gSpike >= 3 && gSpike <= 4.5);
+
+  /* THE LOAD-BEARING PROPERTY. Rounding the 1.75 to whole days would settle at
+     3.5 sessions/week and quietly cost a muscle exposure every fortnight. This
+     walks the advisory forward the way an athlete actually would — train in the
+     evening, take the advised date, train that evening — and counts real
+     sessions in the first 7 days. Rounding to 2 days scores 4 here only if the
+     fraction survives; with Math.round it scores 3. */
+  {
+    const EVENING = 18;
+    let t = new Date(2026, 7, 24, EVENING, 0, 0);   // a Monday evening
+    const start = t.getTime();
+    const dates = [];
+    let target = null;
+    for (let i = 0; i < 16; i++) {
+      dates.push(t.getTime());
+      // the engine's own rule, then the athlete trains that DATE at their usual hour
+      target = nextSessionTargetAt(target, t.getTime(), 0.3);
+      const d = new Date(target);
+      t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), EVENING, 0, 0);
+    }
+    const inFirstWeek = dates.filter((d) => d - start < 7 * 86400000).length;
+    check(`following the advisory lands ${ROT} sessions in the first 7 days (got ${inFirstWeek})`,
+      inFirstWeek === ROT);
+    const inFourWeeks = dates.filter((d) => d - start < 28 * 86400000).length;
+    check(`and holds over four weeks (${inFourWeeks} sessions, target ${ROT * 4})`,
+      Math.abs(inFourWeeks - ROT * 4) <= 1);
+    // the advised dates must actually alternate rather than settling on a fixed gap
+    const gaps = dates.slice(1).map((d, i) => Math.round((d - dates[i]) / 86400000));
+    check(`the advised gaps alternate rather than fixing on one value (${[...new Set(gaps)].sort().join(" and ")} days)`,
+      new Set(gaps).size > 1);
+  }
+
+  /* Coming back after time off must RE-ANCHOR rather than chase a stale
+     target. Without this the advisory would keep adding to a date two weeks in
+     the past and hand the athlete a recommendation that has already expired. */
+  {
+    const now = new Date(2026, 7, 24, 18, 0, 0).getTime();
+    const staleTarget = now - 14 * 86400000;          // a fortnight off
+    const after = nextSessionTargetAt(staleTarget, now, 0.3);
+    check(`a returning athlete is advised a FUTURE date, not a stale one (${((after - now) / 86400000).toFixed(2)} days out)`,
+      after > now);
+    check("...and that date is the normal target gap, not an apology for the time missed",
+      Math.abs((after - now) / 86400000 - TARGET_SESSION_GAP_DAYS) < 1e-9);
+    // whereas someone merely a little late keeps their existing schedule
+    const slightlyLate = now - 0.5 * 86400000;
+    const kept = nextSessionTargetAt(slightlyLate, now, 0.3);
+    check("someone slightly late stays on their existing schedule rather than resetting",
+      Math.abs(kept - (slightlyLate + TARGET_SESSION_GAP_DAYS * 86400000)) < 1e-9);
+    check("a first-ever session (no previous target) anchors on now",
+      Math.abs(nextSessionTargetAt(null, now, 0.3) - (now + TARGET_SESSION_GAP_DAYS * 86400000)) < 1e-9);
+  }
+
+  /* The advisory is advisory: nothing in the engine reads it back, so it can
+     never gate or alter a prescription. Asserted by prescribing with the field
+     set to an absurd future date and confirming the session is unchanged. */
+  {
+    const a = fresh(), b = fresh();
+    b.nextSessionAt = Date.now() + 90 * 86400000;
+    b.nextSessionPerWeek = 1;
+    const strip = (p) => JSON.stringify(prescribe(p, green).items);
+    check("a pending advisory date does not change what is prescribed", strip(a) === strip(b));
   }
 }
 
