@@ -473,8 +473,12 @@ function Today({ program, sessions, onLog }) {
           <Timer size={13} />
           <span>
             Next session {new Date(program.nextSessionAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+            {/* "on pace for N/week" described a cadence that drifted through the
+                week and only averaged out. The schedule is fixed weekdays now,
+                so the honest phrasing names the schedule rather than a rate the
+                athlete has to trust is being hit. */}
             {program.nextSessionPerWeek >= 3.5
-              ? ` — on pace for ${program.nextSessionPerWeek.toFixed(0)} sessions/week`
+              ? ` — your usual ${program.nextSessionPerWeek.toFixed(0)}-day week`
               : " — stretched to let fatigue clear"}
             . Advisory only, log anytime.
           </span>

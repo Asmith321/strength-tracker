@@ -1115,6 +1115,84 @@ function weeklyFreqScale(avgSessionGapDays) {
   if (avgSessionGapDays == null) return 1;
   return Math.max(0.6, Math.min(1.8, (ROT * avgSessionGapDays) / 7));
 }
+
+/* ---- how often the athlete actually trains, measured as a WEEKLY RATE ----
+
+   WHY THE MEAN GAP IS THE WRONG ESTIMATOR. avgSessionGapDays is an EWMA of
+   inter-session gaps, which is correct only when the gaps are roughly equal. A
+   fixed weekly schedule with a weekend is not: Mon-Fri is gaps of 1,1,1,1,3.
+   Those average 1.4 — exactly the design cadence — but an EWMA never SETTLES
+   on 1.4, because the input is periodic rather than noisy around a mean. It
+   cycles endlessly (measured: 1.173 -> 1.721 -> 1.505 -> 1.353 -> 1.247 ->
+   repeat), dragging freqScale between 0.838 and 1.229 and making per-session
+   volume depend on which weekday it is. Measured end to end, that cost six of
+   the ten tracked groups their advanced MAV (chest 16/18, back 22/23, side
+   delts 16/18, calves 16/18, biceps 17/18, front delts 8/9) on a schedule that
+   is, by construction, exactly 5 sessions per week.
+
+   A RATE OVER A WHOLE NUMBER OF WEEKS fixes it, and the window has to be whole
+   weeks for the same reason the gap average failed: any other span aliases
+   against the weekly pattern and lands on a different answer depending on
+   which weekday you ask. Counting sessions in the trailing 3 weeks returns
+   exactly 5.0 on a Mon-Fri schedule whatever day it is evaluated.
+
+   Falls back to the tracked mean gap when there is not enough history to
+   establish a pattern — a new athlete, or one just back from a layoff, where
+   the EWMA's faster response is genuinely the better estimate. */
+const SESSION_RATE_WINDOW_WEEKS = 3;
+/* Enough timestamps to fill the rate window with headroom: 3 weeks of a 6x/week
+   athlete is 18. Bounded so stored program state cannot grow without limit. */
+const SESSION_LOG_MAX = 24;
+/* Below this many sessions in the window there is no weekly pattern to read,
+   only a rate that would look like a collapse in frequency. Three weeks of a
+   5-day schedule is 15 sessions, so 6 is a comfortably loose floor that still
+   excludes a genuine layoff (which layoffFactor and the sessionsSinceLayoff
+   return window handle, exactly as AUDIT 3.7 established for the mean gap). */
+const SESSION_RATE_MIN_SESSIONS = 6;
+
+/* Calendar day index for a timestamp, in the athlete's own local time. Counting
+   DAYS rather than raw timestamps keeps the estimate independent of what time
+   of day someone trains: a session at 17:30 three weeks ago and one at 19:00
+   today are three weeks apart regardless of the 90 minutes between them. */
+function localDayIndex(t) {
+  const d = new Date(t);
+  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+}
+
+function sessionsPerWeekObserved(program) {
+  const log = program?.sessionLog;
+  if (!Array.isArray(log) || !log.length) return null;
+  /* ANCHORED ON THE LAST LOGGED SESSION, NOT ON NOW. The rate describes
+     COMPLETED training history, and prescribe() runs before today's session is
+     logged — so a window ending at `now` is always one session short of the
+     pattern it is trying to read. On a Mon-Fri schedule that reads 14 sessions
+     in 3 weeks instead of 15, i.e. 4.67/week, putting freqScale at 1.071
+     instead of 1.0 and quietly under-dosing every session.
+     Anchoring here also keeps this consistent with AUDIT 3.7's finding that a
+     LAYOFF is not a frequency signal: time off leaves the established rate
+     intact for layoffFactor and the sessionsSinceLayoff return window to
+     handle, rather than reading as a collapse in training frequency. */
+  const end = localDayIndex(log[log.length - 1]);
+  const start = end - SESSION_RATE_WINDOW_WEEKS * 7;
+  const days = new Set();
+  for (const t of log) {
+    const di = localDayIndex(t);
+    if (di > start && di <= end) days.add(di);
+  }
+  if (days.size < SESSION_RATE_MIN_SESSIONS) return null;
+  return days.size / SESSION_RATE_WINDOW_WEEKS;
+}
+
+/* The gap figure the volume math should use: derived from the observed weekly
+   RATE where one is available, falling back to the tracked mean gap.
+   Expressed as a gap rather than a rate so every existing caller of
+   weeklyFreqScale keeps working unchanged — the estimator moved, the units and
+   the clamp did not. */
+function effectiveGapDays(program) {
+  const spw = sessionsPerWeekObserved(program);
+  if (spw != null && spw > 0) return 7 / spw;
+  return program?.avgSessionGapDays ?? null;
+}
 /* The clamp bounds above are the whole reason a capacity shortfall can be
    UNFIXABLE by cadence: freqScale bottoms out at 0.6, so weekly capacity tops
    out at maxDeliverable / 0.6 no matter how often the athlete trains. Named
@@ -1147,7 +1225,7 @@ const FREQ_SCALE_MIN = 0.6;
    function to be wrong, so the test suite pins it against what prescribe()
    actually delivers rather than against this formula. */
 function capacityShortfalls(program, blockType = "accumulation") {
-  const freqScale = weeklyFreqScale(program?.avgSessionGapDays);
+  const freqScale = weeklyFreqScale(effectiveGapDays(program));
   const out = {};
   Object.entries(program?.landmarks || {}).forEach(([p, lm]) => {
     const capA = maxDeliverable(p, blockType);   // per-rotation
@@ -1278,7 +1356,7 @@ function adjustLandmarks(program) {
      week rate before comparing to MRV, so this auto-tune gate and the
      transition trigger in ingest() (ceilingHit) agree on units — computed once
      per call since it depends only on the program's tracked frequency. */
-  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
+  const freqScale = weeklyFreqScale(effectiveGapDays(program));
   /* Stall-notice tracking (additive, observation-only — see STALL_STREAK_
      THRESHOLD): reads program.landmarks (the pre-adjustment values, same
      source reachedCeiling below already uses) and reachedCeiling itself, so
@@ -1780,7 +1858,7 @@ function prescribe(program, readiness) {
      above weeklyTarget) — this is the actual per-session prescription math,
      not just a decision-site comparison; without it prescribe() keeps
      assuming exactly 4x/week regardless of the athlete's real cadence. */
-  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
+  const freqScale = weeklyFreqScale(effectiveGapDays(program));
 
   /* AUDIT 3.1/3.9: an unusable reading falls back to "green" (no softening),
      the same as no readiness object at all — absent data must not be read as
@@ -2139,6 +2217,14 @@ function ingest(program, logs, readiness) {
   if (daysSinceLast > 0 && daysSinceLast <= LAYOFF_THRESHOLD_DAYS)
     next.avgSessionGapDays = ewma(next.avgSessionGapDays, daysSinceLast, 0.3);
 
+  /* Session timestamps, newest last, for sessionsPerWeekObserved(). Kept as a
+     plain bounded list rather than folded into a running statistic precisely
+     because the thing it has to measure — a weekly PATTERN — is destroyed by
+     the folding (see the comment above SESSION_RATE_WINDOW_WEEKS). Bounded to
+     a little more than the rate window so it cannot grow without limit in
+     stored program state. */
+  next.sessionLog = [...(next.sessionLog || []), now].slice(-SESSION_LOG_MAX);
+
   /* AUDIT 2.8: layoffFactor only softens LOAD — reps, RPE ceiling, and set
      count come back at full pre-layoff intensity the very next session, even
      though what detrains fastest is volume/eccentric tolerance, not the
@@ -2336,7 +2422,7 @@ function ingest(program, logs, readiness) {
        it afterward makes it comparable to a weekly landmark — two different
        jobs. maxDeliverable/capA is a schedule-capacity ceiling and stays
        unscaled internally (only its own /freqScale below, unchanged). */
-    const freqScale = weeklyFreqScale(next.avgSessionGapDays);
+    const freqScale = weeklyFreqScale(effectiveGapDays(next));
     const ceilingHit = (p) => {
       /* The ramp tops out at MAV since the hypertrophy rebuild (see
          weeklyTarget), so MAV — not MRV — is the volume ceiling a block can
@@ -2432,14 +2518,25 @@ function ingest(program, logs, readiness) {
    is 1.75 days: every muscle gets its two exposures per rotation spread over
    7 days, which is the 2x/week the frequency evidence supports.
 
-   THE FRACTION IS LOAD-BEARING — do not round it to whole days. Keeping 1.75
-   and adding it to the last session's TIMESTAMP makes the advised date
-   alternate on its own: log Monday evening, the target lands Wednesday
-   morning; log Wednesday evening, it lands Friday morning; then Sunday, then
-   Tuesday. Mon/Wed/Fri/Sun is 4 sessions in 7 days. Rounding to 2 whole days
-   would silently settle at 3.5/week and drift a muscle exposure below target
-   every fortnight. */
+   THE FRACTIONAL-GAP MECHANISM IS GONE, AND THIS IS WHY. The previous version
+   added a fractional gap (7/ROT days) to a running target so the advised dates
+   would walk through the week and average out to ROT sessions per 7 days. That
+   is the correct way to hit a rate when training days are not tied to the
+   calendar — but the athlete's schedule IS tied to the calendar: Monday to
+   Friday, resting Saturday and Sunday. Followed literally from a Monday, the
+   fractional advisory produced Mon -> Wed -> Thu -> Fri -> SUNDAY -> Mon: it
+   skipped a Tuesday and advised training on a rest day.
+   Against a fixed weekly schedule the calendar is the schedule, so the
+   advisory now names the next TRAINING DAY. No fraction to accumulate, no
+   drift to re-anchor. */
 const TARGET_SESSION_GAP_DAYS = 7 / ROT;
+/* Weekdays the athlete trains, as JS getDay() indices (0 = Sunday).
+   Mon-Fri, resting Saturday and Sunday. The count deliberately equals ROT:
+   one rotation day per training day means the rotation completes in exactly
+   one calendar week, which is the cadence the whole volume system is centred
+   on (weeklyFreqScale === 1). A mismatch here would silently reintroduce the
+   drift this replaced, so it is asserted in the test suite. */
+const TRAINING_WEEKDAYS = [1, 2, 3, 4, 5];
 /* Fatigue stretches the gap rather than replacing it, so a tired athlete slows
    down from their own cadence instead of being handed an unrelated number.
    1.6x and 2.3x land a normal 1.75-day gap on ~2.8 and ~4.0 days — close to
@@ -2452,39 +2549,60 @@ function nextSessionGapDays(fatigueIndex) {
     : 1;
   return TARGET_SESSION_GAP_DAYS * stretch;
 }
+/* Fatigue expressed in the unit a fixed schedule actually has: TRAINING DAYS
+   to skip. Derived from FATIGUE_GAP_STRETCH rather than hardcoded so the two
+   cannot drift apart — at 5 training days a week, stretching the gap 1.6x and
+   2.3x means advising the 2nd and 3rd training day out rather than the 1st,
+   which is the same felt behaviour the gap version produced.
 
-/* The advisory TIMESTAMP, and the reason this is not simply
-   `loggedAt + gap`. People train at a habitual time of day. Add 1.75 days to a
-   6pm session and you get 9am two days later; the athlete trains that evening
-   instead, and the next calculation starts from THAT evening — so the fraction
-   is discarded on every round-trip and every gap silently becomes exactly two
-   calendar days. That is 3.5 sessions/week, the very shortfall this function
-   exists to correct. (Caught by the four-week assertion in engine_fix_tests,
-   not by reading — the one-week count looks correct either way, because
-   counting from a session start always catches 4.)
+   CEIL, NOT ROUND. Math.round(2.3) is 2, which gave a fatigue SPIKE exactly
+   the same advice as amber — collapsing the two bands into one and quietly
+   removing the engine's most conservative recommendation. Rounding up also
+   errs in the right direction for a recovery advisory: when the stretch falls
+   between two training days, take the later one. */
+function trainingDaysToSkip(fatigueIndex) {
+  return Math.max(1, Math.ceil(nextSessionGapDays(fatigueIndex) / TARGET_SESSION_GAP_DAYS - 1e-9));
+}
 
-   Anchoring on the PREVIOUS TARGET instead lets the fractional schedule
-   accumulate: targets fall at 1.75-day intervals regardless of when the
-   athlete actually trains, so the advised DATES walk through the week and
-   average out to ROT sessions per 7 days.
+/* The advisory TIMESTAMP: the next training weekday after `now`, skipping
+   further ahead when fatigue is elevated.
 
-   RE-ANCHOR ON DRIFT. If the athlete is more than a rotation off schedule —
-   illness, travel, a week off — continuing to add to a stale target would
-   advise a date in the past and then chase it. Past that threshold the
-   schedule restarts from now, which is also what makes a returning athlete's
-   first advisory sensible rather than an apology for the fortnight they
-   missed. */
+   Anchored on NOW rather than on a running target. The previous version
+   carried prevTargetAt forward so a fractional gap could accumulate, and
+   needed a drift threshold to stop it chasing a stale date after time off.
+   Neither is needed once the advisory lands on weekdays: the calendar carries
+   the schedule, so a returning athlete is simply told the next training day,
+   and there is no fraction that can be lost by rounding to a date.
+
+   Returns local midnight of the advised day. The athlete is being told WHICH
+   DAY, not what time — and pinning it to midnight means the banner cannot show
+   tomorrow's date because the session was logged late in the evening.
+
+   prevTargetAt is accepted and ignored, keeping the call signature stable for
+   App.jsx and for stored programs carrying the field. */
 function nextSessionTargetAt(prevTargetAt, now, fatigueIndex) {
-  const gapMs = nextSessionGapDays(fatigueIndex) * 86400000;
-  const driftLimitMs = TARGET_SESSION_GAP_DAYS * ROT * 86400000;
-  const onSchedule = Number.isFinite(prevTargetAt) && Math.abs(now - prevTargetAt) < driftLimitMs;
-  return (onSchedule ? prevTargetAt : now) + gapMs;
+  let skip = trainingDaysToSkip(fatigueIndex);
+  const d = new Date(now);
+  /* Walk forward a day at a time and count only training days. Bounded at 21
+     so a TRAINING_WEEKDAYS misconfiguration can never spin: with an empty
+     list there is no next training day and the loop must terminate anyway. */
+  for (let i = 1; i <= 21; i++) {
+    const cand = new Date(d.getFullYear(), d.getMonth(), d.getDate() + i);
+    if (!TRAINING_WEEKDAYS.includes(cand.getDay())) continue;
+    if (--skip === 0) return cand.getTime();
+  }
+  return now + nextSessionGapDays(fatigueIndex) * 86400000; // unreachable with a sane schedule
 }
 /* Sessions per week the advisory is steering toward, for display. Derived from
    the same constant so the number shown to the athlete can never disagree with
    the date they are given. */
 function targetSessionsPerWeek(fatigueIndex) {
-  return 7 / nextSessionGapDays(fatigueIndex);
+  /* At normal fatigue this is the schedule itself — one session per training
+     weekday — rather than a rate derived from a gap. Derived from
+     TRAINING_WEEKDAYS.length so the number shown to the athlete cannot
+     disagree with the dates they are given. Elevated fatigue skips training
+     days, which divides the weekly count by the same factor. */
+  return TRAINING_WEEKDAYS.length / trainingDaysToSkip(fatigueIndex);
 }
 
 function applyTransition(program, transition) {
@@ -2587,7 +2705,7 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
-    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null, sessionsSinceLayoff: null,
+    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null, sessionLog: [], sessionsSinceLayoff: null,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
@@ -2764,6 +2882,14 @@ function migrateProgram(program) {
   const stallStreaks = program.stallStreaks || {};
   const stallNotices = program.stallNotices || {};
   const stallFieldsChanged = !program.stallStreaks || !program.stallNotices;
+  /* 4b. sessionLog, for a program saved before frequency was measured as a
+     weekly rate. Backfilled EMPTY rather than reconstructed: with fewer than
+     SESSION_RATE_MIN_SESSIONS entries effectiveGapDays falls back to the
+     tracked mean gap, so the athlete keeps their existing dosing and the rate
+     estimator takes over once enough real sessions have accumulated. Inventing
+     plausible timestamps would hand the new estimator fabricated evidence. */
+  const sessionLog = Array.isArray(program.sessionLog) ? program.sessionLog : [];
+  const sessionLogChanged = !Array.isArray(program.sessionLog);
   /* 5. a program saved mid-intensification or mid-realization is sitting in a
      block type the hypertrophy rebuild deleted — BLOCKS has no config for it,
      so prescribe() would dereference undefined on the very next session. Land
@@ -2778,8 +2904,8 @@ function migrateProgram(program) {
     block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
     blockChanged = true;
   }
-  return (changed || liftsChanged || stallFieldsChanged || blockChanged)
-    ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts, stallStreaks, stallNotices, block }
+  return (changed || liftsChanged || stallFieldsChanged || blockChanged || sessionLogChanged)
+    ? { ...program, landmarks: lm, landmarkAdjustments: adj, lifts, stallStreaks, stallNotices, block, sessionLog }
     : program;
 }
 
@@ -2806,7 +2932,8 @@ export {
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
-  capacityShortfalls, FREQ_SCALE_MIN,
+  capacityShortfalls, FREQ_SCALE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS,
+  SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX, trainingDaysToSkip,
   PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
