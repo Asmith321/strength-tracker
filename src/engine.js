@@ -1076,6 +1076,69 @@ function weeklyFreqScale(avgSessionGapDays) {
   if (avgSessionGapDays == null) return 1;
   return Math.max(0.6, Math.min(1.8, (ROT * avgSessionGapDays) / 7));
 }
+/* The clamp bounds above are the whole reason a capacity shortfall can be
+   UNFIXABLE by cadence: freqScale bottoms out at 0.6, so weekly capacity tops
+   out at maxDeliverable / 0.6 no matter how often the athlete trains. Named
+   here rather than re-deriving 0.6 at the call site — capacityShortfalls
+   compares against it and would silently disagree with the clamp if either
+   moved. */
+const FREQ_SCALE_MIN = 0.6;
+
+/* ---- schedule-capacity shortfall (MAV the rotation cannot deliver) ----
+
+   WHAT THIS ANSWERS: "am I actually going to hit my MAV at the cadence I
+   train?" MAV is the endpoint every accumulation block ramps toward, so a MAV
+   the schedule can never deliver is not a stretch goal — it is a target the
+   athlete silently never reaches, with nothing in the app saying so.
+
+   WHY IT IS NOT adjustLandmarks' reachedCeiling. That flag computes the same
+   comparison, but it is unusable as a warning on three counts: it is gated
+   behind `n >= 3` sessions of e1RM history, it only runs at an accumulation→
+   deload boundary, and it is consumed as a CONFOUND (a reason to distrust a
+   stall signal) rather than reported. A capacity shortfall is a structural
+   fact about landmarks x rotation x cadence — it is true from the moment the
+   numbers are what they are, needs no training history to establish, and the
+   athlete should be able to see it before spending a block on it.
+
+   UNITS. maxDeliverable is per-ROTATION; landmarks are per-CALENDAR-WEEK.
+   Dividing by freqScale converts the former into the latter — the same
+   conversion AUDIT 3.3 had to add inside adjustLandmarks after the raise gates
+   were found comparing the two directly, which is only correct at exactly
+   4x/week. Getting this backwards is the single most likely way for this
+   function to be wrong, so the test suite pins it against what prescribe()
+   actually delivers rather than against this formula. */
+function capacityShortfalls(program, blockType = "accumulation") {
+  const freqScale = weeklyFreqScale(program?.avgSessionGapDays);
+  const out = {};
+  Object.entries(program?.landmarks || {}).forEach(([p, lm]) => {
+    const capA = maxDeliverable(p, blockType);   // per-rotation
+    const capW = capA / freqScale;               // per-calendar-week
+    /* Tolerance, not a fudge: capW is a rate with a repeating decimal at most
+       cadences (20/1.142857... = 17.5), and a group whose MAV sits a hundredth
+       of a set above its capacity is not something to warn an athlete about. */
+    if (lm.mav <= capW + 1e-9) return;
+    /* Cadence needed to close it. capW >= mav  <=>  capA/freqScale >= mav
+       <=>  freqScale <= capA/mav, and freqScale = ROT / sessionsPerWeek, so
+       sessionsPerWeek >= ROT * mav / capA. */
+    const sessionsPerWeekNeeded = (ROT * lm.mav) / capA;
+    /* Below FREQ_SCALE_MIN the clamp stops paying out, so past that point more
+       training days genuinely cannot deliver this MAV — the group is short of
+       ramped SLOTS, and only a rotation change (or a lower MAV) fixes it.
+       Reporting these two cases identically would send the athlete to add
+       training days that provably won't help. */
+    const fixableByCadence = capA / FREQ_SCALE_MIN >= lm.mav;
+    out[p] = {
+      label: lm.label,
+      mav: lm.mav,
+      capacityWeekly: capW,
+      shortfall: lm.mav - capW,
+      slots: PATTERN_FREQ[p] || 0,
+      fixableByCadence,
+      sessionsPerWeekNeeded: fixableByCadence ? sessionsPerWeekNeeded : null,
+    };
+  });
+  return out;
+}
 
 /* ---- automatic volume-landmark adjustment (runs at accumulation→deload) ----
    Two signals per pattern drive a gradual ±1-set drift over many blocks:
@@ -2704,6 +2767,7 @@ export {
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
+  capacityShortfalls, FREQ_SCALE_MIN,
   PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
   LAYOFF_THRESHOLD_DAYS, LAYOFF_DECAY_PER_DAY, LAYOFF_MAX_DECAY,
