@@ -105,13 +105,18 @@ console.log("\n== The strength skeleton is gone ==");
 
 console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
 {
-  check(`rotation is ${ROT} days`, ROT === 4);
-  check("each day pairs an upper half with a lower half (no upper-only or lower-only day)", ROTATION.every((d) => {
-    const groups = new Set(d.items.map((k) => LIB[k].volumeGroup));
-    const lower = ["quads", "hamstrings", "calves"].some((g) => groups.has(g));
-    const upper = ["chest", "back", "front_delts", "side_delts", "rear_delts", "biceps", "triceps"].some((g) => groups.has(g));
-    return lower && upper;
-  }));
+  check(`rotation is ${ROT} days`, ROT === 5);
+  /* THE BALANCE CONSTRAINT, RESTATED AS WHAT IT WAS ACTUALLY FOR. This used to
+     require every day to pair an upper half with a lower half, and the 5-day
+     split deliberately breaks that: it has a dedicated Legs day and a pure Pull
+     day. The reason the old rule existed was session-length balance — the
+     approved list is 15/23 upper-body, so a naive upper/lower split measured
+     ~49 sets on an upper day against ~20 on a lower one. That is the property
+     worth pinning, and it survives the shape change, so it is asserted
+     directly instead of through a proxy that no longer holds. */
+  const sizes = ROTATION.map((d) => d.items.length);
+  check(`no day is more than 2 exercises longer than the shortest (${sizes.join(", ")})`,
+    Math.max(...sizes) - Math.min(...sizes) <= 2);
   const exposures = {};
   ROTATION.forEach((d) => {
     const seen = new Set(d.items.map((k) => LIB[k].volumeGroup));
@@ -120,8 +125,25 @@ console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
   Object.keys(PATTERNS).forEach((g) => {
     check(`${g} is trained on ${exposures[g]} separate days per rotation (>=2)`, exposures[g] >= 2, `got ${exposures[g]}`);
   });
-  check("chest and back each get 2 training DAYS, not 2 slots on one day",
-    exposures.chest === 2 && exposures.back === 2);
+  /* Back gets THREE days now, not two. That is not incidental: an advanced back
+     MAV of 23 cannot be delivered in two days, because SAME_DAY_GROUP_CAP
+     bounds a single day at 10 sets however many slots it holds — two days cap
+     out at 20. The third exposure is the whole reason the rotation grew. */
+  check("chest gets 2 training DAYS, not 2 slots on one day", exposures.chest === 2, `got ${exposures.chest}`);
+  check("back gets 3 training DAYS so its advanced MAV of 23 clears the same-day cap",
+    exposures.back === 3, `got ${exposures.back}`);
+
+  /* The two requirements the 5-day rotation exists to satisfy, asserted here
+     against the SHIPPED program (engine_fix_tests asserts the same two against
+     the capacity mechanism). At the design cadence one rotation spans exactly
+     7 days, so exposures per rotation are exposures per week. */
+  const advanced = landmarksForExperience("advanced");
+  const underTwice = Object.keys(advanced).filter((g) => (exposures[g] || 0) < 2);
+  check(`REQUIREMENT 2 — every tracked muscle trained >= 2x/week (${underTwice.join(", ") || "all >= 2x"})`,
+    underTwice.length === 0);
+  const shortOfMav = Object.keys(advanced).filter((g) => maxDeliverable(g, "accumulation") < advanced[g].mav);
+  check(`REQUIREMENT 1 — every ADVANCED MAV is deliverable at the design cadence (${shortOfMav.join(", ") || "none short"})`,
+    shortOfMav.length === 0);
 }
 
 console.log("\n== Schedule capacity vs. landmarks ==");

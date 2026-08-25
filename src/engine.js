@@ -527,20 +527,51 @@ const LIB = {
    removed. That is what this is — every slot is now a ramped accessory chosen
    for stimulus, not for carrying a strength peak.
 
-   SHAPE: 4 days, each pairing one upper half with one lower half, so every
-   muscle gets exactly 2-3 exposures per rotation:
-     D0 Push · Quads A   D1 Pull · Hinge A   D2 Push · Quads B   D3 Pull · Hinge B
-   The obvious alternative — 2 upper days and 2 lower days — was rejected after
+   SHAPE: 5 days, on a fixed weekly cycle:
+     D0 Push   D1 Pull   D2 Legs   D3 Upper   D4 Lower + Pull
+
+   WHY FIVE AND NOT FOUR. The rotation was 4 days, and it could not satisfy two
+   requirements the athlete set explicitly: reach the ADVANCED weekly MAV for
+   every muscle, and train every muscle at least 2x per calendar week. Measured
+   against the 4-day rotation:
+     • at 4x/week — back reached 20 sets against a MAV of 23, biceps 16 against
+       18. Neither is fixable by adding sets to an existing day, because
+       SAME_DAY_GROUP_CAP already binds at 10 there; back specifically needed a
+       THIRD exposure day, which a 4-day rotation carrying two pull days has
+       nowhere to put.
+     • at every-other-day — a 4-day rotation takes 8 days to complete, so a
+       muscle trained on 2 of its days gets 2 exposures per 8 days = 1.75x per
+       week. That is arithmetic, not dosing: no amount of volume fixes it.
+   Five days completes in exactly 7 at the 1.4-day target gap, so exposures per
+   rotation ARE exposures per week, and the extra day gives back, side delts,
+   calves, biceps and triceps the third exposure their advanced MAVs require
+   under the same-day cap.
+
+   WHY NOT SIMPLY TRAIN THE 4-DAY ROTATION FIVE TIMES A WEEK. It delivers the
+   volume, but the rotation stops aligning with the calendar — 4 days consumed
+   at 5 sessions/week means the week starts on a different day of the rotation
+   each time, so no weekday ever holds the same session twice. A fixed weekly
+   split is the thing that makes a 5-day schedule legible.
+
+   BALANCE. The obvious alternative — pure upper/lower — was rejected after
    counting the approved list: 15 of its 23 exercises are upper-body, so an
    upper/lower split concentrates ~2/3 of the program into half the sessions
-   (measured at ~49 sets on an upper day against ~20 on a lower one). Splitting
-   each day across both halves balances session length AND gets chest and back
-   to 2 exposures per rotation instead of 1 — the sole reason frequency matters
-   for hypertrophy, given that frequency is not independently anabolic when
-   weekly volume is equated (Schoenfeld/Grgic meta-analyses) but per-SESSION
-   volume does hit diminishing returns (~11 fractional sets/muscle; Robinson,
-   Pelland, Zourdos et al.). Frequency here is a volume-distribution tool, not
-   a stimulus in its own right. Same reason SAME_DAY_GROUP_CAP exists.
+   (measured at ~49 sets on an upper day against ~20 on a lower one). The days
+   below run 6-8 exercises each for the same reason.
+
+   Frequency is used here as a volume-DISTRIBUTION tool, not as a stimulus in
+   its own right: frequency is not independently anabolic when weekly volume is
+   equated (Schoenfeld/Grgic meta-analyses), but per-SESSION volume does hit
+   diminishing returns (~11 fractional sets/muscle; Robinson, Pelland, Zourdos
+   et al.). Every muscle above 2 exposures here is there because its MAV does
+   not fit under SAME_DAY_GROUP_CAP in fewer, not because more often is better.
+
+   THIS SHAPE ASSUMES THE ATHLETE ACTUALLY TRAINS FIVE TIMES A WEEK. Measured,
+   the same rotation at a 1.6-day gap (~4.4x/week) drops 6 groups below their
+   MAV and 4 below 2x/week; at 1.75 days (4x/week) it is 9 and 4. A 5-day
+   program run 4 days a week is strictly worse than a 4-day program run 4 days
+   a week, and capacityShortfalls() will say so on the Status screen rather
+   than letting it pass silently.
 
    EXERCISE SELECTION is biased toward loading at LONG muscle length wherever
    the approved list offers the choice, the one exercise-selection variable
@@ -560,52 +591,60 @@ const LIB = {
        work is better served by T-bar row / pull-up / pullover. This is the
        one place the rebuild removes something the athlete listed; it is on
        the list and stays in LIB, so re-adding it is a one-line change.
-     • Front Squat — redundant here. Back squat, Bulgarian split squat and leg
-       extension already give quads 4 ramped slots (24 sets/rotation capacity
-       against an MRV of 18); a fifth quad slot would displace volume from a
-       muscle that still needs it. Kept in LIB as a ready back-squat variant.
+     • Front Squat — redundant here. Back squat, Bulgarian split squat and two
+       leg-extension exposures already give quads 4 ramped slots across 2 days
+       (20 sets/rotation capacity against an advanced MAV of 18); a fifth quad
+       slot would displace volume from a muscle that still needs it. Kept in
+       LIB as a ready back-squat variant.
 
    volumeDay is gone with the main lifts — it existed to give a barbell main a
    differentiated second weekly exposure, and every exercise here now runs the
    same straight-set prescription every time it appears.
 
-   SLOT BUDGET — capacity per rotation vs the intermediate landmarks it has to
-   reach. PHASE 4 (T1-1/T2-7): this table used to read "slots x ACC_SET_CAP",
-   which was wrong twice over. It listed triceps at 2 slots when triext appears
-   on three days (the paragraph above adding that third exposure was already
-   in this same comment), and more importantly it ignored SAME_DAY_GROUP_CAP,
-   so every group that lands two ramped slots on one day was credited with
-   capacity it never had. Real capacity, cap-aware — see maxDeliverable, which
-   now computes exactly this:
-     chest 4 slots -> 20 (MAV 14, MRV 22)   back 4 -> 20 (MAV 18, MRV 25)
-     quads 4 -> 20 (MAV 14, MRV 18)         hamstrings 3 -> 16 (MAV 8, MRV 14)
-     biceps 3 -> 16 (MAV 14, MRV 20)        side_delts 3 -> 18 (MAV 14, MRV 22)
-     calves 3 -> 18 (MAV 14, MRV 20)        triceps 3 -> 18 (MAV 12, MRV 18)
-     front_delts 2 -> 12 (MAV 7, MRV 12)    rear_delts 2 -> 12 (MAV 9, MRV 16)
-   Every group clears its MAV at 4x/week at the intermediate tier, which is
-   what the ramp actually aims for. Groups short of MRV are indirect-stimulus-
-   heavy or limited by having one approved exercise — the same deliberate
-   stance the front_delts/rear_delts notes on PATTERNS describe. At the
-   ADVANCED tier back (MAV 23) and biceps (MAV 18) exceed 4x/week capacity and
-   reach their MAV by training 5x/week instead; that is the frequency mechanism
-   audit 3.12 documented, not a new shortfall.
+   SLOT BUDGET — capacity per rotation (cap-aware, i.e. what maxDeliverable
+   actually computes, NOT slots x ACC_SET_CAP: a group landing two ramped slots
+   on one day is bounded by SAME_DAY_GROUP_CAP, so two slots on a day are worth
+   10 sets and not 12) against the ADVANCED landmarks, which is the tier this
+   5-day shape exists to satisfy. At the 1.4-day target gap freqScale is 1.0,
+   so per-rotation capacity IS the per-week number the landmarks are in:
+     back    3 days (2+2+1) -> 26 (MAV 23)   chest   2 days (2+2) -> 20 (MAV 18)
+     quads   2 days (2+2)   -> 20 (MAV 18)   side_delts 3 (1+1+1) -> 18 (MAV 18)
+     calves  3 days (1+1+1) -> 18 (MAV 18)   biceps  3 (1+1+1)    -> 18 (MAV 18)
+     triceps 3 days (1+1+1) -> 18 (MAV 15)   hamstrings 2 (1+2)   -> 16 (MAV 10)
+     rear_delts 2 (1+1)     -> 12 (MAV 11)   front_delts 2 (1+1)  -> 12 (MAV 9)
+   Every tracked group clears its ADVANCED MAV and every one is trained at
+   least 2x/week. side_delts, calves and biceps sit exactly ON their MAV with
+   no headroom — they have 2, 1 and 2 approved exercises respectively, so the
+   third exposure is a repeat of a movement already used that week. If the
+   landmark auto-tune ever raises one of those, the Status screen's capacity
+   warning is what will surface it.
+
+   WHY BACK GETS THREE DAYS AND MOST GROUPS TWO: an advanced back MAV of 23
+   cannot be reached in two days. SAME_DAY_GROUP_CAP bounds one day at 10 sets
+   however many slots it holds, so two days cap out at 20. Three days (10 + 10
+   + 6) reach 26. The third exposure is the lat pullover on the Lower day,
+   placed there rather than on a press day because it shares no fatigue with
+   squatting or hinging.
 
    ORDER WITHIN A DAY: compounds before isolation for the same muscle, and no
    isolation exercise that pre-fatigues a later compound's weak link (e.g.
-   curls never precede a row). The only index-sensitive logic is the
-   earlierPrimed warmup check, which keys off volumeGroup. */
+   curls never precede a row, wrist work never precedes a pull). The only
+   index-sensitive logic is the earlierPrimed warmup check, which keys off
+   volumeGroup. */
 const ROTATION = [
-  { name: "Push · Quads A", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "squat", "legext", "calfraise", "cablecrunch"] },
-  { name: "Pull · Hinge A", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "rdl", "legcurl", "calfraise", "shrug"] },
-  { name: "Push · Quads B", items: ["inclinebench", "dip", "dbshoulderpress", "dblateralraise", "triceppushdown", "bsplit", "legext", "calfraise", "cablecrunch"] },
-  /* triext appears here as well as on both push days: with only one approved
-     triceps exercise, 2 slots forced 6 sets of the same movement into a single
-     session to reach the triceps MAV of 12 — past the point where additional
-     sets of one exercise in one session still buy anything. A third exposure
-     splits the same weekly volume 4/4/4. Landing it on a pull day is not a
-     mismatch: this day already carries lateral raises, and triceps are fully
-     recovered here precisely because they were not the day's pressing work. */
-  { name: "Pull · Hinge B", items: ["pullup", "pulldown", "reversepecdeck", "preachercurl", "bayesiancurl", "triext", "nordic", "lateralraise", "wristcurl"] },
+  { name: "Push · Chest & Delts", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "calfraise", "cablecrunch"] },
+  /* triceppushdown lands on the pull day for the same reason triext used to:
+     with two approved triceps movements and an advanced MAV of 15, two
+     exposures would force 10 and 6 sets into two sessions. A third splits it
+     6/6/6, and triceps are fully recovered here precisely because this day's
+     work is pulling. */
+  { name: "Pull · Back & Arms", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "triceppushdown", "shrug", "wristcurl"] },
+  /* Lateral raises ride along on leg day to give side delts their third
+     exposure. They cost almost nothing systemically and share no fatigue with
+     squatting, which is what makes this the cheapest place to put them. */
+  { name: "Legs · Quads", items: ["squat", "legext", "legcurl", "lateralraise", "calfraise", "cablecrunch"] },
+  { name: "Upper · Full", items: ["inclinebench", "dip", "pullup", "pulldown", "dbshoulderpress", "dblateralraise", "triceppushdown", "preachercurl"] },
+  { name: "Lower · Hinge & Pull", items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "reversepecdeck", "bayesiancurl", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —

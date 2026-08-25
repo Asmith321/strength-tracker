@@ -17,7 +17,17 @@
    key at all, i.e. a genuine zero-edit submission) fed through handleLog's
    FIXED ingestLogs mapping (`touched: true` unconditionally) into the real
    ingest(). ============================================================================ */
-import { freshProgram, prescribe, ingest } from "./src/engine.js";
+import { freshProgram, prescribe, ingest, ROTATION } from "./src/engine.js";
+
+/* The rotation day carrying a given exercise. This test needs a compound and
+   an isolation slot from the SAME session; the 4-day rotation happened to put
+   squat and cablefly together on day 0, and the 5-day split separates them
+   (squat -> Legs, cablefly -> Push). Derived so the pairing stays real. */
+const dayWith = (key) => {
+  const i = ROTATION.findIndex((d) => d.items.includes(key));
+  if (i < 0) throw new Error(`no rotation day contains "${key}" — this test needs updating`);
+  return i;
+};
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = "") => {
@@ -31,6 +41,7 @@ const green = { trainingReadiness: 80 };
 console.log("\n== zero-edit submission through the fixed handleLog boundary ==");
 {
   const program = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+  program.cycleIndex = dayWith("squat");   // the Legs day: squat (compound) + legext (isolation)
   const rx = prescribe(program, green);
   // Exactly Today's initial (never-edited) log shape: no _touched key present.
   const logs = rx.items.map((it) => ({
@@ -49,9 +60,9 @@ console.log("\n== zero-edit submission through the fixed handleLog boundary ==")
   check(`squat logged at RPE ${squatLog.rpe} (>=7) in accumulation: hist entry IS recorded`,
     r.next.lifts.squat.hist.length === before + 1);
   check("squat e1RM was updated from the zero-edit submission", r.next.lifts.squat.e1rm !== program.lifts.squat.e1rm);
-  const flyLog = rx.items.find((it) => it.key === "cablefly"); // an isolation slot on the same day, also unedited
-  check(`cablefly (isolation, also unedited, RPE ${flyLog.rpe}) got a hist entry too`,
-    r.next.lifts.cablefly.hist.length === program.lifts.cablefly.hist.length + 1);
+  const isoLog = rx.items.find((it) => it.key === "legext"); // an isolation slot on the same day, also unedited
+  check(`legext (isolation, also unedited, RPE ${isoLog.rpe}) got a hist entry too`,
+    r.next.lifts.legext.hist.length === program.lifts.legext.hist.length + 1);
   check("no session was silently dropped: rpeMiss reflects real evidence, not null (touched compound logs exist)", r.rpeMiss != null);
 
   // The old (buggy) boundary, for contrast — confirms this test would have
@@ -65,6 +76,7 @@ console.log("\n== zero-edit submission through the fixed handleLog boundary ==")
 console.log("\n== edited submission still works exactly as before ==");
 {
   const program = freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "strength", bodyweight: 200 });
+  program.cycleIndex = dayWith("squat");   // the Legs day: squat (compound) + legext (isolation)
   const rx = prescribe(program, green);
   // Simulates `upd`: an edited row carries _touched: true.
   const logs = rx.items.map((it) => ({

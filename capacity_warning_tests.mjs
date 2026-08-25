@@ -30,7 +30,7 @@ Date.now = () => CLOCK;
 
 const {
   capacityShortfalls, freshProgram, prescribe, ingest, landmarksForExperience,
-  maxDeliverable, weeklyFreqScale, LIB, ROT, FREQ_SCALE_MIN, PATTERN_FREQ,
+  maxDeliverable, weeklyFreqScale, LIB, ROT, FREQ_SCALE_MIN, PATTERN_FREQ, TARGET_SESSION_GAP_DAYS,
 } = await import("./src/engine.js");
 
 let pass = 0, fail = 0;
@@ -44,10 +44,20 @@ const seeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, r
 const progAt = (experience, gap) => ({ landmarks: landmarksForExperience(experience), avgSessionGapDays: gap });
 
 /* Runs the real engine at a fixed cadence and returns, per muscle, the highest
-   sets-per-calendar-week it ever actually receives. Measured over whole 28-day
-   windows so every cadence is compared across the same amount of real time
-   rather than the same number of sessions (sessions advance the block ramp, so
-   an equal-session window would compare different points of the mesocycle). */
+   sets-per-calendar-week it ever actually receives.
+
+   MEASURED OVER WHOLE ROTATIONS, NOT A FIXED NUMBER OF DAYS. The window has to
+   contain each rotation day an equal number of times or the result is an
+   artifact of where the window happens to start: a muscle trained on 3 of 5
+   days can appear 3 times in one 12-session window and twice in the next, and
+   taking the MAX across windows then reports a rate the schedule never
+   sustains. That is exactly what a 28-day window did once the rotation became
+   5 days (28 / 1.4 = 20 sessions = 4 rotations is fine, but 28 / 2.33 = 12
+   sessions = 2.4 rotations is not) — it reported back at 17 sets/week against
+   a real capacity of 15.6, i.e. above the cap, which is impossible and was the
+   measurement's fault rather than the engine's. Whole rotations make every day
+   contribute equally, and dividing by the rotation's true length in weeks
+   converts to the per-calendar-week rate the landmarks are in. */
 function deliveredPeakWeekly(experience, gapDays, weeks = 26) {
   CLOCK = Date.UTC(2026, 0, 1);
   let p = freshProgram({ seeds, experience, unit: "lb", goal: "hypertrophy", bodyweight: 200 });
@@ -69,12 +79,16 @@ function deliveredPeakWeekly(experience, gapDays, weeks = 26) {
     CLOCK += gapDays * 86400000;
     p = ingest(p, logs, { trainingReadiness: 80 }).next;
   }
-  const n = Math.round(28 / gapDays);
+  /* Four whole rotations, and the window is stepped a whole rotation at a time
+     so every window covers the same set of rotation days. */
+  const rotations = 4;
+  const n = ROT * rotations;
+  const weeksSpanned = (n * gapDays) / 7;
   const peak = {};
-  for (let i = 0; i + n <= sessions.length; i++) {
+  for (let i = 0; i + n <= sessions.length; i += ROT) {
     const acc = {};
     sessions.slice(i, i + n).forEach((g) => Object.entries(g).forEach(([k, v]) => { acc[k] = (acc[k] || 0) + v; }));
-    Object.entries(acc).forEach(([k, v]) => { peak[k] = Math.max(peak[k] || 0, v / 4); });
+    Object.entries(acc).forEach(([k, v]) => { peak[k] = Math.max(peak[k] || 0, v / weeksSpanned); });
   }
   return peak;
 }
@@ -86,7 +100,7 @@ console.log("\n== The prediction matches what the engine actually prescribes =="
      the non-4x cadences while still passing at 1.75d — which is exactly how
      the AUDIT 3.3 bug hid. */
   for (const experience of ["intermediate", "advanced"]) {
-    for (const gap of [1.75, 2.0, 2.33]) {
+    for (const gap of [TARGET_SESSION_GAP_DAYS, 1.75, 2.33]) {
       const delivered = deliveredPeakWeekly(experience, gap);
       const short = capacityShortfalls(progAt(experience, gap));
       const lm = landmarksForExperience(experience);
@@ -124,33 +138,40 @@ console.log("\n== The cases the athlete asked about ==");
   /* Thresholds written as LITERALS. Reading them back out of
      landmarksForExperience() would make the assertion true by construction
      whatever the tier tables said — the self-consistency trap this project
-     keeps rediscovering. These four numbers are the shipped intermediate/
-     advanced MAVs and the shipped back/biceps capacities; if a tier table
-     moves, this test SHOULD fail and be re-read by a human. */
-  const inter4x = capacityShortfalls(progAt("intermediate", 1.75));
-  check("intermediate at 4x/week: nothing is schedule-limited",
-    Object.keys(inter4x).length === 0, JSON.stringify(Object.keys(inter4x)));
+     keeps rediscovering. If a tier table or the rotation moves, these SHOULD
+     fail and be re-read by a human.
 
-  const interEod = capacityShortfalls(progAt("intermediate", 2.0));
-  check("intermediate every-other-day: only back, and only by half a set",
-    Object.keys(interEod).join() === "back" && Math.abs(interEod.back.shortfall - 0.5) < 1e-9,
-    JSON.stringify(interEod));
+     REBASELINED FOR THE 5-DAY ROTATION. The old expectations described the
+     4-day program: "back and biceps are the only groups short at 4x/week" and
+     "intermediate every-other-day: only back". Both were accurate then and
+     both are the limitation the 5-day split was built to remove, so they are
+     replaced rather than adjusted. */
+  const design = capacityShortfalls(progAt("advanced", TARGET_SESSION_GAP_DAYS));
+  check("advanced at the design cadence: NOTHING is schedule-limited — the whole point of the 5-day rotation",
+    Object.keys(design).length === 0, JSON.stringify(design));
+  const designInter = capacityShortfalls(progAt("intermediate", TARGET_SESSION_GAP_DAYS));
+  check("intermediate at the design cadence: nothing is schedule-limited",
+    Object.keys(designInter).length === 0, JSON.stringify(Object.keys(designInter)));
+  check("intermediate at 4x/week is also clear (its MAVs fit even a slower cadence)",
+    Object.keys(capacityShortfalls(progAt("intermediate", 1.75))).length === 0);
 
+  /* The counterpart, and the reason the warning exists: running a FIVE-day
+     program four days a week strands most of the advanced landmarks. */
   const adv4x = capacityShortfalls(progAt("advanced", 1.75));
-  check("advanced at 4x/week: back (MAV 23) is capped at its 20-set capacity",
-    adv4x.back && adv4x.back.mav === 23 && Math.abs(adv4x.back.capacityWeekly - 20) < 1e-9,
+  check("advanced running this 5-day program only 4x/week: back (MAV 23) drops to 20.8 of its 26-set capacity",
+    adv4x.back && adv4x.back.mav === 23 && Math.abs(adv4x.back.capacityWeekly - 20.8) < 1e-9,
     JSON.stringify(adv4x.back));
-  check("advanced at 4x/week: biceps (MAV 18) is capped at its 16-set capacity",
-    adv4x.biceps && adv4x.biceps.mav === 18 && Math.abs(adv4x.biceps.capacityWeekly - 16) < 1e-9,
-    JSON.stringify(adv4x.biceps));
-  check("advanced at 4x/week: back and biceps are the ONLY groups short",
-    Object.keys(adv4x).sort().join() === "back,biceps", JSON.stringify(Object.keys(adv4x)));
+  check("...and side delts / calves / biceps (MAV 18) drop to 14.4",
+    ["side_delts", "calves", "biceps"].every((g) => adv4x[g] && Math.abs(adv4x[g].capacityWeekly - 14.4) < 1e-9),
+    JSON.stringify(Object.keys(adv4x)));
+  check("...affecting 8 of the 10 tracked groups, not one or two",
+    Object.keys(adv4x).length === 8, String(Object.keys(adv4x).length));
 
   const advEod = capacityShortfalls(progAt("advanced", 2.0));
-  check("advanced every-other-day: the shortfall spreads well beyond back and biceps",
-    Object.keys(advEod).length >= 6, String(Object.keys(advEod).length));
-  check("advanced every-other-day: back is short by more than 5 sets/week",
-    advEod.back.shortfall > 5, String(advEod.back?.shortfall));
+  check("advanced every-other-day is worse still — every tracked group short but hamstrings",
+    Object.keys(advEod).length === 9, JSON.stringify(Object.keys(advEod)));
+  check("advanced every-other-day: side delts short by more than 5 sets/week",
+    advEod.side_delts.shortfall > 5, String(advEod.side_delts?.shortfall));
 }
 
 console.log("\n== Slowing the cadence can only make a shortfall worse ==");
@@ -178,7 +199,7 @@ console.log("\n== The prescribed fix actually fixes it ==");
      shortfall from scratch at that cadence. */
   let checked = 0, bad = [];
   for (const experience of ["intermediate", "advanced"]) {
-    for (const gap of [1.75, 2.0, 2.33]) {
+    for (const gap of [TARGET_SESSION_GAP_DAYS, 1.75, 2.33]) {
       const short = capacityShortfalls(progAt(experience, gap));
       Object.entries(short).forEach(([k, v]) => {
         if (!v.fixableByCadence) return;
