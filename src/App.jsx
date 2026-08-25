@@ -11,7 +11,7 @@ import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from 
 import { readDraft, writeDraft, clearDraft, draftMatches } from "./draft.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
-  prescribe, ingest, applyTransition, restDaysForFatigue, deliveredWeekly, maxDeliverable, weeklyFreqScale, e1rmFrom,
+  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, capacityShortfalls, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -463,9 +463,21 @@ function Today({ program, sessions, onLog }) {
         <div className="prnote mono"><Award size={13} /> NEW e1RM {program.lastPRs.length > 1 ? "PRs" : "PR"} — {program.lastPRs.map((k) => LIB[k]?.label || RETIRED_LABELS[k] || k).join(", ")}</div>
       )}
 
-      {program.lastRestUntil && (
+      {/* Names the DATE to train next and the cadence that date is steering
+          toward, so the two can be sanity-checked against each other. The old
+          banner said "Rest until <date>" from a flat 1/2/3-day minimum, which
+          read as a recommendation and pointed at 7 sessions/week at normal
+          fatigue. Still advisory — nothing here blocks logging early. */}
+      {program.nextSessionAt && (
         <div className="restnote mono">
-          <Timer size={13} /> Rest until {new Date(program.lastRestUntil).toLocaleDateString("en-US", { month: "long", day: "numeric" })} — advisory only, log anytime
+          <Timer size={13} />
+          <span>
+            Next session {new Date(program.nextSessionAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+            {program.nextSessionPerWeek >= 3.5
+              ? ` — on pace for ${program.nextSessionPerWeek.toFixed(0)} sessions/week`
+              : " — stretched to let fatigue clear"}
+            . Advisory only, log anytime.
+          </span>
         </div>
       )}
 
@@ -487,6 +499,66 @@ function Today({ program, sessions, onLog }) {
   );
 }
 
+/* Muscles whose MAV the rotation cannot deliver at the athlete's actual
+   training cadence.
+
+   WHY THIS IS WORTH A PANEL. MAV is the endpoint every accumulation block
+   ramps toward. A MAV the schedule can never reach doesn't announce itself:
+   the volume bar simply stops climbing a little short, block after block,
+   looking like a normal plateau. The athlete's only lever is cadence, and
+   nothing in the app previously connected the two — so the failure mode was
+   training for months against a target the program structurally could not hand
+   out, and reading it as a recovery problem.
+
+   It renders nothing when there is nothing to say, which is the common case at
+   4x/week on the intermediate landmarks. */
+function CapacityWarning({ shortfalls, gapDays }) {
+  const rows = Object.entries(shortfalls);
+  if (!rows.length) return null;
+  /* Sorted worst-first: with 7+ groups short (advanced landmarks on a slow
+     cadence) an unsorted list buries the one that matters. */
+  rows.sort((a, b) => b[1].shortfall - a[1].shortfall);
+  /* One cadence that clears everything cadence CAN clear, so the athlete gets
+     a single number to act on instead of a per-muscle table of them. */
+  const fixable = rows.filter(([, v]) => v.fixableByCadence);
+  const needed = fixable.length ? Math.max(...fixable.map(([, v]) => v.sessionsPerWeekNeeded)) : null;
+  const stuck = rows.filter(([, v]) => !v.fixableByCadence);
+  const perWeek = gapDays ? 7 / gapDays : null;
+  return (
+    <div className="panel capwarn">
+      <div className="capwarn-head">
+        <AlertTriangle size={13} />
+        <span className="mono">SCHEDULE CAN'T DELIVER {rows.length === 1 ? "1 TARGET" : `${rows.length} TARGETS`}</span>
+      </div>
+      <p className="capwarn-lede">
+        {perWeek ? `At your current ${perWeek.toFixed(1)} sessions/week, these` : "These"} muscles have a MAV the rotation
+        cannot prescribe. Each block ramps toward a number it never reaches — that reads as a plateau, but it's the schedule, not your recovery.
+      </p>
+      {rows.map(([p, v]) => (
+        <div key={p} className="capwarn-row mono">
+          <span>{v.label}</span>
+          <span className="dim">
+            {v.capacityWeekly.toFixed(1)} of {v.mav} sets
+            <span className="capwarn-gap"> −{v.shortfall.toFixed(1)}</span>
+          </span>
+        </div>
+      ))}
+      {needed != null && (
+        <p className="capwarn-fix">
+          Training <strong>{needed.toFixed(1)}×/week</strong> (about every {(7 / needed).toFixed(1)} days) delivers{" "}
+          {stuck.length ? fixable.map(([, v]) => v.label).join(", ") : "all of these"} in full.
+        </p>
+      )}
+      {stuck.length > 0 && (
+        <p className="capwarn-fix">
+          {stuck.map(([, v]) => v.label).join(", ")} {stuck.length === 1 ? "is" : "are"} short of ramped
+          exercise slots, not training days — no cadence delivers {stuck.length === 1 ? "it" : "them"}. That needs a rotation change.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Status({ program }) {
   const cyc = program.block.cycle;
   /* Same frequency correction prescribe() applies to the ramped-accessory
@@ -498,11 +570,18 @@ function Status({ program }) {
      display would silently drift from what prescribe() actually hands the
      athlete the moment avgSessionGapDays departs from ~4x/week. */
   const freqScale = weeklyFreqScale(program.avgSessionGapDays);
+  const shortfalls = capacityShortfalls(program, program.block.type);
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
     // true-weekly full-muscle sets actually prescribed (mains + fixedSets + ramped); rounded since freqScale != 1 makes this a rate, not a literal per-rotation count
     const wk = Math.round(deliveredWeekly(p, program.block.type, cyc, program.landmarks, freqScale) / freqScale);
-    const deliverable = maxDeliverable(p, program.block.type);
-    const capped = deliverable < lm.mrv;      // group structurally can't reach its own MRV at current exercise counts
+    /* maxDeliverable is per-ROTATION; mrv is per-CALENDAR-WEEK. Comparing them
+       directly (as this did) is only correct at exactly 4x/week — the same
+       units mismatch AUDIT 3.3 fixed inside adjustLandmarks' raise gates. At a
+       slower cadence it UNDER-reported the ceiling marker and at a faster one
+       it over-reported it, so the one indicator meant to warn about capacity
+       was itself wrong wherever capacity actually mattered. */
+    const deliverable = Math.round(maxDeliverable(p, program.block.type) / freqScale);
+    const capped = deliverable < lm.mrv;      // group structurally can't reach its own MRV at this cadence
     const pctMrv = Math.min(1, wk / lm.mrv);
     const color = wk < lm.mev ? "#9AA0AC" : wk < lm.mav ? "#3FA85F" : wk < lm.mrv ? "#E8C547" : "#D7443E";
     return { p, label: lm.label, wk, lm, pctMrv, color, deliverable, capped };
@@ -516,6 +595,7 @@ function Status({ program }) {
         <Gauge value={program.fatigue.index} label={`FATIGUE INDEX  ${program.fatigue.index.toFixed(2)}`} color={program.fatigue.index >= 0.7 ? "#D7443E" : program.fatigue.index >= 0.55 ? "#E8C547" : "#3FA85F"} />
         <Gauge value={0.5 + program.fatigue.slope * 50} label={`e1RM TREND  ${(program.fatigue.slope * 100).toFixed(2)}%/session`} color="#2F6FB0" />
       </div>
+      <CapacityWarning shortfalls={shortfalls} gapDays={program.avgSessionGapDays} />
       <div className="eyebrow mt">WEEKLY VOLUME vs LANDMARKS</div>
       {rows.map((r) => (
         <div key={r.p} className="volrow">
@@ -744,8 +824,12 @@ export default function App() {
     }
     finalProgram.lastCoach = coach.note;
     finalProgram.lastPRs = prs.length ? prs : null;
-    const restDays = restDaysForFatigue(fatigueIndex);
-    finalProgram.lastRestUntil = Date.now() + restDays * 86400000;
+    /* Fractional days, added to the timestamp — see nextSessionGapDays. The
+       1.75 must NOT be rounded here: keeping it is what makes the advised date
+       alternate Mon/Wed/Fri/Sun and land on 4 sessions per 7 days. */
+    finalProgram.nextSessionAt = nextSessionTargetAt(program.nextSessionAt, Date.now(), fatigueIndex);
+    finalProgram.nextSessionPerWeek = targetSessionsPerWeek(fatigueIndex);
+    delete finalProgram.lastRestUntil;   // superseded; drop so the old banner can't linger
 
     const record = {
       date: Date.now(), block: rx.block, dayName: rx.dayName,
@@ -1001,6 +1085,16 @@ const CSS = `
 .vol-cap{position:absolute;top:-3px;width:2px;height:14px;background:#D7443E;opacity:.9;}
 .vol-legend{font-size:10px;margin-top:5px;}
 .vol-capnote{color:#D7443E;opacity:.9;}
+/* Schedule-capacity warning. Amber rather than the red used for MRV overreach:
+   this is "you are leaving growth on the table", not "you are digging a hole",
+   and colouring the two the same would flatten a distinction the athlete has to
+   act on differently. */
+.capwarn{padding:12px 14px;margin-top:14px;border-color:rgba(232,197,71,.45);background:rgba(232,197,71,.06);}
+.capwarn-head{display:flex;align-items:center;gap:6px;color:#E8C547;font-size:11px;letter-spacing:.1em;margin-bottom:7px;}
+.capwarn-lede{font-size:11.5px;line-height:1.5;color:var(--dim);margin:0 0 9px;}
+.capwarn-row{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;border-top:1px solid rgba(232,197,71,.15);}
+.capwarn-gap{color:#E8C547;margin-left:7px;}
+.capwarn-fix{font-size:11.5px;line-height:1.5;margin:9px 0 0;padding-top:9px;border-top:1px solid rgba(232,197,71,.15);}
 .chart{padding:14px;}
 .chart-title{font-size:11px;letter-spacing:.1em;margin-bottom:8px;}
 .hist{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:9px;}
