@@ -15,7 +15,8 @@ import {
   E1RM_MIN_RPE, LAYOFF_THRESHOLD_DAYS, LAYOFF_MAX_DECAY, DP_MIN_REPS, DP_WINDOW, STALL_STREAK_THRESHOLD,
   DP_MAX_STEPS, DP_STALL_THRESHOLD, DP_STALL_DECAY, RETURN_RPE_CAP, RETURN_SET_MULT,
   FEELER_LOAD_FLOOR_LB, readinessScore, liftSlopeInfo, slope, weeklyFreqScale as wfs, MEV_MAV_MAX_RATIO,
-  FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP, FATIGUE_AMBER,
+  FATIGUE_SPIKE, FATIGUE_STILL_ELEVATED, SAME_DAY_GROUP_CAP, FATIGUE_AMBER, TRAINING_WEEKDAYS,
+  effectiveGapDays, sessionsPerWeekObserved, SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX,
 } from "./src/engine.js";
 
 let pass = 0, fail = 0;
@@ -2693,24 +2694,67 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
       new Set(gaps).size > 1);
   }
 
-  /* Coming back after time off must RE-ANCHOR rather than chase a stale
-     target. Without this the advisory would keep adding to a date two weeks in
-     the past and hand the athlete a recommendation that has already expired. */
+  /* THE DRIFT / RE-ANCHOR MECHANISM IS GONE, and these assertions replace it.
+     It existed so a fractional gap could accumulate across sessions without
+     chasing a stale target after time off. Once the advisory lands on TRAINING
+     WEEKDAYS there is no fraction to accumulate and no schedule to drift from
+     — the calendar is the schedule — so prevTargetAt is ignored entirely and
+     every case reduces to "the next training day". The old assertions are
+     replaced rather than adjusted because the property they described no
+     longer exists. */
   {
-    const now = new Date(2026, 7, 24, 18, 0, 0).getTime();
-    const staleTarget = now - 14 * 86400000;          // a fortnight off
-    const after = nextSessionTargetAt(staleTarget, now, 0.3);
-    check(`a returning athlete is advised a FUTURE date, not a stale one (${((after - now) / 86400000).toFixed(2)} days out)`,
-      after > now);
-    check("...and that date is the normal target gap, not an apology for the time missed",
-      Math.abs((after - now) / 86400000 - TARGET_SESSION_GAP_DAYS) < 1e-9);
-    // whereas someone merely a little late keeps their existing schedule
-    const slightlyLate = now - 0.5 * 86400000;
-    const kept = nextSessionTargetAt(slightlyLate, now, 0.3);
-    check("someone slightly late stays on their existing schedule rather than resetting",
-      Math.abs(kept - (slightlyLate + TARGET_SESSION_GAP_DAYS * 86400000)) < 1e-9);
-    check("a first-ever session (no previous target) anchors on now",
-      Math.abs(nextSessionTargetAt(null, now, 0.3) - (now + TARGET_SESSION_GAP_DAYS * 86400000)) < 1e-9);
+    const now = new Date(2026, 7, 24, 18, 0, 0).getTime();   // a Monday evening
+    check("sanity: the fixture date really is a Monday", new Date(now).getDay() === 1);
+
+    const dayOf = (t) => new Date(t).getDay();
+    const staleTarget = now - 14 * 86400000;                 // a fortnight off
+    const returning = nextSessionTargetAt(staleTarget, now, 0.3);
+    check(`a returning athlete is advised a FUTURE date, not a stale one (${((returning - now) / 86400000).toFixed(2)} days out)`,
+      returning > now);
+    check("...and it is simply the next training day — no apology for the time missed",
+      dayOf(returning) === 2);
+
+    /* prevTargetAt is now inert. Asserted directly, because a caller (or a
+       stored program) still passes it and a future change that started reading
+       it again would silently reintroduce the weekend drift. */
+    const late = nextSessionTargetAt(now - 0.5 * 86400000, now, 0.3);
+    const first = nextSessionTargetAt(null, now, 0.3);
+    check("the previous target no longer changes the answer — only `now` and fatigue do",
+      late === returning && first === returning, `${late} / ${first} / ${returning}`);
+
+    /* THE PROPERTY THE ATHLETE ACTUALLY ASKED FOR: never advise a rest day.
+       Swept over every weekday and every fatigue band, because the old
+       fractional advisory failed exactly here — followed from a Monday it
+       produced Mon -> Wed -> Thu -> Fri -> SUNDAY -> Mon. */
+    const weekendAdvice = [];
+    for (let d = 0; d < 14; d++) {
+      for (const fi of [0.3, FATIGUE_AMBER, FATIGUE_SPIKE]) {
+        const from = new Date(2026, 7, 24 + d, 18, 0, 0).getTime();
+        const adv = nextSessionTargetAt(null, from, fi);
+        if (!TRAINING_WEEKDAYS.includes(dayOf(adv))) weekendAdvice.push(`${new Date(from).toDateString()} @${fi} -> ${new Date(adv).toDateString()}`);
+        if (adv <= from) weekendAdvice.push(`${new Date(from).toDateString()} @${fi} -> not in the future`);
+      }
+    }
+    check("the advisory never names a rest day, from any weekday at any fatigue level",
+      weekendAdvice.length === 0, weekendAdvice.slice(0, 4).join("; "));
+
+    /* Friday must roll to Monday rather than to Saturday — the specific case
+       the whole change is about. */
+    const friday = new Date(2026, 7, 28, 18, 0, 0).getTime();
+    check("sanity: the fixture date really is a Friday", new Date(friday).getDay() === 5);
+    check("training Friday advises Monday, not Saturday", dayOf(nextSessionTargetAt(null, friday, 0.3)) === 1);
+
+    /* Fatigue skips training days rather than adding fractional ones. */
+    check("elevated fatigue skips a training day (Monday -> Wednesday at amber)",
+      dayOf(nextSessionTargetAt(null, now, FATIGUE_AMBER)) === 3);
+    check("a fatigue spike skips two (Monday -> Thursday)",
+      dayOf(nextSessionTargetAt(null, now, FATIGUE_SPIKE)) === 4);
+
+    /* The displayed cadence must agree with the dates actually handed out. */
+    check(`the advertised weekly rate at normal fatigue is the schedule itself (${targetSessionsPerWeek(0.3)})`,
+      targetSessionsPerWeek(0.3) === TRAINING_WEEKDAYS.length);
+    check("one training day per rotation day, or the rotation stops completing in a calendar week",
+      TRAINING_WEEKDAYS.length === ROT);
   }
 
   /* The advisory is advisory: nothing in the engine reads it back, so it can
