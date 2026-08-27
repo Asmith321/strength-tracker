@@ -10,6 +10,7 @@
    bundling step — nothing here mutates the engine source.
    ============================================================================ */
 import {
+  weeklyFreqScale, effectiveGapDays,
   freshProgram, ingest, prescribe, applyTransition,
   platesForSide, rpePct, LIB, ROTATION, BLOCKS,
 } from "./src/engine.js";
@@ -291,6 +292,16 @@ function runLongSim(tier, seed, N = 450) {
   let curBlock = program.block.type, runLen = 0, maxRun = 0, maxRunBlock = curBlock;
   let transitions = 0;
   let sawAssist = false, sawRepOnly = false, sawNegPullupIngest = false, sawLongGap = false, sawSameDay = false;
+  /* A gap longer than this is an absence rather than a cadence; the established
+     rate must not move for this many sessions afterwards. 8 is the boundary,
+     found by measurement rather than chosen: at this harness's ~2-day mean
+     spacing that is ~16 days, so the layoff is still inside the estimator's
+     21-day window and the rate genuinely must not have moved. Removing the
+     engine's gap-awareness produces 16 violations here; the fixed build
+     produces 0. Watching longer (10, 12) starts flagging the legitimate
+     re-establishment of the rate once clean history rebuilds. */
+  const LAYOFF_WATCH_DAYS = 5, LAYOFF_WATCH_SESSIONS = 8;
+  let rateBeforeGap = null, gapWatch = 0;
 
   for (let s = 1; s <= N; s++) {
     // ---- advance clock (gaps + injected long gaps / same-day doubles) ----
@@ -322,6 +333,48 @@ function runLongSim(tier, seed, N = 450) {
     try { rx = prescribe(program, readiness); }
     catch (e) { rep.add("prescribe-crash", s, `${e.message} | block=${program.block.type} bw=${program.bodyweight}`); break; }
     checkPrescribe(rep, s, program, rx);
+    /* VOLUME CONTINUITY — the invariant this harness was missing.
+       It already injects 14-31 day layoffs at sessions 50/130/260/380 and
+       same-day double-logs at 70/205/340: the exact inputs behind the worst
+       bug this engine has shipped. It reported 0 violations through all of it,
+       because every check here was about finiteness, bounds, plate validity
+       and ordering — nothing asserted HOW MANY SETS were prescribed. Underneath
+       that clean bill of health, one layoff was walking freqScale
+       1.36 -> 1.80 and prescribing 44-set sessions against a normal 35.
+       Session volume may rise when the block ramp advances, and it may fall for
+       any reason. What it may never do is JUMP without the ramp advancing —
+       that signature is a frequency-estimate error, and it is what the
+       athlete actually feels. */
+    /* AUDIT 3.7's PROPERTY, ASSERTED ON THE MECHANISM RATHER THAN THE OUTCOME.
+       This harness already injects 14-31 day layoffs at sessions 50/130/260/380
+       — the exact input behind the worst bug this engine has shipped — and
+       reported 0 violations through all of them, because every check here was
+       about finiteness, bounds, plate validity and ordering. Nothing watched
+       the frequency estimate, so a layoff walking freqScale 1.36 -> 1.80 and
+       prescribing 44-set sessions passed as healthy.
+
+       WHY NOT ASSERT ON freqScale DIRECTLY. Tried first, and it measures this
+       harness rather than the engine: sessions here are spaced by random 1-3
+       day gaps, so freqScale legitimately oscillates between 1.0 and 1.25.
+       Verified by counterfactual — running the identical seed with and without
+       the injected gap produces the same oscillation, and at sessions 262-265
+       the WITH-gap run is actually lower. There is no stable cadence here for a
+       layoff to disturb, so any threshold is tuned to noise.
+
+       The mechanism is testable without that confound. The established rate is
+       only rewritten from a REPRESENTATIVE window, and a window containing a
+       layoff is not representative — so a layoff must leave program
+       .sessionsPerWeek untouched until clean history rebuilds. On the broken
+       build the estimator had no such notion and the stored rate moved
+       immediately. */
+    if (gapDays > LAYOFF_WATCH_DAYS) { rateBeforeGap = program.sessionsPerWeek ?? null; gapWatch = LAYOFF_WATCH_SESSIONS; }
+    if (gapWatch > 0) {
+      if (rateBeforeGap != null && program.sessionsPerWeek !== rateBeforeGap)
+        rep.add("layoff-moved-established-rate", s,
+          `sessionsPerWeek ${rateBeforeGap} -> ${program.sessionsPerWeek} `
+          + `(${LAYOFF_WATCH_SESSIONS - gapWatch + 1} sessions after a long gap)`);
+      gapWatch--;
+    }
     for (const it of rx.items) { if (it.assistanceNeeded) sawAssist = true; if (it.repOnly) sawRepOnly = true; }
 
     // ---- build logs & ingest ----

@@ -1232,38 +1232,104 @@ function localDayIndex(t) {
   return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
 }
 
+/* A gap this much larger than the athlete's own established spacing is an
+   ABSENCE, not a change of cadence. Scaled to their rate rather than fixed:
+   "abnormally long" means something different at 5x/week (mean gap 1.4 days)
+   than at 2x/week (3.5 days), and a fixed threshold would either call a sparse
+   athlete's normal week abnormal or fail to notice a dense athlete's holiday.
+   Floored so a Mon-Fri weekend (3 days) can never read as abnormal, and
+   defaulted generously before any rate is established so a new athlete can
+   settle into any legitimate schedule. */
+const SESSION_GAP_ABNORMAL_MULT = 2;
+const SESSION_GAP_ABNORMAL_FLOOR_DAYS = 4;
+const SESSION_GAP_ABNORMAL_DEFAULT_DAYS = 7;
+
+function abnormalGapDays(establishedPerWeek) {
+  if (!(establishedPerWeek > 0)) return SESSION_GAP_ABNORMAL_DEFAULT_DAYS;
+  return Math.max(SESSION_GAP_ABNORMAL_FLOOR_DAYS, SESSION_GAP_ABNORMAL_MULT * (7 / establishedPerWeek));
+}
+
+/* The athlete's training rate, read from the trailing window ONLY when that
+   window is representative of how they actually train. Returns null when it is
+   not, so the caller holds the last established rate instead.
+
+   WHY THE REPRESENTATIVENESS CHECK EXISTS — this shipped without it and
+   reintroduced AUDIT 3.7's exact failure mode, worse. Counting sessions in a
+   fixed trailing window means a break inside that window simply removes
+   training days from the count. That reads as a collapse in frequency;
+   effectiveGapDays returns a longer gap; weeklyFreqScale returns a larger
+   number; and weeklyTarget MULTIPLIES by it. Measured on a real Mon-Fri
+   athlete taking one 10-day break: freqScale went 1.0 -> 1.5 and stayed there
+   for the whole 21-day window, prescribing 44-set sessions with chest and
+   quads pinned at SAME_DAY_GROUP_CAP, while the athlete trained exactly
+   5x/week throughout. More volume immediately after time off is precisely
+   backwards, and precisely what AUDIT 3.7 established must never happen.
+
+   The comment that stood here asserted a layoff "leaves the established rate
+   intact". That described the intent; the code did not implement it. It does
+   now: a window containing an abnormal gap is not evidence about cadence, so
+   it yields nothing. Absence is handled where it belongs — layoffFactor and
+   the sessionsSinceLayoff return window. */
 function sessionsPerWeekObserved(program) {
   const log = program?.sessionLog;
   if (!Array.isArray(log) || !log.length) return null;
   /* ANCHORED ON THE LAST LOGGED SESSION, NOT ON NOW. The rate describes
      COMPLETED training history, and prescribe() runs before today's session is
      logged — so a window ending at `now` is always one session short of the
-     pattern it is trying to read. On a Mon-Fri schedule that reads 14 sessions
-     in 3 weeks instead of 15, i.e. 4.67/week, putting freqScale at 1.071
-     instead of 1.0 and quietly under-dosing every session.
-     Anchoring here also keeps this consistent with AUDIT 3.7's finding that a
-     LAYOFF is not a frequency signal: time off leaves the established rate
-     intact for layoffFactor and the sessionsSinceLayoff return window to
-     handle, rather than reading as a collapse in training frequency. */
-  const end = localDayIndex(log[log.length - 1]);
+     pattern it is reading. On a Mon-Fri schedule that reads 14 sessions in 3
+     weeks instead of 15, putting freqScale at 1.071 instead of 1.0 and quietly
+     under-dosing every session. */
+  const all = [...new Set(log.map(localDayIndex))].sort((a, b) => a - b);
+  const end = all[all.length - 1];
   const start = end - SESSION_RATE_WINDOW_WEEKS * 7;
-  const days = new Set();
-  for (const t of log) {
-    const di = localDayIndex(t);
-    if (di > start && di <= end) days.add(di);
+  const days = all.filter((d) => d > start && d <= end);
+  if (days.length < SESSION_RATE_MIN_SESSIONS) return null;
+  /* THE WINDOW'S LEADING EDGE IS A GAP BOUNDARY TOO. The count is divided by
+     the window's nominal width, so the window has to be COVERED, not merely
+     non-empty — a window holding only its newest fortnight reports two thirds
+     of the true rate. That is exactly the state a returning athlete is in once
+     their layoff ages past the far edge: the gap is no longer inside the
+     window, so the interior check below sees nothing wrong, while the empty
+     leading week silently deflates the rate. Measured on the half-fixed build,
+     that read 3.67/week for a 5x/week athlete and put freqScale at 1.364 —
+     the same over-dose the gap check prevents during the layoff, arriving a
+     week later instead.
+     Seeding the walk at `start` treats the distance from the window edge to
+     the first session as a gap like any other, so one loop catches both. */
+  const limit = abnormalGapDays(program.sessionsPerWeek);
+  let prev = start;
+  for (const d of days) { if (d - prev > limit) return null; prev = d; }
+  /* THE RATE IS THE BEST WHOLE WEEK, NOT THE WINDOW AVERAGE. Dividing a session
+     COUNT by the window's nominal width is only exact when the window happens
+     to align with the athlete's weekly pattern: a 21-day window holds 14 or 15
+     Mon-Fri sessions depending on which weekday it starts on, so the same
+     unchanged schedule reads 5.00/week or 4.67/week according to nothing but
+     the calendar. That put freqScale at 1.071 on a comeback whose cadence had
+     not changed at all.
+     ANY 7-consecutive-day window, by contrast, holds exactly 5 sessions of a
+     Mon-Fri pattern regardless of alignment. Bucketing the window into whole
+     weeks and taking the best one is therefore exact for a periodic schedule,
+     and it is the right statistic besides: a partially-covered leading week
+     should not drag the estimate below a rate the athlete demonstrably trained
+     at. The gap walk above is what guarantees the buckets describe real
+     training rather than an absence. */
+  let best = 0;
+  for (let w = 0; w < SESSION_RATE_WINDOW_WEEKS; w++) {
+    const hi = end - w * 7, lo = hi - 7;
+    best = Math.max(best, days.filter((d) => d > lo && d <= hi).length);
   }
-  if (days.size < SESSION_RATE_MIN_SESSIONS) return null;
-  return days.size / SESSION_RATE_WINDOW_WEEKS;
+  return best;
 }
-
-/* The gap figure the volume math should use: derived from the observed weekly
-   RATE where one is available, falling back to the tracked mean gap.
-   Expressed as a gap rather than a rate so every existing caller of
-   weeklyFreqScale keeps working unchanged — the estimator moved, the units and
-   the clamp did not. */
 function effectiveGapDays(program) {
-  const spw = sessionsPerWeekObserved(program);
-  if (spw != null && spw > 0) return 7 / spw;
+  const live = sessionsPerWeekObserved(program);
+  if (live != null && live > 0) return 7 / live;
+  /* The last rate that WAS established, held through absences. This is what
+     stops a holiday changing the dose, and without it the layoff case fell
+     straight through to the oscillating EWMA this whole mechanism replaced:
+     measured, freqScale walked 0.744 -> 1.800 between two consecutive Mon-Fri
+     sessions, a 2.4x step in the volume multiplier. */
+  const held = program?.sessionsPerWeek;
+  if (held > 0) return 7 / held;
   return program?.avgSessionGapDays ?? null;
 }
 /* The clamp bounds above are the whole reason a capacity shortfall can be
@@ -2297,6 +2363,14 @@ function ingest(program, logs, readiness) {
      a little more than the rate window so it cannot grow without limit in
      stored program state. */
   next.sessionLog = [...(next.sessionLog || []), now].slice(-SESSION_LOG_MAX);
+  /* The last rate read from a REPRESENTATIVE window, held so absences cannot
+     move the dose. Written only when sessionsPerWeekObserved actually returns
+     one — during and after a break it returns null, the stored value stands,
+     and prescribing continues at the athlete's real cadence. A genuine change
+     of cadence contains no abnormal gaps, so it flows through here normally and
+     is picked up once three weeks of the new pattern accumulate. */
+  const observedRate = sessionsPerWeekObserved(next);
+  if (observedRate != null) next.sessionsPerWeek = observedRate;
 
   /* AUDIT 2.8: layoffFactor only softens LOAD — reps, RPE ceiling, and set
      count come back at full pre-layoff intensity the very next session, even
@@ -2429,9 +2503,16 @@ function ingest(program, logs, readiness) {
   const readingsSeen = next.fatigue.hasReadiness === true;
   const wCreep = readingsSeen ? 0.5 : 0.5 / (1 - READINESS_FATIGUE_WEIGHT);
   const wMiss = readingsSeen ? 0.2 : 0.2 / (1 - READINESS_FATIGUE_WEIGHT);
+  /* The readiness term is gated on the same flag that rescales the other two.
+     Ungated, any path leaving a stale readSupp behind while readingsSeen is
+     false adds a third channel on top of two already-rescaled ones, for a total
+     weight of 1.3. applyTransition was exactly such a path. That is fixed at
+     source, but the weights should sum to 1 by construction rather than by
+     every caller remembering to keep a flag in sync. */
   const fatigueIndex = Math.max(0, Math.min(1,
     wCreep * Math.min(1, next.fatigue.rpeCreep / RPE_CREEP_FULL_SCALE)
-    + READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp + wMiss * next.fatigue.missFreq));
+    + (readingsSeen ? READINESS_FATIGUE_WEIGHT * next.fatigue.readSupp : 0)
+    + wMiss * next.fatigue.missFreq));
   next.fatigue.index = fatigueIndex;
 
   /* Block-level strength trend: main-lift slopes, PRECISION-WEIGHTED by the
@@ -2701,7 +2782,17 @@ function applyTransition(program, transition) {
     nextAfter: transition.nextAfter || (transition.to === "deload" ? next.block.nextAfter : null),
   };
   if (transition.to === "accumulation")
-    next.fatigue = { index: 0, rpeCreep: 0, readSupp: next.fatigue.readSupp, missFreq: 0, slope: 0, backoffDrift: 0 };
+    /* hasReadiness MUST survive this reset. It was dropped, and because
+       readSupp is carried forward the next readiness-free session then
+       renormalised the creep and miss weights to 0.714/0.286 while STILL
+       adding the readiness term at its full 0.3 against a stale readSupp —
+       total weight 1.3, measured fatigue index inflated 1.28x (0.422 against a
+       true 0.329). Every threshold read against the index was wrong in that
+       state: the advisory band, the deload trigger, and adjustLandmarks'
+       fatigue branch. It repaired itself as soon as one session supplied
+       readiness, which made it intermittent rather than harmless. */
+    next.fatigue = { index: 0, rpeCreep: 0, readSupp: next.fatigue.readSupp,
+      hasReadiness: next.fatigue.hasReadiness, missFreq: 0, slope: 0, backoffDrift: 0 };
   next.blockHistory = [...(next.blockHistory || []), { type: transition.to, at: Date.now(), reason: transition.reason,
     ...(transition.forcedDespiteFatigue ? { forcedDespiteFatigue: true } : {}) }];
   return next;
@@ -2778,7 +2869,7 @@ function freshProgram({ seeds, experience, unit, goal, bodyweight }) {
   });
   return {
     unit, goal, experience: experience || "intermediate", landmarks, lifts, bodyweight,
-    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null, sessionLog: [], sessionsSinceLayoff: null,
+    cycleIndex: 0, sessionCount: 0, lastSessionAt: null, avgSessionGapDays: null, sessionLog: [], sessionsPerWeek: null, sessionsSinceLayoff: null,
     fatigue: { index: 0, rpeCreep: 0, readSupp: 0, missFreq: 0, slope: 0, backoffDrift: 0 },
     block: { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null },
     blockHistory: [{ type: "accumulation", at: Date.now(), reason: "program start" }],
@@ -3005,7 +3096,7 @@ export {
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, PATTERN_OF, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
-  capacityShortfalls, FREQ_SCALE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS,
+  capacityShortfalls, FREQ_SCALE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS, abnormalGapDays,
   SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX, trainingDaysToSkip,
   PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,
