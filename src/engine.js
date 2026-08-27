@@ -631,19 +631,66 @@ const LIB = {
    curls never precede a row, wrist work never precedes a pull). The only
    index-sensitive logic is the earlierPrimed warmup check, which keys off
    volumeGroup. */
+/* MOVEMENT PATTERN — a second axis the slot budget above cannot see, and the
+   reason this rotation was wrong on its first pass.
+
+   volumeGroup answers "which muscle does this grow". It does NOT answer "is
+   this the same movement as the one before it". Pull-Up and Lat Pulldown are
+   both volumeGroup "back", so the capacity math treats them as two
+   interchangeable back slots and is perfectly happy to put them back to back
+   — which is what shipped. They are the same vertical pull twice: the second
+   one is the first one pre-fatigued, buying redundant stimulus at full
+   recovery cost. Incline DB Press and DB Overhead Press are a subtler version
+   of the same error: different volumeGroups (chest / front_delts) but a ~30°
+   incline is already heavily front-delt, so stacking them in one session
+   trains the same tissue twice while the landmark ledger records it as two
+   separate muscles being served.
+
+   The athlete caught both by reading a real session. Slotting exercises to
+   satisfy capacity WITHOUT this axis is how it happened, so pattern is now a
+   real field, and program_review_tests asserts the pairing rules below. */
+const PATTERN_OF = {
+  bench: "horiz push", dbbench: "horiz push", inclinebench: "incline push", inclinebb: "incline push",
+  dip: "decline push", cablefly: "chest iso", dbshoulderpress: "vertical push",
+  tbarrow: "horiz pull", pullup: "vertical pull", pulldown: "vertical pull", latpullover: "lat iso",
+  lateralraise: "delt iso", dblateralraise: "delt iso", reversepecdeck: "rear delt iso",
+  triext: "triceps iso", triceppushdown: "triceps iso",
+  bayesiancurl: "biceps iso", preachercurl: "biceps iso",
+  squat: "squat", frontsquat: "squat", bsplit: "lunge", legext: "quad iso",
+  rdl: "hinge", deadlift: "hinge", legcurl: "ham iso", nordic: "ham iso",
+  calfraise: "calf", shrug: "trap", wristcurl: "forearm", bbwristcurl: "forearm",
+  cablecrunch: "abs",
+};
+
 const ROTATION = [
   { name: "Push · Chest & Delts", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "calfraise", "cablecrunch"] },
   /* triceppushdown lands on the pull day for the same reason triext used to:
      with two approved triceps movements and an advanced MAV of 15, two
      exposures would force 10 and 6 sets into two sessions. A third splits it
      6/6/6, and triceps are fully recovered here precisely because this day's
-     work is pulling. */
-  { name: "Pull · Back & Arms", items: ["tbarrow", "latpullover", "reversepecdeck", "bayesiancurl", "triceppushdown", "shrug", "wristcurl"] },
-  /* Lateral raises ride along on leg day to give side delts their third
-     exposure. They cost almost nothing systemically and share no fatigue with
-     squatting, which is what makes this the cheapest place to put them. */
-  { name: "Legs · Quads", items: ["squat", "legext", "legcurl", "lateralraise", "calfraise", "cablecrunch"] },
-  { name: "Upper · Full", items: ["inclinebench", "dip", "pullup", "pulldown", "dbshoulderpress", "dblateralraise", "triceppushdown", "preachercurl"] },
+     work is pulling.
+     BACK PAIRING: T-bar row (horizontal) + lat pulldown (vertical). The two
+     back slots this day needs are now deliberately DIFFERENT patterns — one
+     pulls toward the waist, one overhead — so the second is not the first
+     with fatigue on top. */
+  { name: "Pull · Back & Arms", items: ["tbarrow", "pulldown", "reversepecdeck", "bayesiancurl", "triceppushdown", "shrug", "wristcurl"] },
+  /* DB Overhead Press lives here, on leg day, and that placement is the whole
+     point. Front delts have exactly ONE approved exercise and an advanced MAV
+     of 9, so it must appear twice a week. Its old second home was the Upper
+     day, directly behind an incline press that had already worked the same
+     muscle. Leg day is the only session in the rotation with no pressing at
+     all, so the second exposure lands genuinely fresh.
+     Lateral raises ride along for the same reason — side delts need a third
+     exposure, and these cost almost nothing systemically and share no fatigue
+     with squatting. */
+  { name: "Legs · Quads", items: ["squat", "legext", "legcurl", "dbshoulderpress", "lateralraise", "calfraise", "cablecrunch"] },
+  /* ORDER ALTERNATES PUSH AND PULL: incline press, pull-up, dip, pullover. The
+     two chest compounds and the two back movements are each separated by the
+     other pattern, so nothing same-pattern is adjacent and each muscle gets
+     the other's working time as recovery. Compounds still precede isolation
+     within a muscle (inclinebench before dip, pullup before latpullover), and
+     curls still follow every pull. No overhead press on this day. */
+  { name: "Upper · Full", items: ["inclinebench", "pullup", "dip", "latpullover", "dblateralraise", "triceppushdown", "preachercurl"] },
   { name: "Lower · Hinge & Pull", items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "reversepecdeck", "bayesiancurl", "calfraise"] },
 ];
 const ROT = ROTATION.length;
@@ -2930,7 +2977,7 @@ function plateText(weight, bar = 45) {
 export {
   RPE_TABLE, clampReps, clampRpe, rpePct, repsAtPct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
-  LIB, ROTATION, ROT, PATTERN_FREQ, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
+  LIB, ROTATION, ROT, PATTERN_FREQ, PATTERN_OF, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
   capacityShortfalls, FREQ_SCALE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS,
   SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX, trainingDaysToSkip,

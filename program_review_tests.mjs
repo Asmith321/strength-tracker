@@ -15,7 +15,7 @@
    ============================================================================ */
 import {
   freshProgram, prescribe, ingest, migrateProgram, applyTransition,
-  LIB, ROTATION, ROT, PATTERNS, PATTERN_FREQ, PATTERN_RAMPED_ACC, PATTERN_MAIN,
+  LIB, ROTATION, ROT, PATTERNS, PATTERN_FREQ, PATTERN_OF, PATTERN_RAMPED_ACC, PATTERN_MAIN,
   ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, SAME_DAY_GROUP_CAP,
   deliveredWeekly, fixedWeeklySets, rampedSlotSets, maxDeliverable, landmarksForExperience,
 } from "./src/engine.js";
@@ -144,6 +144,80 @@ console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
   const shortOfMav = Object.keys(advanced).filter((g) => maxDeliverable(g, "accumulation") < advanced[g].mav);
   check(`REQUIREMENT 1 — every ADVANCED MAV is deliverable at the design cadence (${shortOfMav.join(", ") || "none short"})`,
     shortOfMav.length === 0);
+}
+
+console.log("\n== Movement patterns: no muscle is trained twice by the same movement ==");
+{
+  /* WHY THIS BLOCK EXISTS. Every assertion above is about VOLUME — how many
+     sets a muscle gets and on how many days. None of them can see that two
+     slots serving the same muscle might be the same MOVEMENT. The first 5-day
+     rotation shipped with Pull-Up immediately followed by Lat Pulldown: two
+     vertical pulls back to back, which the capacity math scored as a perfectly
+     good pair of back slots. The athlete caught it by reading a real session.
+     These rules encode what volumeGroup structurally cannot. */
+
+  check("every exercise in the rotation has a declared movement pattern",
+    [...new Set(ROTATION.flatMap((d) => d.items))].every((k) => PATTERN_OF[k]),
+    [...new Set(ROTATION.flatMap((d) => d.items))].filter((k) => !PATTERN_OF[k]).join(","));
+
+  /* 1. Nothing same-pattern adjacent. Back to back is the worst case: the
+     second movement is the first one pre-fatigued. */
+  const adjacent = [];
+  ROTATION.forEach((d) => d.items.forEach((k, i) => {
+    if (i > 0 && PATTERN_OF[k] === PATTERN_OF[d.items[i - 1]])
+      adjacent.push(`${d.name}: ${d.items[i - 1]} -> ${k} (both ${PATTERN_OF[k]})`);
+  }));
+  check("no two exercises with the same movement pattern are adjacent in a session",
+    adjacent.length === 0, adjacent.join("; "));
+
+  /* 2. And not merely non-adjacent — a session should not carry the same heavy
+     COMPOUND pattern twice at all. Isolation patterns are exempt: two
+     different curls or two lateral-raise variants in a session are ordinary
+     accessory work, not a redundant heavy movement. */
+  const heavyDuplicated = [];
+  ROTATION.forEach((d) => {
+    const counts = {};
+    d.items.forEach((k) => {
+      const p = PATTERN_OF[k];
+      if (/ iso$/.test(p) || ["calf", "trap", "forearm", "abs"].includes(p)) return;
+      counts[p] = (counts[p] || 0) + 1;
+    });
+    Object.entries(counts).forEach(([p, n]) => { if (n > 1) heavyDuplicated.push(`${d.name}: ${n}x "${p}"`); });
+  });
+  check("no session repeats the same compound movement pattern",
+    heavyDuplicated.length === 0, heavyDuplicated.join("; "));
+
+  /* 3. The subtler one, and the reason volumeGroup alone is not enough: an
+     incline press at ~30 degrees is already heavy front-delt work, so pairing
+     it with an overhead press trains the same tissue twice while the landmark
+     ledger records two different muscles being served. Different
+     volumeGroups, same muscle — invisible to every volume assertion above. */
+  const overlap = ROTATION.filter((d) => {
+    const pats = d.items.map((k) => PATTERN_OF[k]);
+    return pats.includes("incline push") && pats.includes("vertical push");
+  });
+  check("no session pairs an incline press with an overhead press (front-delt overlap)",
+    overlap.length === 0, overlap.map((d) => d.name).join("; "));
+
+  /* 4. Guard against the rules above going vacuous. If the rotation ever lost
+     its multi-slot days these would all pass while testing nothing, so assert
+     the situation they police actually exists: some muscle really does get two
+     slots in one session, and they are genuinely different movements. */
+  const stackedPairs = [];
+  ROTATION.forEach((d) => {
+    const byGroup = {};
+    d.items.forEach((k) => {
+      const g = LIB[k].volumeGroup;
+      if (g && !LIB[k].fixedSets) (byGroup[g] = byGroup[g] || []).push(k);
+    });
+    Object.entries(byGroup).forEach(([g, ks]) => { if (ks.length > 1) stackedPairs.push({ day: d.name, g, ks }); });
+  });
+  check(`sanity: sessions really do stack two slots on one muscle, so these rules are load-bearing (${stackedPairs.length} such pairs)`,
+    stackedPairs.length > 0);
+  const sameMovement = stackedPairs.filter(({ ks }) => new Set(ks.map((k) => PATTERN_OF[k])).size < ks.length);
+  check("...and every stacked pair uses genuinely different movements",
+    sameMovement.length === 0,
+    sameMovement.map(({ day, g, ks }) => `${day}/${g}: ${ks.join("+")}`).join("; "));
 }
 
 console.log("\n== Schedule capacity vs. landmarks ==");
