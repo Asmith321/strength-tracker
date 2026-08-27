@@ -146,76 +146,87 @@ console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
     shortOfMav.length === 0);
 }
 
-console.log("\n== Movement patterns: no muscle is trained twice by the same movement ==");
+console.log("\n== Movement rules: the pairings the athlete rejects ==");
 {
   /* WHY THIS BLOCK EXISTS. Every assertion above is about VOLUME — how many
      sets a muscle gets and on how many days. None of them can see that two
      slots serving the same muscle might be the same MOVEMENT. The first 5-day
-     rotation shipped with Pull-Up immediately followed by Lat Pulldown: two
-     vertical pulls back to back, which the capacity math scored as a perfectly
-     good pair of back slots. The athlete caught it by reading a real session.
-     These rules encode what volumeGroup structurally cannot. */
+     rotation shipped with Pull-Up immediately followed by Lat Pulldown, which
+     the capacity math scored as a perfectly good pair of back slots.
+
+     A first pass at fixing it over-corrected into "nothing same-pattern
+     adjacent" and "no session repeats a compound pattern". The athlete
+     rejected both: two presses or two pulls in a row is ordinary training.
+     What follows is the narrower set they actually hold — written as their
+     rules, not as a general theory of programming. */
 
   check("every exercise in the rotation has a declared movement pattern",
     [...new Set(ROTATION.flatMap((d) => d.items))].every((k) => PATTERN_OF[k]),
     [...new Set(ROTATION.flatMap((d) => d.items))].filter((k) => !PATTERN_OF[k]).join(","));
 
-  /* 1. Nothing same-pattern adjacent. Back to back is the worst case: the
-     second movement is the first one pre-fatigued. */
-  const adjacent = [];
-  ROTATION.forEach((d) => d.items.forEach((k, i) => {
-    if (i > 0 && PATTERN_OF[k] === PATTERN_OF[d.items[i - 1]])
-      adjacent.push(`${d.name}: ${d.items[i - 1]} -> ${k} (both ${PATTERN_OF[k]})`);
+  /* RULE 1 — Pull-Up and Lat Pulldown never share a session. Not "not
+     adjacent": never together at all. They are the same vertical pull against
+     the same muscles, so one session holding both is one exercise done twice.
+     Asserted over the specific pair rather than over the "vertical pull"
+     pattern generally, because it IS the specific pair the athlete named. */
+  const bothVerticals = ROTATION.filter((d) => d.items.includes("pullup") && d.items.includes("pulldown"));
+  check("no session contains both Pull-Up and Lat Pulldown",
+    bothVerticals.length === 0, bothVerticals.map((d) => d.name).join("; "));
+  check("sanity: both are still in the program, on different days — the rule separates them rather than dropping one",
+    ROTATION.some((d) => d.items.includes("pullup")) && ROTATION.some((d) => d.items.includes("pulldown")));
+
+  /* RULE 2 — no pressing on a lower-body day. An earlier pass parked the
+     overhead press on leg day because leg day had room and no other pressing;
+     the athlete rejected it. Days are marked `lowerBody` in ROTATION so this
+     is machine-checked rather than inferred from a day's name. */
+  const PRESS_PATTERNS = new Set(["horiz push", "incline push", "decline push", "vertical push", "chest iso"]);
+  const lowerDays = ROTATION.filter((d) => d.lowerBody);
+  check(`sanity: lower-body days are marked (${lowerDays.map((d) => d.name).join(", ") || "NONE MARKED"})`,
+    lowerDays.length === 2);
+  const pressOnLegs = [];
+  lowerDays.forEach((d) => d.items.forEach((k) => {
+    if (PRESS_PATTERNS.has(PATTERN_OF[k])) pressOnLegs.push(`${d.name}: ${k}`);
   }));
-  check("no two exercises with the same movement pattern are adjacent in a session",
-    adjacent.length === 0, adjacent.join("; "));
+  check("no pressing movement appears on a lower-body day", pressOnLegs.length === 0, pressOnLegs.join("; "));
 
-  /* 2. And not merely non-adjacent — a session should not carry the same heavy
-     COMPOUND pattern twice at all. Isolation patterns are exempt: two
-     different curls or two lateral-raise variants in a session are ordinary
-     accessory work, not a redundant heavy movement. */
-  const heavyDuplicated = [];
-  ROTATION.forEach((d) => {
-    const counts = {};
-    d.items.forEach((k) => {
-      const p = PATTERN_OF[k];
-      if (/ iso$/.test(p) || ["calf", "trap", "forearm", "abs"].includes(p)) return;
-      counts[p] = (counts[p] || 0) + 1;
-    });
-    Object.entries(counts).forEach(([p, n]) => { if (n > 1) heavyDuplicated.push(`${d.name}: ${n}x "${p}"`); });
-  });
-  check("no session repeats the same compound movement pattern",
-    heavyDuplicated.length === 0, heavyDuplicated.join("; "));
-
-  /* 3. The subtler one, and the reason volumeGroup alone is not enough: an
-     incline press at ~30 degrees is already heavy front-delt work, so pairing
-     it with an overhead press trains the same tissue twice while the landmark
-     ledger records two different muscles being served. Different
-     volumeGroups, same muscle — invisible to every volume assertion above. */
-  const overlap = ROTATION.filter((d) => {
+  /* RULE 3 — no incline press in the same session as an overhead press. The
+     overlap is the ANGLE, not the implement: a ~30 degree incline loads the
+     front delt heavily whether it is a dumbbell or a barbell, so swapping
+     incline DB for incline BB resolves nothing. Only a FLAT press does, which
+     is why the Upper day now runs flat bench. Kept as a live guard even though
+     the rotation currently carries no incline at all — its whole job is to
+     stop one being slotted back onto an overhead-press day. */
+  const inclineWithOhp = ROTATION.filter((d) => {
     const pats = d.items.map((k) => PATTERN_OF[k]);
     return pats.includes("incline push") && pats.includes("vertical push");
   });
-  check("no session pairs an incline press with an overhead press (front-delt overlap)",
-    overlap.length === 0, overlap.map((d) => d.name).join("; "));
+  check("no session pairs an incline press with an overhead press",
+    inclineWithOhp.length === 0, inclineWithOhp.map((d) => d.name).join("; "));
+  /* That rule is currently vacuous — nothing in the rotation is an incline —
+     so this records the fact rather than letting a passing test imply the
+     rotation was checked against a real incline press. */
+  const hasIncline = ROTATION.some((d) => d.items.some((k) => PATTERN_OF[k] === "incline push"));
+  check("NOTE: the rotation carries no incline press, so the rule above is a guard, not a live check",
+    hasIncline === false);
+  check("...and incline DB press is still available in LIB to restore",
+    !!LIB.inclinebench && PATTERN_OF.inclinebench === "incline push");
 
-  /* 4. Guard against the rules above going vacuous. If the rotation ever lost
-     its multi-slot days these would all pass while testing nothing, so assert
-     the situation they police actually exists: some muscle really does get two
-     slots in one session, and they are genuinely different movements. */
-  const stackedPairs = [];
+  /* Guard against the rules going vacuous. If the rotation ever lost its
+     multi-slot days these would pass while testing nothing, so assert the
+     situation they police actually exists. */
+  const stacked = [];
   ROTATION.forEach((d) => {
     const byGroup = {};
     d.items.forEach((k) => {
       const g = LIB[k].volumeGroup;
       if (g && !LIB[k].fixedSets) (byGroup[g] = byGroup[g] || []).push(k);
     });
-    Object.entries(byGroup).forEach(([g, ks]) => { if (ks.length > 1) stackedPairs.push({ day: d.name, g, ks }); });
+    Object.entries(byGroup).forEach(([g, ks]) => { if (ks.length > 1) stacked.push({ day: d.name, g, ks }); });
   });
-  check(`sanity: sessions really do stack two slots on one muscle, so these rules are load-bearing (${stackedPairs.length} such pairs)`,
-    stackedPairs.length > 0);
-  const sameMovement = stackedPairs.filter(({ ks }) => new Set(ks.map((k) => PATTERN_OF[k])).size < ks.length);
-  check("...and every stacked pair uses genuinely different movements",
+  check(`sanity: sessions really do stack two slots on one muscle, so these rules are load-bearing (${stacked.length} such pairs)`,
+    stacked.length > 0);
+  const sameMovement = stacked.filter(({ ks }) => new Set(ks.map((k) => PATTERN_OF[k])).size < ks.length);
+  check("every stacked pair uses genuinely different movements",
     sameMovement.length === 0,
     sameMovement.map(({ day, g, ks }) => `${day}/${g}: ${ks.join("+")}`).join("; "));
 }

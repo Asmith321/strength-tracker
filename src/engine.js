@@ -648,7 +648,22 @@ const LIB = {
 
    The athlete caught both by reading a real session. Slotting exercises to
    satisfy capacity WITHOUT this axis is how it happened, so pattern is now a
-   real field, and program_review_tests asserts the pairing rules below. */
+   real field, and program_review_tests asserts the pairing rules below.
+
+   WHAT THE RULES ARE, AND ARE NOT. A first pass at this over-corrected into
+   "nothing same-pattern adjacent" and "no session repeats a compound pattern",
+   which the athlete rejected: two presses or two pulls in a row is ordinary
+   training, not a defect. The rules that survived are the ones they actually
+   hold, and they are narrower and sharper:
+     • Pull-Up and Lat Pulldown never share a session. Not "not adjacent" —
+       never together. They are the same movement against the same muscles,
+       and doing both in one day is one exercise done twice.
+     • No pressing on a lower-body day. Delt work does not get parked on leg
+       day just because leg day has room for it.
+     • No incline press in the same session as an overhead press. The overlap
+       here is the ANGLE, not the implement: swapping incline DB for incline
+       BB changes nothing, because a ~30 degree incline loads the front delt
+       either way. Only moving to a FLAT press resolves it. */
 const PATTERN_OF = {
   bench: "horiz push", dbbench: "horiz push", inclinebench: "incline push", inclinebb: "incline push",
   dip: "decline push", cablefly: "chest iso", dbshoulderpress: "vertical push",
@@ -674,24 +689,35 @@ const ROTATION = [
      pulls toward the waist, one overhead — so the second is not the first
      with fatigue on top. */
   { name: "Pull · Back & Arms", items: ["tbarrow", "pulldown", "reversepecdeck", "bayesiancurl", "triceppushdown", "shrug", "wristcurl"] },
-  /* DB Overhead Press lives here, on leg day, and that placement is the whole
-     point. Front delts have exactly ONE approved exercise and an advanced MAV
-     of 9, so it must appear twice a week. Its old second home was the Upper
-     day, directly behind an incline press that had already worked the same
-     muscle. Leg day is the only session in the rotation with no pressing at
-     all, so the second exposure lands genuinely fresh.
-     Lateral raises ride along for the same reason — side delts need a third
-     exposure, and these cost almost nothing systemically and share no fatigue
-     with squatting. */
-  { name: "Legs · Quads", items: ["squat", "legext", "legcurl", "dbshoulderpress", "lateralraise", "calfraise", "cablecrunch"] },
+  /* NO PRESSING ON THIS DAY. An earlier pass parked the overhead press here on
+     the reasoning that leg day is the only session with no other pressing, so
+     front delts would arrive fresh. The athlete rejected it outright: a leg
+     day is for legs. `lowerBody: true` marks it so the rule is machine-checked
+     rather than left to whoever edits this next.
+     Lateral raises do stay — side delts need a third exposure, they cost
+     almost nothing systemically, and they share no fatigue with squatting.
+     They are also not a press. */
+  { name: "Legs · Quads", lowerBody: true, items: ["squat", "legext", "legcurl", "lateralraise", "calfraise", "cablecrunch"] },
   /* ORDER ALTERNATES PUSH AND PULL: incline press, pull-up, dip, pullover. The
      two chest compounds and the two back movements are each separated by the
      other pattern, so nothing same-pattern is adjacent and each muscle gets
      the other's working time as recovery. Compounds still precede isolation
      within a muscle (inclinebench before dip, pullup before latpullover), and
      curls still follow every pull. No overhead press on this day. */
-  { name: "Upper · Full", items: ["inclinebench", "pullup", "dip", "latpullover", "dblateralraise", "triceppushdown", "preachercurl"] },
-  { name: "Lower · Hinge & Pull", items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "reversepecdeck", "bayesiancurl", "calfraise"] },
+  /* THE SECOND OVERHEAD-PRESS EXPOSURE LIVES HERE, and the flat bench is what
+     makes that possible. Front delts have exactly one approved exercise and
+     need two training days, so the press has to appear twice. It cannot go on
+     either lower-body day, which leaves only the two chest days and the pull
+     day — and pairing it with an INCLINE press is the overlap the athlete
+     rejected. Running a FLAT press on this day resolves it: flat pressing
+     loads the front delt far less than an incline, so bench and overhead press
+     coexist here the same way they already do on the Push day.
+     THE COST, STATED PLAINLY: the program now carries no incline pressing at
+     all. Incline DB press stays in LIB and on the approved list, so restoring
+     it is a one-line change — but it cannot return to a day that also holds
+     the overhead press. */
+  { name: "Upper · Full", items: ["bench", "dip", "dbshoulderpress", "pullup", "latpullover", "dblateralraise", "triceppushdown", "preachercurl"] },
+  { name: "Lower · Hinge & Pull", lowerBody: true, items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "reversepecdeck", "bayesiancurl", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
