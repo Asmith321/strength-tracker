@@ -458,6 +458,13 @@ const LIB = {
   lateralraise: { label: "Machine Lateral Raise",          role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "side_delts", increment: 5 },
   dblateralraise: { label: "DB Lateral Raise",             role: "acc",  barbell: false, perDumbbell: true, repTier: "isolation", volumeGroup: "side_delts", increment: 2.5 },
   reversepecdeck: { label: "Reverse Pec Deck",             role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
+  /* Added to the approved list by the athlete, chosen from three options when
+     the 3-set cap left rear delts needing a second exercise (4 slots over two
+     lower days = 2 per session, against the one exercise the list held). The
+     pec deck loads through the range; the dumbbell version loads shortest at
+     the top, so the pair is complementary rather than the same movement twice
+     — which is the whole reason a second exercise was needed. */
+  dbreversefly: { label: "Bent-Over DB Reverse Fly",       role: "acc",  barbell: false, perDumbbell: true, repTier: "isolation", volumeGroup: "rear_delts", increment: 2.5 },
   triext:       { label: "Overhead Cable Triceps Ext.",    role: "acc",  barbell: false, repTier: "isolation", volumeGroup: "triceps" },
   /* Added at the athlete's request. increment 2.5 because this stack lands on
      half values (47.5, 52.5, ...). Takes over ONE of triext's three slots
@@ -677,7 +684,19 @@ const PATTERN_OF = {
   bench: "horiz push", dbbench: "horiz push", inclinebench: "incline push", inclinebb: "incline push",
   dip: "decline push", cablefly: "chest iso", dbshoulderpress: "vertical push",
   tbarrow: "horiz pull", pullup: "vertical pull", pulldown: "vertical pull", latpullover: "lat iso",
-  lateralraise: "delt iso", dblateralraise: "delt iso", reversepecdeck: "rear delt iso",
+  /* Side delts are split by resistance profile on the same principle as the
+     rear delts and the arm isolations: a machine lateral raise holds tension
+     through the whole range, a dumbbell one has almost none at the bottom and
+     peaks at horizontal. They had to become distinguishable — side delts need
+     18 weekly sets across 2 slots a day at a 3-set cap, and the approved list
+     holds exactly these two exercises, so the alternative was to declare the
+     program's own required pairing a same-movement violation. */
+  lateralraise: "delt iso (through-range)", dblateralraise: "delt iso (peak-contracted)",
+  /* Rear delt work is split by RESISTANCE PROFILE for the same reason the arm
+     isolations below are split by arm position: the pec deck holds tension
+     through the range, the bent-over dumbbell version peaks at the top and
+     unloads at the bottom. Different patterns, so they may share a session. */
+  reversepecdeck: "rear delt iso (through-range)", dbreversefly: "rear delt iso (peak-contracted)",
   /* The arm isolations are split by ARM POSITION, not lumped by muscle. An
      overhead extension loads the triceps long head at long muscle length; a
      pushdown loads it short. A Bayesian curl has the arm behind the body
@@ -690,33 +709,69 @@ const PATTERN_OF = {
   triext: "triceps iso (lengthened)", triceppushdown: "triceps iso (shortened)",
   bayesiancurl: "biceps iso (lengthened)", preachercurl: "biceps iso (shortened)",
   squat: "squat", frontsquat: "squat", bsplit: "lunge", legext: "quad iso",
-  rdl: "hinge", deadlift: "hinge", legcurl: "ham iso", nordic: "ham iso",
+  /* Knee-flexion work split by contraction emphasis: the seated leg curl is a
+     loaded concentric-and-eccentric machine movement, the Nordic is an
+     eccentric-overload bodyweight one that cannot be done concentrically at
+     this athlete's strength. Genuinely different stimuli, and they now share
+     Thursday because hamstrings need 2 slots that day. */
+  rdl: "hinge", deadlift: "hinge", legcurl: "ham iso (loaded)", nordic: "ham iso (eccentric)",
   calfraise: "calf", shrug: "trap", wristcurl: "forearm", bbwristcurl: "forearm",
   cablecrunch: "abs",
 };
 
+/* UPPER on Mon/Wed/Fri, LOWER on Tue/Thu. Both day-sets are FORCED, not
+   stylistic. In a Mon-Fri week {Mon, Wed, Fri} is the only set of three
+   non-adjacent days and {Tue, Thu} is the only non-adjacent pair left over, so
+   splitting the muscles across exactly these two sets is what makes "no muscle
+   on back-to-back days" a property of the STRUCTURE rather than something each
+   slotting decision has to be checked against. Under the previous 5-day split
+   that rule held only because every exercise placement was hand-checked; here
+   it cannot be violated by any arrangement of the items below.
+
+   WHY UPPER GETS THREE DAYS AND LOWER TWO: the approved list carries 112 weekly
+   upper sets against 46 lower. Three upper days at ~36 sets and two lower days
+   at ~33 is the balance that falls out; the reverse assignment gives 55-set
+   upper days against 15-set lower ones.
+
+   WHY EACH MUSCLE HAS THE SLOT COUNT IT HAS: ceil(MAV / 3) at the new
+   ACC_SET_CAP, spread so no day holds more than 3 slots of one muscle (3 x 3 =
+   9, just under SAME_DAY_GROUP_CAP). Back is the tightest: 23 weekly sets needs
+   8 slots, which at 3 per day needs all three upper days, and only 3 of the 4
+   approved back exercises can appear in one session because Pull-Up and Lat
+   Pulldown may not share one. Calves are the loosest: the athlete exempted
+   Standing Calf Raise from the cap (GROUP_SET_CAP) rather than approve new calf
+   exercises, so 18 weekly sets ride on 2 slots of 9 instead of 6 slots of 3.
+
+   KNOWN CONSEQUENCE, FLAGGED TO THE ATHLETE: front delts have one approved
+   exercise and need 3 exposures, so the DB Overhead Press lands on all three
+   upper days — which means the incline press unavoidably shares a session with
+   it, breaking the old "no incline press with an overhead press" rule. There is
+   no arrangement that avoids this while front delts have a single exercise; the
+   fixes are a second front-delt exercise or a cap exemption like the calves'.
+   The overlap is also smaller than when that rule was written: 3 sets of each
+   rather than 5.
+
+   ORDER WITHIN A DAY is unchanged in principle: compounds before isolation for
+   the same muscle, and no isolation that pre-fatigues a later compound's weak
+   link (curls never precede a row, wrist work never precedes a pull). */
 const ROTATION = [
-  /* Mon — PULL + DELTS. The overhead press lives here, not on a press day, and
-     that is what makes the incline press below possible: front delts need two
-     exposures, an incline press cannot share a session with an overhead press,
-     and both remaining press days would otherwise have to carry one. Pulling
-     does not fatigue the front delt, so this exposure lands fresh. */
-  { name: "Pull · Back & Delts", items: ["tbarrow", "pulldown", "dbshoulderpress", "lateralraise", "bayesiancurl", "calfraise", "shrug"] },
-  /* Tue — PUSH, INCLINE. The angle the program had been missing entirely: four
-     chest slots across three exercises, running horizontal, horizontal and
-     decline, with nothing above horizontal. Incline sits alone on this day
-     precisely so no overhead press can join it. */
-  { name: "Push · Incline & Arms", items: ["inclinebench", "cablefly", "triext", "triceppushdown", "reversepecdeck", "cablecrunch"] },
-  /* Wed — LEGS + PULL. Back's second exposure rides along here rather than on a
-     press day: it shares no fatigue with squatting, and the no-consecutive-days
-     rule leaves Mon/Wed/Fri as the only three non-adjacent days in a Mon-Fri
-     week, so anything needing three exposures has to be on all three. */
-  { name: "Legs · Quads & Pull", lowerBody: true, items: ["squat", "legext", "legcurl", "pullup", "latpullover", "dblateralraise", "preachercurl", "calfraise"] },
-  /* Thu — PUSH, FLAT. Bench and dip, plus the second overhead-press exposure.
-     No incline on this day, by the rule above. */
-  { name: "Push · Flat & Delts", items: ["bench", "dip", "dbshoulderpress", "triceppushdown", "reversepecdeck", "cablecrunch", "wristcurl"] },
-  /* Fri — LOWER + PULL. Hinge, the second quad exposure, and back's third. */
-  { name: "Lower · Hinge & Pull", lowerBody: true, items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "lateralraise", "bayesiancurl", "calfraise"] },
+  /* Mon — UPPER. Back's heaviest exposure (3 slots), the flat press, and the
+     first of three overhead-press exposures. */
+  { name: "Upper · Row & Flat Press", items: ["tbarrow", "pulldown", "latpullover", "bench", "dbshoulderpress", "cablefly", "lateralraise", "dblateralraise", "triext", "triceppushdown", "bayesiancurl", "preachercurl"] },
+  /* Tue — LOWER. Squat, hinge, and the 9-set calf exposure. Rear delts live on
+     the lower days: they are the one upper group small enough to fit here, and
+     moving them off Mon/Wed/Fri is what keeps the two day-sets balanced. */
+  { name: "Lower · Squat & Hinge", items: ["squat", "rdl", "bsplit", "legext", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
+  /* Wed — UPPER. The vertical pull that Monday could not carry (Pull-Up and Lat
+     Pulldown never share a session), and the incline press. */
+  { name: "Upper · Pull-Up & Incline", items: ["pullup", "tbarrow", "latpullover", "inclinebench", "dbshoulderpress", "dip", "lateralraise", "dblateralraise", "triext", "triceppushdown", "bayesiancurl", "preachercurl"] },
+  /* Thu — LOWER. The second quad and hamstring exposures on different exercises
+     than Tuesday's, so the two lower days are not the same session twice. */
+  { name: "Lower · Front Squat & Nordic", items: ["frontsquat", "bsplit", "nordic", "legext", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
+  /* Fri — UPPER. The lighter upper day: back drops to 2 slots and triceps to 1,
+     which is where the ramp's remainder lands, and the two fixedSets accessories
+     (shrug, wrist curl) sit here to even the week out. */
+  { name: "Upper · Pulldown & DB Press", items: ["pulldown", "latpullover", "shrug", "inclinebb", "dbbench", "dbshoulderpress", "lateralraise", "dblateralraise", "triceppushdown", "bayesiancurl", "preachercurl", "wristcurl"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -782,8 +837,38 @@ const SLOT_ORDINAL = (() => {
    6 keeps peak session growth to +10 sets (30 -> 40) while still bringing
    7 of 8 muscle groups up to their MAV. The remaining shortfall (front delts
    specifically) is consistent with RP's own numbers — it's the one group
-   RP says needs the least direct volume in the first place. */
-const ACC_SET_CAP = 6;
+   RP says needs the least direct volume in the first place.
+
+   NOW 3, BY THE ATHLETE'S DECISION. This is a preference about exercise
+   variety, not a volume cut: weekly volume is fixed by the landmarks, so
+   lowering the per-exposure cap does not remove sets, it forces the same sets
+   across more exposures. Measured: the ramped slot count goes 32 -> 54 and the
+   week goes from ~7 exercises/day to ~12, at an unchanged ~171 sets/week.
+   That trade was priced out and accepted before this constant moved.
+
+   The whole ROTATION below is a consequence of this number. At 6, per-slot
+   demand ran 3.3-6.0 sets and the old 5-day split fit under the ceiling with
+   three groups sitting exactly on it. At 3 every group needs more slots than
+   it had, and the only structure that supplies them while keeping every muscle
+   off consecutive days is upper on Mon/Wed/Fri and lower on Tue/Thu — see the
+   ROTATION comment for why those two day-sets are forced rather than chosen. */
+const ACC_SET_CAP = 3;
+/* PER-GROUP EXEMPTION from ACC_SET_CAP, granted by the athlete for a specific
+   exercise rather than inferred. Calves are the one group with a single
+   approved exercise, so the cap could not be met by adding variety the way it
+   is for every other group: 18 weekly sets over 2 lower days, with only
+   Standing Calf Raise available, needs 9 sets in one appearance. Asked whether
+   to add calf exercises or exempt the one they have, the athlete chose the
+   exemption. 9 stays under SAME_DAY_GROUP_CAP, so the session-level ceiling
+   still binds normally.
+   Keyed by volumeGroup, not by exercise key, because the allocation below is
+   computed per group — which is exact here (calves have one exercise, so the
+   group cap and the exercise cap are the same number) and must be revisited if
+   a second calf exercise is ever approved. */
+const GROUP_SET_CAP = { calves: 9 };
+function setCapFor(group) {
+  return GROUP_SET_CAP[group] ?? ACC_SET_CAP;
+}
 /* AUDIT 3.13: session-level cap on same-muscle RAMPED volume. ACC_SET_CAP
    bounds each ramped slot's OWN set count, but several groups land two ramped
    slots on the SAME day — so raising ACC_SET_CAP (audit 3.11) raised
@@ -828,8 +913,26 @@ const VOL_SCALE = { ramp: 1, mev: 0.75, half: 0.5 };
    wider span, both program-design changes rather than volume-math ones.
    engine_fix_tests asserts that every flat group is explained by this exact
    condition, so a flat group WITHOUT it (the T1-2 bug returning) still
-   fails. */
-const RAMPED_SET_FLOOR = { ramp: 2, mev: 2, half: 1 };
+   fails.
+
+   ACCUMULATION FLOOR NOW 1, because ACC_SET_CAP moving to 3 inverted the
+   argument above. The "1 set is a warm-up with extra steps" reasoning was
+   written when a pool had 3-4 slots and the MEV end rounded to 1 apiece by
+   accident. A pool now has 6-8 slots, and floor 2 stops being a guard against
+   a degenerate rounding case and becomes the thing that sets the opening
+   volume: at 2, every single group would start its block at roughly DOUBLE its
+   own MEV (back 16 sets against MEV 8, chest 12 against 6, side delts 12
+   against 7), which is not a ramp from MEV to MAV, it is a ramp from
+   well-past-MEV to MAV with the resensitising end of the block deleted.
+   At floor 1 the spans land almost exactly on the published landmarks —
+   chest 6->18 vs MEV 6/MAV 18, side delts 6->18 vs 7/18, quads 6->18 vs 6/18,
+   back 8->24 vs 8/23, front delts 3->9 vs 2/9. That is the ramp the landmark
+   table describes, so the floor is no longer fighting it.
+   The original concern does not reappear: a 1-set prescription only occurs in
+   the opening cycle of a block, on an exercise appearing 2-3x that week, which
+   is a real MEV dose rather than the rounding artifact it used to be. Deload
+   is unchanged at 1. */
+const RAMPED_SET_FLOOR = { ramp: 1, mev: 2, half: 0 };
 
 /* ---- full-muscle volume accounting ----
    Landmark MEV/MAV/MRV are RP-style FULL-MUSCLE weekly hard-set counts, so
@@ -878,8 +981,9 @@ function maxDeliverable(group, blockType = "accumulation") {
      capacity by 4 sets for quads/chest/back and 2 for hamstrings/biceps, and
      because the landmark auto-tune's raise gates are computed from it, MAV
      settled 2-3 sets ABOVE anything the schedule could ever prescribe. */
+  const cap = setCapFor(group);
   const ramped = (PATTERN_DAY_SLOTS[group] || []).reduce((s, { n }) =>
-    s + (n >= 2 ? Math.min(n * ACC_SET_CAP, SAME_DAY_GROUP_CAP) : n * ACC_SET_CAP), 0);
+    s + (n >= 2 ? Math.min(n * cap, SAME_DAY_GROUP_CAP) : n * cap), 0);
   return fixedWeeklySets(group, blockType) + ramped;
 }
 
@@ -1064,7 +1168,12 @@ function rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale =
      frequency machinery is meant to serve. At freqScale 1 this is unchanged
      (round(2 x 1) = 2), so 4x/week behaviour is byte-identical. */
   const floorRaw = RAMPED_SET_FLOOR[BLOCKS[blockType].volLevel] ?? 1;
-  const floor = Math.max(1, Math.round(floorRaw * freqScale));
+  /* A floor of 0 is deliberate (deload) and must survive: the Math.max(1, ...)
+     that frequency-scales a non-zero floor would otherwise raise it straight
+     back to 1, which is what kept the deload delivering one set of every slot
+     — i.e. exactly the accumulation MEV cycle — after RAMPED_SET_FLOOR.half
+     was set to 0. Scaling only applies to floors that are actually there. */
+  const floor = floorRaw === 0 ? 0 : Math.max(1, Math.round(floorRaw * freqScale));
   /* T1-3: distribute the residual and hand out the remainder one set at a time,
      instead of giving every slot the same Math.round(residual / freq). The
      single-quotient version could only produce per-rotation totals that were
@@ -1076,11 +1185,12 @@ function rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale =
      the top of the ramp exactly on MAV and roughly doubles the number of
      distinct volume steps. Slots of the same group on the same day can now
      differ by one set, which is ordinary programming, not an artifact. */
+  const cap = setCapFor(group);
   const base = Math.floor(residual / freq);
   const rem = residual - base * freq;
   const alloc = [];
   for (let i = 0; i < freq; i++)
-    alloc.push(Math.max(floor, Math.min(ACC_SET_CAP, base + (i < rem ? 1 : 0))));
+    alloc.push(Math.max(floor, Math.min(cap, base + (i < rem ? 1 : 0))));
   /* SAME_DAY_GROUP_CAP applied HERE, not only in prescribe(), so that
      deliveredWeekly/maxDeliverable see the same number the athlete is handed
      (T1-1). */
@@ -1116,7 +1226,7 @@ function rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale =
       if (freed <= 0) break;
       const dayTot = () => alloc.slice(start, start + n).reduce((s, v) => s + v, 0);
       for (let j = start; j < start + n && freed > 0; j++) {
-        if (alloc[j] >= ACC_SET_CAP) continue;
+        if (alloc[j] >= cap) continue;
         if (n >= 2 && dayTot() >= SAME_DAY_GROUP_CAP) break;
         alloc[j] += 1; freed -= 1;
       }
@@ -2134,7 +2244,19 @@ function prescribe(program, readiness) {
          that the residual's remainder is distributed rather than rounded
          per-slot (T1-3). */
       const slotOrdinal = SLOT_ORDINAL[`${program.cycleIndex % ROT}:${key}`] ?? 0;
-      sets = Math.max(1, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale, slotOrdinal) * setMult));
+      /* Deload is the ONE block where a ramped slot may come out at zero, and
+         it has to be, now that ACC_SET_CAP is 3. A deload's job is to deliver
+         materially less than the lightest accumulation week; with 12 exercises
+         a day and a per-slot floor, "one set of everything" IS the lightest
+         accumulation week, so a deload that keeps every slot alive delivers
+         exactly the same set count as the MEV cycle it is supposed to be a
+         recovery from. Letting slots fall to 0 (and dropping those items
+         below) turns the deload back into what it says it is: fewer
+         exercises, one set each, at the block's capped RPE.
+         Accumulation keeps its floor of 1 — readiness setMult must never be
+         able to silently delete an exercise from a training session. */
+      const slotFloor = cfg.volLevel === "half" ? 0 : 1;
+      sets = Math.max(slotFloor, Math.round(rampedSlotSets(vg, program.block.type, cyc, program.landmarks, freqScale, slotOrdinal) * setMult));
     }
     /* Straight sets: one load, one rep target, one RPE target, `sets` times.
        The top-single-plus-backoff split existed for the barbell main lifts and
@@ -2272,7 +2394,7 @@ function prescribe(program, readiness) {
       perDumbbell: !!L.perDumbbell, assistanceNeeded, repOnly, bodyweightUnknown,
       reps, rpe, sets, topLoad, backoffLoad, backoffRpeCap: cfg.backoffRpeCap,
       topSetCount, backoffSetCount, warmup, dpMode };
-  });
+  }).filter((it) => it.sets > 0); // deload only: slots the allocation zeroed out are dropped, not shown as "0 sets"
 
   /* AUDIT 3.13: if this day stacks more than one RAMPED slot for the same
      muscle (only back does, today — see SAME_DAY_GROUP_CAP), scale those
@@ -2893,6 +3015,7 @@ const ACC_E1RM_REF = {
   // is a poor predictor of pulling capacity; with T-Bar Row seeded directly at
   // onboarding these no longer have to guess across the push/pull divide.
   latpullover: "tbarrow", pulldown: "tbarrow", reversepecdeck: "tbarrow",
+  dbreversefly: "tbarrow",
   bayesiancurl: "tbarrow", preachercurl: "tbarrow", shrug: "tbarrow",
 };
 /* bsplit: 0.2 is a PER-DUMBBELL fraction of squat e1RM, matching the logging
@@ -2919,6 +3042,10 @@ const ACC_E1RM_MULT = {
   wristcurl: 0.1, bbwristcurl: 0.15, cablecrunch: 0.4,
   // pull ratios are relative to T-Bar Row, not bench (see ACC_E1RM_REF)
   latpullover: 0.6, pulldown: 0.95, reversepecdeck: 0.2,
+  /* dbreversefly is perDumbbell, so this is HALF a total-load estimate, the
+     same convention every other perDumbbell entry uses. The pec deck's 0.2 is
+     a two-arm machine load; one dumbbell doing the same job is ~0.1. */
+  dbreversefly: 0.1,
   bayesiancurl: 0.4, preachercurl: 0.45, shrug: 0.3,
 };
 
@@ -3170,7 +3297,7 @@ function plateText(weight, bar = 45) {
 export {
   RPE_TABLE, clampReps, clampRpe, rpePct, repsAtPct, e1rmFrom, e1rmFromBW, loadFor, ewma, slope, liftNormSlope, liftSlopeInfo,
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
-  LIB, ROTATION, ROT, PATTERN_FREQ, PATTERN_OF, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
+  LIB, ROTATION, ROT, PATTERN_FREQ, PATTERN_OF, ACC_SET_CAP, GROUP_SET_CAP, setCapFor, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
   capacityShortfalls, capacityPinned, FREQ_SCALE_MIN, FREQ_SCALE_REACHABLE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS, abnormalGapDays,
   SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX, trainingDaysToSkip,

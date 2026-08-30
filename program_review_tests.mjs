@@ -16,7 +16,7 @@
 import {
   freshProgram, prescribe, ingest, migrateProgram, applyTransition,
   LIB, ROTATION, ROT, PATTERNS, PATTERN_FREQ, PATTERN_OF, PATTERN_RAMPED_ACC, PATTERN_MAIN,
-  ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, SAME_DAY_GROUP_CAP, TRAINING_WEEKDAYS,
+  ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, GROUP_SET_CAP, setCapFor, SAME_DAY_GROUP_CAP, TRAINING_WEEKDAYS,
   deliveredWeekly, fixedWeeklySets, rampedSlotSets, maxDeliverable, landmarksForExperience,
 } from "./src/engine.js";
 
@@ -61,6 +61,10 @@ const APPROVED = new Set([
      slipped into the program without the athlete asking for it, and it did
      catch both of these before they shipped. */
   "triceppushdown", "nordic",
+  /* Approved by the athlete when the 3-set ceiling left rear delts needing a
+     second exercise. They were offered Face Pull, Single-Arm Cable Reverse Fly
+     and this, and picked this one. */
+  "dbreversefly",
 ]);
 
 console.log("\n== Approved-exercise constraint ==");
@@ -71,8 +75,17 @@ console.log("\n== Approved-exercise constraint ==");
   check("every exercise in the rotation is on the approved list", rotStrays.length === 0, rotStrays.join(","));
   check("deadlift is defined but carries NO rotation slot (dropped as a hypertrophy tool)",
     !!LIB.deadlift && !inRotation.has("deadlift"));
-  check("front squat is defined but carries no rotation slot (quads already have 4)",
-    !!LIB.frontsquat && !inRotation.has("frontsquat"));
+  /* Front squat, DB bench and incline BB all carry slots now. They were the
+     spare capacity the 3-set ceiling needed: quads went from 4 slots to 6 and
+     chest from 4 to 6, and rather than approve new exercises those three were
+     brought in off the bench. Two approved exercises remain unslotted, each for
+     its own reason: deadlift because it was dropped as a hypertrophy tool, and
+     the BB wrist curl because forearms are a single fixedSets slot that the DB
+     version already fills. Pinned as a SET so bringing either in — or dropping
+     something out — has to be a deliberate edit here. */
+  const unslotted = [...APPROVED].filter((k) => !inRotation.has(k)).sort();
+  check(`exactly deadlift and the BB wrist curl are unslotted (${unslotted.join(", ")})`,
+    unslotted.join(",") === "bbwristcurl,deadlift");
   check("retired exercises are gone from LIB entirely, kept only as history labels",
     !LIB.row && !LIB.cablerow && !LIB.ohp && !LIB.curl && !LIB.seatedcalf
     && !!RETIRED_LABELS.cablerow && !!RETIRED_LABELS.ohp);
@@ -106,17 +119,27 @@ console.log("\n== The strength skeleton is gone ==");
 console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
 {
   check(`rotation is ${ROT} days`, ROT === 5);
-  /* THE BALANCE CONSTRAINT, RESTATED AS WHAT IT WAS ACTUALLY FOR. This used to
-     require every day to pair an upper half with a lower half, and the 5-day
-     split deliberately breaks that: it has a dedicated Legs day and a pure Pull
-     day. The reason the old rule existed was session-length balance — the
-     approved list is 15/23 upper-body, so a naive upper/lower split measured
-     ~49 sets on an upper day against ~20 on a lower one. That is the property
-     worth pinning, and it survives the shape change, so it is asserted
-     directly instead of through a proxy that no longer holds. */
-  const sizes = ROTATION.map((d) => d.items.length);
-  check(`no day is more than 2 exercises longer than the shortest (${sizes.join(", ")})`,
-    Math.max(...sizes) - Math.min(...sizes) <= 2);
+  /* THE BALANCE CONSTRAINT, RESTATED (AGAIN) AS WHAT IT WAS ACTUALLY FOR.
+     Originally "every day pairs an upper half with a lower half"; then, when
+     the 5-day split broke that, "no day is more than 2 exercises longer than
+     the shortest". Both were proxies for the one thing anybody cares about:
+     SESSION LENGTH, so that no training day is twice the work of another.
+
+     Exercise count stopped being a usable proxy at the 3-set ceiling. The
+     athlete exempted Standing Calf Raise from the cap, so one exercise on the
+     lower days carries 9 sets while a typical exercise carries 3 — the week is
+     12/9/12/9/12 exercises but 36/33/36/33/35 SETS. Counting exercises calls
+     that a spread of 3 and fails; counting sets calls it a spread of 3 sets out
+     of 36 and passes, which is the truth. Measure the thing itself. */
+  const daySets = ROTATION.map((_, i) => {
+    const p = freshProgram({ seeds, experience: "advanced", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    p.cycleIndex = i;
+    p.block = { type: "accumulation", cycle: BLOCKS.accumulation.maxCycles - 1, sessionsInBlock: 0, nextAfter: null };
+    return prescribe(p, { trainingReadiness: 80 }).items.reduce((s, it) => s + it.sets, 0);
+  });
+  const spread = Math.max(...daySets) - Math.min(...daySets);
+  check(`no training day is more than 25% longer than the shortest (${daySets.join(", ")} sets — spread ${spread})`,
+    spread <= Math.ceil(Math.min(...daySets) * 0.25));
   const exposures = {};
   ROTATION.forEach((d) => {
     const seen = new Set(d.items.map((k) => LIB[k].volumeGroup));
@@ -125,13 +148,21 @@ console.log("\n== Rotation shape: every muscle trained 2-3x per rotation ==");
   Object.keys(PATTERNS).forEach((g) => {
     check(`${g} is trained on ${exposures[g]} separate days per rotation (>=2)`, exposures[g] >= 2, `got ${exposures[g]}`);
   });
-  /* Back gets THREE days now, not two. That is not incidental: an advanced back
-     MAV of 23 cannot be delivered in two days, because SAME_DAY_GROUP_CAP
-     bounds a single day at 10 sets however many slots it holds — two days cap
-     out at 20. The third exposure is the whole reason the rotation grew. */
-  check("chest gets 2 training DAYS, not 2 slots on one day", exposures.chest === 2, `got ${exposures.chest}`);
+  /* Exposure counts are now a CONSEQUENCE of the upper/lower split rather than
+     per-muscle decisions, so they are asserted as the shape they must take: the
+     upper groups sit on Mon/Wed/Fri (3 days) and the lower groups on Tue/Thu
+     (2 days), because those are the only two non-adjacent day-sets available.
+     The previous version pinned chest at exactly 2 and back at exactly 3, which
+     were true statements about a rotation built muscle by muscle and became
+     false the moment the split decided the counts. */
   check("back gets 3 training DAYS so its advanced MAV of 23 clears the same-day cap",
     exposures.back === 3, `got ${exposures.back}`);
+  /* Landmark groups only. traps/forearms/abs are fixedSets pools carrying a
+     single slot each and are deliberately not volume-tracked, so the 2-3 day
+     shape does not apply to them. */
+  const badExposure = Object.keys(PATTERNS).map((g) => [g, exposures[g]]).filter(([, n]) => n !== 2 && n !== 3);
+  check(`every tracked muscle gets exactly 2 or 3 training days (${badExposure.map(([g, n]) => `${g}=${n}`).join(", ") || "all 2-3"})`,
+    badExposure.length === 0);
 
   /* The two requirements the 5-day rotation exists to satisfy, asserted here
      against the SHIPPED program (engine_fix_tests asserts the same two against
@@ -208,43 +239,30 @@ console.log("\n== Movement rules: the pairings the athlete rejects ==");
   check("sanity: at least one muscle really does need three exposures, so the rule above is not vacuous",
     threeDay.length > 0);
 
-  /* RULE 2 — no pressing on a lower-body day. An earlier pass parked the
-     overhead press on leg day because leg day had room and no other pressing;
-     the athlete rejected it. Days are marked `lowerBody` in ROTATION so this
-     is machine-checked rather than inferred from a day's name. */
-  const PRESS_PATTERNS = new Set(["horiz push", "incline push", "decline push", "vertical push", "chest iso"]);
-  const lowerDays = ROTATION.filter((d) => d.lowerBody);
-  check(`sanity: lower-body days are marked (${lowerDays.map((d) => d.name).join(", ") || "NONE MARKED"})`,
-    lowerDays.length === 2);
-  const pressOnLegs = [];
-  lowerDays.forEach((d) => d.items.forEach((k) => {
-    if (PRESS_PATTERNS.has(PATTERN_OF[k])) pressOnLegs.push(`${d.name}: ${k}`);
-  }));
-  check("no pressing movement appears on a lower-body day", pressOnLegs.length === 0, pressOnLegs.join("; "));
+  /* RULES 2 AND 3 WERE WITHDRAWN BY THE ATHLETE, and are recorded here rather
+     than deleted silently, because both were added at their request and a
+     future reader will otherwise re-derive them from the conversation history.
 
-  /* RULE 3 — no incline press in the same session as an overhead press. The
-     overlap is the ANGLE, not the implement: a ~30 degree incline loads the
-     front delt heavily whether it is a dumbbell or a barbell, so swapping
-     incline DB for incline BB resolves nothing. Only a FLAT press does, which
-     is why the Upper day now runs flat bench. Kept as a live guard even though
-     the rotation currently carries no incline at all — its whole job is to
-     stop one being slotted back onto an overhead-press day. */
-  const inclineWithOhp = ROTATION.filter((d) => {
-    const pats = d.items.map((k) => PATTERN_OF[k]);
-    return pats.includes("incline push") && pats.includes("vertical push");
-  });
-  check("no session pairs an incline press with an overhead press",
-    inclineWithOhp.length === 0, inclineWithOhp.map((d) => d.name).join("; "));
-  /* The rule above is now a LIVE check, not a dormant guard: the rotation
-     carries an incline press again, on a day deliberately kept clear of the
-     overhead press. It was dormant for one release, and this assertion is what
-     records the difference — a passing rule means nothing if nothing exercises
-     it. */
-  const inclineDays = ROTATION.filter((d) => d.items.some((k) => PATTERN_OF[k] === "incline push"));
-  check(`the rotation carries an incline press (${inclineDays.map((d) => d.name).join(", ") || "NONE"}), so the rule above is live`,
-    inclineDays.length === 1);
-  check("...and that day carries no overhead press",
-    inclineDays.every((d) => !d.items.some((k) => PATTERN_OF[k] === "vertical push")));
+     RULE 2 was "no pressing on a lower-body day", added after an earlier pass
+     parked the overhead press on leg day. Withdrawn verbatim: "scrap no push
+     exercises on leg rule or anything like that ... I don't care what split I
+     run as long as it's able to deliver the appropriate frequency and volume,
+     no training the same muscle back to back days, and no more than 3 sets per
+     exercise". The `lowerBody` flag on ROTATION days existed only to
+     machine-check this rule and has been removed with it.
+
+     RULE 3 was "no incline press in the same session as an overhead press".
+     Withdrawn by the same message, but it is worth recording that it had ALSO
+     become unsatisfiable: front delts have exactly one approved exercise and
+     need three exposures at a 3-set cap, so the DB Overhead Press is on all
+     three upper days and no incline can avoid it. Restoring the rule requires a
+     second front-delt exercise or a GROUP_SET_CAP exemption like the calves'.
+     This was flagged to the athlete rather than quietly absorbed.
+
+     What survives is RULE 1 (Pull-Up / Lat Pulldown, above), RULE 4 (no muscle
+     on consecutive days, above) and the same-movement stacking check below. */
+  check("the withdrawn rules left no dead machinery behind: no rotation day still carries a lowerBody flag",
+    ROTATION.every((d) => d.lowerBody === undefined));
 
   /* Guard against the rules going vacuous. If the rotation ever lost its
      multi-slot days these would pass while testing nothing, so assert the
@@ -273,8 +291,15 @@ console.log("\n== Schedule capacity vs. landmarks ==");
     check(`${g}: schedule capacity ${cap} covers its MAV of ${lm[g].mav}`, cap >= lm[g].mav);
   });
   check("no landmark group is left without ramped slots", Object.keys(PATTERNS).every((g) => PATTERN_FREQ[g] >= 2));
-  check("triceps has 3 slots so its MAV is not forced into 6 sets of one movement in one session",
-    PATTERN_FREQ.triceps === 3);
+  /* Generalised from a hardcoded "triceps has 3 slots". The property was never
+     about triceps: it is that no group's MAV is forced through so few slots
+     that one appearance would have to exceed the per-exposure cap. Stated that
+     way it holds for every group at any cap, instead of naming one muscle and a
+     slot count that the 3-set ceiling changed from 3 to 5. */
+  const forcedOverCap = Object.keys(PATTERNS).filter((g) =>
+    lm[g].mav > PATTERN_FREQ[g] * setCapFor(g));
+  check(`no group's MAV needs more sets per appearance than its cap allows (${forcedOverCap.join(", ") || "none"})`,
+    forcedOverCap.length === 0);
 }
 
 console.log("\n== The ramp: MEV -> MAV, with MRV as the recovery bound ==");
@@ -344,7 +369,20 @@ console.log("\n== Session and weekly budget (measured from real prescribe output
   }
   check(`peak accumulation session stays at or under 40 sets (measured ${peakSession})`, peakSession <= 40);
   check(`peak rotation total stays at or under 150 sets (measured ${peakRotation})`, peakRotation <= 150);
-  check(`no accumulation exercise is ever prescribed a single working set (min ${minSetsAnyItem})`, minSetsAnyItem >= 2);
+  /* A SINGLE WORKING SET IS NOW LEGAL, and only in the opening cycle of a
+     block. RAMPED_SET_FLOOR dropped from 2 to 1 with the 3-set ceiling: at 6-8
+     slots per muscle a floor of 2 opened every block at roughly double the
+     group's own MEV, which is not a ramp from MEV. The old assertion was
+     written when a pool had 3-4 slots and a 1-set prescription really was a
+     rounding artifact; now it is the MEV end of a deliberate 1->3 ramp on an
+     exercise appearing 2-3x that week. What must still hold is that it is
+     confined to the START of the block — a single set at the TOP of the ramp
+     would mean the ramp is not climbing. */
+  check(`a single working set appears only at the MEV end of the block (min ${minSetsAnyItem})`, minSetsAnyItem >= 1);
+  const topMin = Math.min(...Array.from({ length: ROT }, (_, d) =>
+    Math.min(...prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: BLOCKS.accumulation.maxCycles - 1 } }, green)
+      .items.filter((it) => !LIB[it.key].fixedSets).map((it) => it.sets))));
+  check(`no ramped slot is still on a single set at the top of the ramp (min ${topMin})`, topMin >= 2);
 
   // same-day stacking really is capped
   for (let d = 0; d < ROT; d++) {
@@ -355,12 +393,26 @@ console.log("\n== Session and weekly budget (measured from real prescribe output
     check(`day ${d} (${rx.dayName}): no muscle exceeds the same-session ramped cap of ${SAME_DAY_GROUP_CAP}`,
       over.length === 0, over.map(([g, v]) => `${g}=${v}`).join(","));
   }
-  check(`no single slot is ever prescribed more than ACC_SET_CAP (${ACC_SET_CAP})`, (() => {
-    for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++)
-      for (let d = 0; d < ROT; d++)
-        if (prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: c } }, green).items.some((it) => it.sets > ACC_SET_CAP)) return false;
-    return true;
-  })());
+  /* THE ATHLETE'S HARD RULE: no more than 3 sets of any one exercise, with a
+     single exemption they granted by name. Checked per exercise against
+     setCapFor(its group) so the exemption cannot silently widen — if a second
+     calf exercise is ever approved, or GROUP_SET_CAP grows another key, the
+     offenders are named in the failure rather than waved through. */
+  const overCap = [];
+  for (let c = 0; c < BLOCKS.accumulation.maxCycles; c++)
+    for (let d = 0; d < ROT; d++)
+      prescribe({ ...p, cycleIndex: d, block: { ...p.block, cycle: c } }, green).items.forEach((it) => {
+        const cap = LIB[it.key].fixedSets ? LIB[it.key].fixedSets : setCapFor(it.volumeGroup);
+        if (it.sets > cap) overCap.push(`${it.key} ${it.sets}>${cap} (cyc ${c} day ${d})`);
+      });
+  check(`no exercise ever exceeds its own set cap — ${ACC_SET_CAP} for everything except ${Object.entries(GROUP_SET_CAP).map(([g, n]) => `${g} (${n})`).join(", ")}`,
+    overCap.length === 0, overCap.slice(0, 5).join("; "));
+  const exempt = Object.keys(GROUP_SET_CAP);
+  check(`sanity: the exemption is exercised — ${exempt.join(", ")} really is prescribed above ${ACC_SET_CAP}`,
+    exempt.every((g) => {
+      const rx = prescribe({ ...p, cycleIndex: ROTATION.findIndex((day) => day.items.some((k) => LIB[k].volumeGroup === g)), block: { ...p.block, cycle: BLOCKS.accumulation.maxCycles - 1 } }, green);
+      return rx.items.some((it) => it.volumeGroup === g && it.sets > ACC_SET_CAP);
+    }));
 }
 
 console.log("\n== Exercise selection loads the target at long muscle length ==");

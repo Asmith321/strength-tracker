@@ -7,7 +7,7 @@
 import {
   freshProgram, prescribe, ingest, applyTransition, adjustLandmarks, migrateProgram, liftNormSlope,
   deliveredWeekly, effectiveCeiling, maxDeliverable, weeklyFreqScale, landmarksForExperience, rampedSlotSets,
-  rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
+  rampedAllocation, SLOT_ORDINAL, PATTERN_DAY_SLOTS, ACC_SET_CAP, setCapFor, GROUP_SET_CAP, RAMPED_SET_FLOOR, PATTERN_FREQ,
   FATIGUE_FLOOR_FRAC, VOL_SCALE, weeklyTarget, READSUPP_EWMA_ALPHA, SAME_DAY_GROUP_CAP as SDGC,
   nextSessionGapDays, nextSessionTargetAt, targetSessionsPerWeek, TARGET_SESSION_GAP_DAYS,
   BLOCKS, ROTATION, ROT, LIB, PATTERNS, ACC_REP_TIERS, PATTERN_RAMPED_ACC, GROWTH_POS, patternGrowth,
@@ -211,7 +211,7 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
      expected answer is now the scaled one. */
   const p = fresh();
   setPoolHist(p, "quads", [300, 304, 308, 312]);
-  p.avgSessionGapDays = 7 / 3; // ~3x/week -> freqScale = (ROT * gap) / 7 = (4 * 7/3) / 7 = 4/3 ≈ 1.333, not 1
+  p.avgSessionGapDays = 7 / 3; // ~3x/week -> freqScale = (ROT * gap) / 7 = (5 * 7/3) / 7 = 5/3 ≈ 1.667, not 1
   const scale = weeklyFreqScale(p.avgSessionGapDays);
   check(`sanity: this program's freqScale is not 1 (got ${scale.toFixed(3)})`, Math.abs(scale - 1) > 1e-9);
 
@@ -219,6 +219,17 @@ console.log("\n== P0: MRV-raise gate stays in per-rotation units regardless of f
   const straddleMrv = Math.floor(capA / scale); // mrv+1 lands just above capA/scale, still under capA
   p.landmarks.quads.mrv = straddleMrv;
   p.landmarks.quads.mav = straddleMrv - 1; // keep mav < mrv so the range clamp doesn't interfere
+  /* MEV has to be given room BELOW the MEV_MAV_MAX_RATIO ceiling, or this
+     fixture goes silently vacuous. adjustLandmarks records nothing at all when
+     every delta clamps to zero, so if MEV is already pinned at
+     floor(RATIO x mav) the whole case collapses to `adjustments.quads ===
+     undefined` and the three assertions below stop testing the MRV gate they
+     were written for — they just crash on a missing object. That is exactly
+     what happened when ACC_SET_CAP dropped to 3: capA fell, straddleMrv fell
+     with it, and the shipped MEV of 5 became its own ceiling at mav 9. Setting
+     MEV explicitly keeps the straddle construction (still the point) while
+     leaving one set of headroom for a raise to actually land. */
+  p.landmarks.quads.mev = Math.min(p.landmarks.quads.mev, Math.floor(MEV_MAV_MAX_RATIO * p.landmarks.quads.mav) - 1);
   check(`sanity: mrv+1 (${straddleMrv + 1}) is <= capA (${capA}) but > capA/scale (${(capA / scale).toFixed(2)}) — the two paths must disagree`,
     straddleMrv + 1 <= capA && straddleMrv + 1 > capA / scale);
 
@@ -253,17 +264,24 @@ console.log("\n== Stall notice: observation-only tracking (does not change MEV/M
   /* Shared fixture: flat-growth squat (quads driver) with n=3 evidence points
      — enough for patternGrowth to act on, slope ~0 either way. Individual
      tests below vary landmarks/fatigue to flip exactly one gate at a time.
-     Reference values at cyc=0 with default intermediate quads landmarks
-     (mev 8/mav 14/mrv 20): deliveredWeekly=10, effectiveCeiling=16. */
+
+     The cyc-0 delivered volume is MEASURED, not written down. It used to be a
+     hardcoded 8 with a comment quoting landmarks the table no longer holds, and
+     that number is a function of ACC_SET_CAP, RAMPED_SET_FLOOR and the quad
+     slot count in ROTATION — all three of which moved together for the 3-set
+     ceiling, silently flipping the volume gate this fixture exists to hold
+     OPEN. Reading it from the engine is the only version that keeps testing
+     the gate rather than the constant. */
   const FLAT = [300, 300, 300];
   const RISING = [300, 304, 308, 312];
+  const QUAD_DELIVERED_CYC0 = deliveredWeekly("quads", "accumulation", 0, fresh().landmarks);
 
   // 1. all three gates clear (volume>=mav, fatigue comfortable, not at ceiling) -> streak increments
   {
     const p = fresh();
     setPoolHist(p, "quads", FLAT);
     p.fatigue.index = 0.3; // comfortable (< FATIGUE_SPIKE 0.7)
-    p.landmarks.quads.mav = 8; // <= deliveredWeekly: volume gate clears
+    p.landmarks.quads.mav = QUAD_DELIVERED_CYC0; // == deliveredWeekly: volume gate clears
     const { stallStreaks } = adjustLandmarks(p);
     check(`flat growth + volume>=mav + fatigue ok + not at ceiling -> streak increments (0 -> ${stallStreaks.quads})`,
       stallStreaks.quads === 1);
@@ -327,7 +345,7 @@ console.log("\n== Stall notice: observation-only tracking (does not change MEV/M
     let p = fresh();
     setPoolHist(p, "quads", FLAT);
     p.fatigue.index = 0.3;
-    p.landmarks.quads.mav = 8;
+    p.landmarks.quads.mav = QUAD_DELIVERED_CYC0; // measured, see the fixture note above
     const seenNotice = [];
     for (let i = 0; i < STALL_STREAK_THRESHOLD; i++) {
       const { stallStreaks, stallNotices } = adjustLandmarks(p);
@@ -368,7 +386,10 @@ console.log("\n== Stall notice: volumeAtMav now uses the same call-then-divide f
     const p = fresh();
     setPoolHist(p, "quads", [300, 300, 300]);
     p.fatigue.index = 0.3;
-    p.landmarks.quads.mav = 8; // volume gate clears (delivered at cyc0 >= 8)
+    // volume gate clears: MAV set to exactly what cyc 0 delivers, measured rather
+    // than hardcoded — the old literal 8 was a function of ACC_SET_CAP and the
+    // quad slot count, and silently stopped clearing the gate when both moved.
+    p.landmarks.quads.mav = deliveredWeekly("quads", "accumulation", 0, p.landmarks);
     const { stallStreaks } = adjustLandmarks(p);
     check(`freqScale=1: volumeAtMav gate still clears and increments the streak exactly as before (0 -> ${stallStreaks.quads})`,
       stallStreaks.quads === 1);
@@ -637,13 +658,32 @@ console.log("\n== P3 (rewritten): repeated exposures are identical straight sets
     const p = fresh(); p.cycleIndex = dayIdx; p.block = { type: "accumulation", cycle: cyc, sessionsInBlock: cyc * ROT, nextAfter: null };
     return prescribe(p, green).items.find((i) => i.key === key);
   };
-  /* dbshoulderpress appears on two days; find them rather than naming indices,
-     which the 4->5 rotation change invalidated. */
-  const pressDays = ROTATION.map((d, i) => (d.items.includes("dbshoulderpress") ? i : -1)).filter((i) => i >= 0);
-  check("dbshoulderpress really does appear on exactly two days", pressDays.length === 2, JSON.stringify(pressDays));
-  const d0 = at(pressDays[0], 4, "dbshoulderpress"), d2 = at(pressDays[1], 4, "dbshoulderpress");
-  check(`a twice-weekly exercise is prescribed identically on both days (${d0.sets}x${d0.reps}@${d0.rpe} vs ${d2.sets}x${d2.reps}@${d2.rpe})`,
-    d0.sets === d2.sets && d0.reps === d2.reps && d0.rpe === d2.rpe && d0.topLoad === d2.topLoad);
+  /* Checked for EVERY repeated exercise, not just one named lift. This used to
+     pin dbshoulderpress and assert it appeared on exactly two days; the 3-set
+     ceiling put it on three, and a test that names one exercise and its
+     exposure count has now been re-pointed by three separate rotation changes.
+     The property was never about that lift.
+
+     Note what is and is not identical across appearances. Reps, RPE and load
+     are properties of the exercise and the block, so they must match exactly.
+     SETS need not: since T1-3 the ramp's remainder is handed out one set at a
+     time across a group's slots, so two appearances of the same exercise can
+     legitimately differ by one (back's 23 sets over 8 slots is [3,3,3,3,3,3,3,2]
+     — the Friday lat pullover really does get one fewer than Monday's). More
+     than one apart would mean the allocation is skewing, not distributing. */
+  const repeated = [...new Set(ROTATION.flatMap((d) => d.items))]
+    .map((k) => [k, ROTATION.map((d, i) => (d.items.includes(k) ? i : -1)).filter((i) => i >= 0)])
+    .filter(([, days]) => days.length >= 2);
+  check(`some exercises appear on more than one day (${repeated.length}: ${repeated.map(([k, d]) => `${k}x${d.length}`).join(", ")})`,
+    repeated.length > 0);
+  repeated.forEach(([key, days]) => {
+    const rx = days.map((d) => at(d, 4, key));
+    const same = rx.every((r) => r.reps === rx[0].reps && r.rpe === rx[0].rpe && r.topLoad === rx[0].topLoad);
+    check(`${key}: same reps/RPE/load on all ${days.length} days (${rx[0].reps}@${rx[0].rpe}, ${rx[0].topLoad})`, same);
+    const setCounts = rx.map((r) => r.sets);
+    check(`${key}: set counts differ by at most the ramp remainder (${setCounts.join("/")})`,
+      Math.max(...setCounts) - Math.min(...setCounts) <= 1);
+  });
   check("no rotation day is flagged as a volumeDay any more", ROTATION.every((d) => !d.volumeDay));
   // effort and volume both climb across the block for the same exercise
   const sqDay = dayWith("squat");
@@ -804,8 +844,30 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      MOVEMENT-PATTERN re-capture: the Upper day's exercises changed (pull-up no
      longer sits next to lat pulldown, and the overhead press moved to leg day),
      so the sessions differ again. Same two invariants re-verified independently
-     before accepting the new rows. */
-  const EXPECTED = [[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10}],[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"nordic","sets":2,"topLoad":-65,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":3,"topLoad":85,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":3,"topLoad":80,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"pullup","sets":2,"topLoad":-45,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10}],[{"key":"bench","sets":2,"topLoad":220,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":2,"topLoad":80,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-60,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10}],[{"key":"tbarrow","sets":4,"topLoad":200,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10}],[{"key":"inclinebench","sets":4,"topLoad":90,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"dblateralraise","sets":5,"topLoad":20,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10}],[{"key":"bench","sets":3,"topLoad":225,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-55,"reps":10},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"lateralraise","sets":4,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10}]];
+     before accepting the new rows.
+
+     3-SET-CEILING re-capture (162 rows, up from 108). Wholesale again, and for
+     the same reason as the rebuild: ACC_SET_CAP went 6 -> 3, RAMPED_SET_FLOOR
+     went 2 -> 1, the rotation was rebuilt as upper Mon/Wed/Fri + lower Tue/Thu,
+     and one exercise was added — so every session is a different session and a
+     row-level diff against the previous capture has nothing to say. What was
+     verified INDEPENDENTLY of this snapshot before accepting it, under a real
+     Mon-Fri simulation with the clock actually advanced (the engine reads
+     Date.now() directly, so a harness that passes timestamps measures nothing):
+       - freqScale settles at exactly 1.000 and sessionsPerWeek tracks 5
+       - at the top of the ramp all ten groups land EXACTLY on advanced MAV —
+         neither short nor over (quads 18, hamstrings 10, chest 18,
+         front_delts 9, back 23, rear_delts 11, side_delts 18, calves 18,
+         biceps 18, triceps 15)
+       - every group trains 2-3x/week and NO muscle lands on consecutive days
+       - no exercise exceeds 3 sets except Standing Calf Raise, which the
+         athlete exempted by name (GROUP_SET_CAP)
+       - no same-day muscle total exceeds SAME_DAY_GROUP_CAP
+       - the deload delivers strictly less than the accumulation MEV cycle for
+         every group — which it did NOT at first, and this is how that was
+         caught: at a floor of 1 with 6-8 slots a deload was "one set of
+         everything", identical to the opening accumulation week. */
+  const EXPECTED = [[{"key":"tbarrow","sets":1,"topLoad":190,"reps":6},{"key":"pulldown","sets":1,"topLoad":180,"reps":6},{"key":"latpullover","sets":1,"topLoad":100,"reps":10},{"key":"bench","sets":1,"topLoad":210,"reps":6},{"key":"dbshoulderpress","sets":1,"topLoad":65,"reps":6},{"key":"cablefly","sets":1,"topLoad":60,"reps":10},{"key":"lateralraise","sets":1,"topLoad":20,"reps":10},{"key":"dblateralraise","sets":1,"topLoad":17.5,"reps":10},{"key":"triext","sets":1,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":1,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":1,"topLoad":67.5,"reps":10},{"key":"preachercurl","sets":1,"topLoad":75,"reps":10}],[{"key":"squat","sets":1,"topLoad":295,"reps":6},{"key":"rdl","sets":1,"topLoad":285,"reps":6},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"legext","sets":1,"topLoad":170,"reps":10},{"key":"legcurl","sets":1,"topLoad":120,"reps":10},{"key":"calfraise","sets":3,"topLoad":310,"reps":10},{"key":"reversepecdeck","sets":1,"topLoad":32.5,"reps":10},{"key":"dbreversefly","sets":1,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":1,"topLoad":-50,"reps":6},{"key":"tbarrow","sets":1,"topLoad":190,"reps":6},{"key":"latpullover","sets":1,"topLoad":100,"reps":10},{"key":"inclinebench","sets":1,"topLoad":85,"reps":6},{"key":"dbshoulderpress","sets":1,"topLoad":65,"reps":6},{"key":"dip","sets":1,"topLoad":160,"reps":6},{"key":"lateralraise","sets":1,"topLoad":20,"reps":10},{"key":"dblateralraise","sets":1,"topLoad":17.5,"reps":10},{"key":"triext","sets":1,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":1,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":1,"topLoad":67.5,"reps":10},{"key":"preachercurl","sets":1,"topLoad":75,"reps":10}],[{"key":"frontsquat","sets":1,"topLoad":235,"reps":6},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"nordic","sets":1,"topLoad":-65,"reps":10},{"key":"legext","sets":1,"topLoad":170,"reps":10},{"key":"legcurl","sets":1,"topLoad":120,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"reversepecdeck","sets":1,"topLoad":32.5,"reps":10},{"key":"dbreversefly","sets":1,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pulldown","sets":1,"topLoad":180,"reps":6},{"key":"latpullover","sets":1,"topLoad":100,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10},{"key":"inclinebb","sets":1,"topLoad":170,"reps":6},{"key":"dbbench","sets":1,"topLoad":90,"reps":6},{"key":"dbshoulderpress","sets":1,"topLoad":65,"reps":6},{"key":"lateralraise","sets":1,"topLoad":20,"reps":10},{"key":"dblateralraise","sets":1,"topLoad":17.5,"reps":10},{"key":"triceppushdown","sets":1,"topLoad":77.5,"reps":10},{"key":"bayesiancurl","sets":1,"topLoad":67.5,"reps":10},{"key":"preachercurl","sets":1,"topLoad":75,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"tbarrow","sets":2,"topLoad":200,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"bench","sets":2,"topLoad":220,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":2,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":20,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":80,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":70,"reps":10},{"key":"preachercurl","sets":2,"topLoad":77.5,"reps":10}],[{"key":"squat","sets":2,"topLoad":305,"reps":6},{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"calfraise","sets":5,"topLoad":325,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":35,"reps":10},{"key":"dbreversefly","sets":2,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pullup","sets":1,"topLoad":-45,"reps":6},{"key":"tbarrow","sets":1,"topLoad":200,"reps":6},{"key":"latpullover","sets":1,"topLoad":100,"reps":10},{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"dbshoulderpress","sets":1,"topLoad":65,"reps":6},{"key":"dip","sets":1,"topLoad":160,"reps":6},{"key":"lateralraise","sets":2,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":1,"topLoad":20,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":1,"topLoad":80,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":70,"reps":10},{"key":"preachercurl","sets":1,"topLoad":77.5,"reps":10}],[{"key":"frontsquat","sets":1,"topLoad":245,"reps":6},{"key":"bsplit","sets":1,"topLoad":55,"reps":8},{"key":"nordic","sets":1,"topLoad":-60,"reps":10},{"key":"legext","sets":1,"topLoad":180,"reps":10},{"key":"legcurl","sets":1,"topLoad":120,"reps":10},{"key":"calfraise","sets":4,"topLoad":325,"reps":10},{"key":"reversepecdeck","sets":1,"topLoad":35,"reps":10},{"key":"dbreversefly","sets":1,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"pulldown","sets":1,"topLoad":190,"reps":6},{"key":"latpullover","sets":1,"topLoad":100,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10},{"key":"inclinebb","sets":1,"topLoad":175,"reps":6},{"key":"dbbench","sets":1,"topLoad":90,"reps":6},{"key":"dbshoulderpress","sets":1,"topLoad":65,"reps":6},{"key":"lateralraise","sets":1,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":1,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":1,"topLoad":80,"reps":10},{"key":"bayesiancurl","sets":1,"topLoad":70,"reps":10},{"key":"preachercurl","sets":1,"topLoad":77.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"pulldown","sets":3,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":110,"reps":10},{"key":"bench","sets":3,"topLoad":225,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"cablefly","sets":3,"topLoad":60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"triext","sets":3,"topLoad":90,"reps":10},{"key":"triceppushdown","sets":3,"topLoad":85,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":72.5,"reps":10},{"key":"preachercurl","sets":3,"topLoad":82.5,"reps":10}],[{"key":"squat","sets":3,"topLoad":315,"reps":6},{"key":"rdl","sets":2,"topLoad":300,"reps":6},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":130,"reps":10},{"key":"calfraise","sets":7,"topLoad":335,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"dbreversefly","sets":2,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"pullup","sets":2,"topLoad":-40,"reps":6},{"key":"tbarrow","sets":2,"topLoad":200,"reps":6},{"key":"latpullover","sets":2,"topLoad":110,"reps":10},{"key":"inclinebench","sets":2,"topLoad":90,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"dip","sets":2,"topLoad":170,"reps":6},{"key":"lateralraise","sets":2,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":20,"reps":10},{"key":"triext","sets":2,"topLoad":90,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":85,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":72.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":82.5,"reps":10}],[{"key":"frontsquat","sets":2,"topLoad":250,"reps":6},{"key":"bsplit","sets":2,"topLoad":60,"reps":8},{"key":"nordic","sets":2,"topLoad":-55,"reps":10},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":130,"reps":10},{"key":"calfraise","sets":7,"topLoad":335,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":35,"reps":10},{"key":"dbreversefly","sets":2,"topLoad":17.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"latpullover","sets":2,"topLoad":110,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10},{"key":"inclinebb","sets":2,"topLoad":180,"reps":6},{"key":"dbbench","sets":2,"topLoad":95,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"lateralraise","sets":2,"topLoad":25,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":85,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":72.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":82.5,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -1164,14 +1226,27 @@ console.log("\n== AUDIT 2.10: feeler steps track priming — cold gets 2, primed
      whichever accessories happen to demonstrate the rule on the chosen day, and
      asserts up front that such a pair exists — so a rotation that no longer
      contains one fails loudly instead of silently testing nothing. */
-  const p = fresh(); p.cycleIndex = dayWith("dip"); p.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
-  const items = prescribe(p, green).items;
-  const firstOfGroup = (g) => items.findIndex((i) => LIB[i.key].volumeGroup === g);
-  const feelers = items.filter((i) => i.warmup?.type === "feeler");
-  const cold = feelers.find((i, ) => items.indexOf(i) === firstOfGroup(LIB[i.key].volumeGroup));
-  const primed = feelers.find((i) => items.indexOf(i) > firstOfGroup(LIB[i.key].volumeGroup));
-  check(`sanity: this day holds both a COLD and a PRIMED feeler accessory (${cold?.key}, ${primed?.key})`,
+  /* The DAY is now found too, not just the exercises on it. Pinning the day via
+     dayWith("dip") left the choice of cold accessory to whatever happened to sit
+     first in that session, and the new rotation opens its Wednesday with the
+     Pull-Up: a bodyweight lift, whose feeler ramp is empty because there is no
+     external load to step up through. The mechanism (cold gets 2 steps, primed
+     gets 1) was fine — the probe had just landed on the one exercise class that
+     cannot show it. Scan every day for a session that actually demonstrates the
+     rule with loaded accessories, and fail loudly if no day does. */
+  const loadedFeeler = (i) => i.warmup?.type === "feeler" && (i.warmup.sets?.length || 0) > 0;
+  let items = null, cold = null, primed = null;
+  for (let d = 0; d < ROT; d++) {
+    const p = fresh(); p.cycleIndex = d; p.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
+    const its = prescribe(p, green).items;
+    const firstOf = (g) => its.findIndex((i) => LIB[i.key].volumeGroup === g);
+    const c = its.find((i) => loadedFeeler(i) && its.indexOf(i) === firstOf(LIB[i.key].volumeGroup));
+    const pr = its.find((i) => loadedFeeler(i) && its.indexOf(i) > firstOf(LIB[i.key].volumeGroup));
+    if (c && pr) { items = its; cold = c; primed = pr; break; }
+  }
+  check(`sanity: some rotation day holds both a COLD and a PRIMED loaded feeler accessory (${cold?.key}, ${primed?.key})`,
     !!cold && !!primed);
+  const firstOfGroup = (g) => items.findIndex((i) => LIB[i.key].volumeGroup === g);
   check(`cold accessory (${cold.key}) gets a 2-step feeler (${cold.warmup?.sets?.length} steps)`,
     cold.warmup?.sets?.length === 2 && cold.warmup.sets[0].weight < cold.warmup.sets[1].weight);
   check(`primed accessory (${primed.key}, after earlier ${LIB[primed.key].volumeGroup} work) keeps the 1-step feeler (${primed.warmup?.sets?.length} steps)`,
@@ -1455,9 +1530,13 @@ console.log("\n== AUDIT 3.6/3.8 (resolved by the rebuild): the schedule can deli
     const p = fresh();
     setPoolHist(p, "front_delts", [100, 100, 100]);
     p.fatigue.index = 0.3;
-    p.landmarks.front_delts = { ...p.landmarks.front_delts, mav: 4, mrv: 12 };
+    /* MAV measured, not hardcoded: it has to sit AT OR BELOW what cycle 0
+       delivers for the volume gate to clear, and the old literal 4 was above
+       the 3 sets front delts now open a block with. */
+    const cyc0 = deliveredWeekly("front_delts", "accumulation", 0, p.landmarks);
+    p.landmarks.front_delts = { ...p.landmarks.front_delts, mav: cyc0, mrv: cyc0 + 8 };
     const { stallStreaks } = adjustLandmarks(p);
-    check(`the same group with an in-capacity MAV DOES accrue a stall streak (got ${stallStreaks.front_delts}) — AUDIT 3.8's unreachable case is now reachable`,
+    check(`the same group with an in-capacity MAV (${cyc0}) DOES accrue a stall streak (got ${stallStreaks.front_delts}) — AUDIT 3.8's unreachable case is now reachable`,
       stallStreaks.front_delts === 1);
   }
 }
@@ -1800,13 +1879,54 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      not iterating an empty list. */
   check(`some groups stack two ramped slots on one day (${stackers.sort().join(", ")})`,
     stackers.length > 0);
+  /* This used to assert `real < naive` for every stacking group, which held
+     only while ACC_SET_CAP was 6: two slots on a day meant 12 sets against a
+     SAME_DAY_GROUP_CAP of 10, so the cap always bit. At a cap of 3 the most any
+     day carries is 3 slots x 3 = 9, under the ceiling, so the day cap is
+     currently SLACK everywhere and `real === naive` for every group — the old
+     assertion would now fail on ten groups while the mechanism it guards is
+     perfectly intact. Asserting the strict inequality was really asserting a
+     property of the landmark table, not of maxDeliverable.
+     What is actually invariant is the direction (the cap can only ever reduce
+     capacity, never inflate it) plus the over-capacity payoff below, which is
+     what would genuinely break if maxDeliverable stopped consulting the day
+     cap. */
   stackers.forEach((g) => {
     const slots = (PATTERN_DAY_SLOTS[g] || []).reduce((a, { n }) => a + n, 0);
-    const naive = ACC_SET_CAP * slots; // what the old formula returned for the ramped part
+    const naive = setCapFor(g) * slots; // what the old formula returned for the ramped part
     const real = maxDeliverable(g, "accumulation") - fixedWeeklySetsP4(g);
-    check(`${g}: real ramped capacity (${real}) is BELOW the naive cap x slots figure (${naive}) — the same-day cap is accounted for`,
-      real < naive);
+    const dayCapBites = (PATTERN_DAY_SLOTS[g] || []).some(({ n }) => n >= 2 && n * setCapFor(g) > SDGC);
+    check(`${g}: ramped capacity (${real}) never exceeds cap x slots (${naive})`, real <= naive);
+    check(`${g}: capacity is below the naive figure exactly when the same-day cap can bite (bites=${dayCapBites})`,
+      dayCapBites ? real < naive : real === naive);
   });
+  /* THE ASSERTION WITH TEETH, and the reason the block above can afford to be
+     relaxed: drive every landmark far past what the schedule can deliver, then
+     check prescribe() still honours the session ceiling and that maxDeliverable
+     predicted the exact weekly total. Reverting the T1-1 fix breaks this
+     whatever ACC_SET_CAP happens to be. */
+  {
+    const over = freshProgram({ seeds: snapSeedsP4, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 });
+    Object.values(over.landmarks).forEach((lm) => { lm.mev = 2; lm.mav = 60; lm.mrv = 80; });
+    const weekly = {};
+    for (let d = 0; d < ROT; d++) {
+      const p = { ...over, cycleIndex: d, block: { type: "accumulation", cycle: BLOCKS.accumulation.maxCycles - 1, sessionsInBlock: 0, nextAfter: null } };
+      const perDay = {};
+      prescribe(p, { trainingReadiness: 80 }).items.forEach((it) => {
+        if (LIB[it.key].fixedSets) return;
+        perDay[it.volumeGroup] = (perDay[it.volumeGroup] || 0) + it.sets;
+        weekly[it.volumeGroup] = (weekly[it.volumeGroup] || 0) + it.sets;
+      });
+      const breach = Object.entries(perDay).filter(([, v]) => v > SDGC);
+      check(`over-capacity landmarks, day ${d}: no muscle breaches the session ceiling (${breach.map(([g, v]) => `${g}=${v}`).join(",") || "none"})`,
+        breach.length === 0);
+    }
+    Object.keys(weekly).forEach((g) => {
+      const claimed = maxDeliverable(g, "accumulation") - fixedWeeklySetsP4(g);
+      check(`over-capacity landmarks, ${g}: maxDeliverable (${claimed}) equals what prescribe() actually delivers (${weekly[g]})`,
+        claimed === weekly[g]);
+    });
+  }
   /* The payoff: deliveredWeekly must equal what prescribe actually hands over,
      for every group, at the top of the ramp. This is the assertion that would
      have caught the original defect. */
@@ -2244,25 +2364,45 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      mutations lived in that shadow: the day-walk offset (`let i = 0`), the
      stacking predicate (`n >= 2`), the running total's seed value, and the
      rounding mode of the scale-down.
-     A landmark set with quads MAV 23 makes the cap bind again AND makes the two
-     stacked days UNEVEN (pre-cap [6,6,6,5]), which is what separates the four:
+     A landmark set with quads MAV 23 made the cap bind again AND made the two
+     stacked days UNEVEN (pre-cap [6,6,6,5]), which is what separated the four:
      an even pair alone cannot distinguish round from floor, or a total of 12
-     from a total of 13. Auto-tuned landmarks reach this range in normal use, so
-     this is a real configuration, not a synthetic one. */
-  const capLm = { quads: { label: "Quads", mev: 5, mav: 23, mrv: 25 } };
-  const alloc = rampedAllocation("quads", "accumulation", 5, capLm, 1);
-  check(`the binding-cap allocation is exactly [5,5,5,5] (got [${alloc}])`,
-    JSON.stringify(alloc) === JSON.stringify([5, 5, 5, 5]));
-  const days = PATTERN_DAY_SLOTS.quads;
-  let idx = 0;
-  days.forEach(({ day, n }) => {
-    const tot = alloc.slice(idx, idx + n).reduce((s, v) => s + v, 0);
-    check(`day ${day}: stacked quads total ${tot} respects SAME_DAY_GROUP_CAP (${SAME_DAY_GROUP_CAP})`,
-      tot <= SAME_DAY_GROUP_CAP);
-    idx += n;
-  });
-  check("sanity: without the cap this configuration WOULD breach it, so the assertions above are not vacuous",
-    2 * ACC_SET_CAP > SAME_DAY_GROUP_CAP);
+     from a total of 13.
+
+     THAT PROBE IS DEAD AT ACC_SET_CAP 3, and no landmark value revives it. The
+     cap's stacking branch needs a day carrying n slots with n x cap >
+     SAME_DAY_GROUP_CAP; the most any day now carries is 3 slots, and 3 x 3 = 9
+     is under the ceiling of 10. Calves are the one group with a raised cap (9)
+     and they carry a single slot per day, so `n >= 2` is false for them. The
+     four mutants are therefore dormant again — not because the guard was
+     removed, but because nothing in this rotation can reach it.
+     Rather than pretend otherwise with a probe that no longer probes, this
+     block now asserts the INVARIANT across extreme landmarks (which is what the
+     guard is for) plus a tripwire on the dormancy itself, so that raising
+     ACC_SET_CAP or stacking a fourth slot on a day fails HERE and sends the
+     next reader back to this comment. */
+  {
+    const maxSlotsOnADay = Math.max(...Object.entries(PATTERN_DAY_SLOTS)
+      .flatMap(([g, ds]) => ds.map(({ n }) => n * setCapFor(g))));
+    check(`TRIPWIRE: the same-day cap is currently dormant — the heaviest day any group can stack is ${maxSlotsOnADay} sets against a ceiling of ${SAME_DAY_GROUP_CAP}. If this fails, the four AREA 5.4 mutants are live again and this block needs a real probe.`,
+      maxSlotsOnADay <= SAME_DAY_GROUP_CAP);
+    /* The invariant the guard exists for, swept across landmarks far past
+       anything the auto-tune produces. Vacuous today by the tripwire above, but
+       it is the assertion that has to hold the moment the tripwire flips. */
+    Object.keys(PATTERN_DAY_SLOTS).forEach((g) => {
+      [10, 25, 40, 60].forEach((mav) => {
+        const lmX = { [g]: { label: g, mev: 2, mav, mrv: mav + 2 } };
+        const a = rampedAllocation(g, "accumulation", 5, lmX, 1);
+        let i2 = 0, worst = 0;
+        (PATTERN_DAY_SLOTS[g] || []).forEach(({ n }) => {
+          worst = Math.max(worst, a.slice(i2, i2 + n).reduce((s, v) => s + v, 0));
+          i2 += n;
+        });
+        check(`${g} @ MAV ${mav}: heaviest single day ${worst} respects SAME_DAY_GROUP_CAP (${SAME_DAY_GROUP_CAP})`,
+          worst <= SAME_DAY_GROUP_CAP);
+      });
+    });
+  }
 }
 
 {
@@ -2274,16 +2414,30 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      The probe cadence had to move with ROT. It was 5x/week, which gave a
      fractional freqScale of 0.8 while the rotation was 4 days — but 5x/week IS
      the design cadence now, so freqScale there is exactly 1 and round/floor
-     agree, leaving the mutant undetected. 6x/week is the nearest cadence that
-     still produces a fractional scale. The sanity check below is what caught
-     this: it exists precisely to fail when the probe stops probing. */
+     agree, leaving the mutant undetected. 6x/week was the nearest cadence that
+     still produced a fractional scale.
+
+     THE PROBE HAD TO MOVE AGAIN, AND IN THE OPPOSITE DIRECTION, when the
+     accumulation floor dropped from 2 to 1 for the 3-set ceiling. At floorRaw 1
+     a cadence FASTER than the design week cannot distinguish the two operators
+     at all: freqScale is below 1, so round and floor both land under 1 and the
+     surrounding Math.max(1, ...) lifts either result to the same 1. The
+     mutation only shows at a scale of 1.5 or above, where round(1 x 1.5) = 2
+     and floor(1 x 1.5) = 1 — i.e. at cadences SLOWER than the design week,
+     which is exactly where a raised floor matters anyway. Probing at 6x/week
+     now proves nothing; probing at ~3.3x/week proves the operator.
+     This is the second time the sanity check below caught the probe going
+     silent, which is the entire reason it is written as an assertion. */
   const lm = landmarksForExperience("intermediate");
-  const fsFast = weeklyFreqScale(7 / 6);
+  const gapSlow = 2.1; // ~3.3x/week -> freqScale = (5 * 2.1) / 7 = 1.5 exactly
+  const fsSlow = weeklyFreqScale(gapSlow);
+  const rawFloor = RAMPED_SET_FLOOR[BLOCKS.accumulation.volLevel];
+  check(`sanity: the scaled floor really is round-sensitive at this cadence (fs ${fsSlow.toFixed(3)}, floorRaw ${rawFloor}: round=${Math.round(rawFloor * fsSlow)}, floor=${Math.floor(rawFloor * fsSlow)})`,
+    Math.round(rawFloor * fsSlow) !== Math.floor(rawFloor * fsSlow));
   const lowest = Math.min(...Object.keys(lm).map((g) =>
-    Math.min(...rampedAllocation(g, "accumulation", 0, lm, fsFast))));
-  check(`at 6x/week no ramped slot opens the block below 2 sets (lowest ${lowest})`, lowest >= 2);
-  check(`sanity: the scaled floor really is round-sensitive here (fs ${fsFast.toFixed(3)}: round=${Math.round(2 * fsFast)}, floor=${Math.floor(2 * fsFast)})`,
-    Math.round(2 * fsFast) !== Math.floor(2 * fsFast));
+    Math.min(...rampedAllocation(g, "accumulation", 0, lm, fsSlow))));
+  check(`at ~3.3x/week the scaled floor rounds UP: no ramped slot opens the block below ${Math.round(rawFloor * fsSlow)} sets (lowest ${lowest})`,
+    lowest >= Math.round(rawFloor * fsSlow));
 }
 
 {
@@ -2291,7 +2445,13 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
   /* 5.1 pinned deload VOLUME and REPS but not deload SET COUNTS, leaving the
      `Math.max(1, Math.round(...))` in both the fixedSets and ramped branches
      unconstrained in three ways. */
-  const mkDeload = () => { const p = fresh(); p.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null }; p.cycleIndex = 0; return p; };
+  /* The DAY has to be found: this pinned cycleIndex 0, which held a fixedSets
+     accessory under the old rotation and holds none under the new one (shrug
+     and the wrist curl moved to Friday, the cable crunch to the lower days), so
+     the fixedSets half of this block was reading `undefined.key`. */
+  const fixedDay = ROTATION.findIndex((d) => d.items.some((k) => LIB[k].fixedSets));
+  check(`sanity: some rotation day carries a fixedSets accessory (day ${fixedDay})`, fixedDay >= 0);
+  const mkDeload = () => { const p = fresh(); p.block = { type: "deload", cycle: 0, sessionsInBlock: 0, nextAfter: null }; p.cycleIndex = fixedDay; return p; };
   const green80 = prescribe(mkDeload(), { trainingReadiness: 80 }).items;
   const amber55 = prescribe(mkDeload(), { trainingReadiness: 55 }).items;
   const fxG = green80.find((i) => LIB[i.key].fixedSets);
@@ -2515,8 +2675,17 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      — a per-exercise boolean. Clipping one set of five and failing four of five
      produced an IDENTICAL fatigue contribution, so the field's own "(reps
      short)" label described information the engine then threw away. */
+  /* Measured at the TOP of the ramp, not cycle 0. Both the ratio assertion and
+     the legacy-partial one need a prescription with more than one set per
+     exercise, and since RAMPED_SET_FLOOR dropped to 1 for the 3-set ceiling,
+     cycle 0 is exactly one set of everything — where "one rep short" and "every
+     rep missed" collapse toward each other and a legacy missedSets=1 IS a total
+     miss. The top of the ramp is also the honest place to measure a miss
+     signal: it is where misses actually happen. */
+  const topCyc = BLOCKS.accumulation.maxCycles - 1;
+  const atTop = () => { const p = fresh(); p.block = { type: "accumulation", cycle: topCyc, sessionsInBlock: topCyc * ROT, nextAfter: null }; return p; };
   const runWith = (shortFor) => {
-    let p = fresh();
+    let p = atTop();
     const rx = prescribe(p, green);
     const logs = rx.items.map((it) => ({
       key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
@@ -2546,9 +2715,9 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      still be read, and at their ORIGINAL semantics — a stored 3 meant three
      sets, not three reps. */
   {
-    let p = fresh();
+    let p = atTop();
     const rx = prescribe(p, green);
-    const legacy = (n) => ingest(fresh(), rx.items.map((it) => ({
+    const legacy = (n) => ingest(atTop(), rx.items.map((it) => ({
       key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe, targetRpe: it.rpe,
       sets: it.sets, missedSets: n, touched: true, backoffSetCount: it.backoffSetCount,
       backoffReps: it.reps, backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
