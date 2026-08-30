@@ -16,7 +16,7 @@
 import {
   freshProgram, prescribe, ingest, migrateProgram, applyTransition,
   LIB, ROTATION, ROT, PATTERNS, PATTERN_FREQ, PATTERN_OF, PATTERN_RAMPED_ACC, PATTERN_MAIN,
-  ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, SAME_DAY_GROUP_CAP,
+  ACC_REP_TIERS, BLOCKS, LEGACY_BLOCK_TYPES, RETIRED_LABELS, ACC_SET_CAP, SAME_DAY_GROUP_CAP, TRAINING_WEEKDAYS,
   deliveredWeekly, fixedWeeklySets, rampedSlotSets, maxDeliverable, landmarksForExperience,
 } from "./src/engine.js";
 
@@ -175,6 +175,39 @@ console.log("\n== Movement rules: the pairings the athlete rejects ==");
   check("sanity: both are still in the program, on different days — the rule separates them rather than dropping one",
     ROTATION.some((d) => d.items.includes("pullup")) && ROTATION.some((d) => d.items.includes("pulldown")));
 
+  /* RULE 4 — NO MUSCLE ON CONSECUTIVE DAYS. The athlete's rule, and the one
+     that determines this rotation's whole shape. It is much stronger than it
+     reads: in a Mon-Fri week there is exactly ONE set of three non-adjacent
+     days, {Mon, Wed, Fri}, so every muscle needing three exposures must be on
+     all three, and everything else takes a non-adjacent pair.
+     The rotation this replaced violated it four times over — triceps Mon+Tue,
+     side delts Wed+Thu, back and biceps Thu+Fri — while passing every other
+     check in this file, because nothing here looked at WHICH days a muscle
+     landed on, only how many. */
+  const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const dayIdx = {};
+  ROTATION.forEach((d, i) => new Set(d.items.map((k) => LIB[k].volumeGroup)).forEach((g) => {
+    if (g) (dayIdx[g] = dayIdx[g] || []).push(i);
+  }));
+  const consecutive = [];
+  Object.entries(dayIdx).forEach(([g, days]) => {
+    const s = [...days].sort((a, b) => a - b);
+    for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] === 1) consecutive.push(`${g} on ${DOW[s[i - 1]]}+${DOW[s[i]]}`);
+  });
+  check("no muscle is trained on consecutive days", consecutive.length === 0, consecutive.join("; "));
+  /* Friday to Monday is three days apart, so the week wrapping is not a
+     violation — asserted so nobody "fixes" it later. */
+  check("sanity: the week wraps across a weekend, so Friday and Monday are not consecutive",
+    TRAINING_WEEKDAYS[0] === 1 && TRAINING_WEEKDAYS[TRAINING_WEEKDAYS.length - 1] === 5);
+  /* The structural consequence, asserted directly: anything on three days is on
+     Mon/Wed/Fri, because no other non-adjacent triple exists. */
+  const threeDay = Object.entries(dayIdx).filter(([, d]) => d.length >= 3);
+  check(`every 3x-per-week muscle is on Mon/Wed/Fri (${threeDay.map(([g]) => g).join(", ")})`,
+    threeDay.every(([, d]) => JSON.stringify([...d].sort((a, b) => a - b)) === "[0,2,4]"),
+    threeDay.map(([g, d]) => `${g}: ${d.map((i) => DOW[i]).join("/")}`).join("; "));
+  check("sanity: at least one muscle really does need three exposures, so the rule above is not vacuous",
+    threeDay.length > 0);
+
   /* RULE 2 — no pressing on a lower-body day. An earlier pass parked the
      overhead press on leg day because leg day had room and no other pressing;
      the athlete rejected it. Days are marked `lowerBody` in ROTATION so this
@@ -202,14 +235,16 @@ console.log("\n== Movement rules: the pairings the athlete rejects ==");
   });
   check("no session pairs an incline press with an overhead press",
     inclineWithOhp.length === 0, inclineWithOhp.map((d) => d.name).join("; "));
-  /* That rule is currently vacuous — nothing in the rotation is an incline —
-     so this records the fact rather than letting a passing test imply the
-     rotation was checked against a real incline press. */
-  const hasIncline = ROTATION.some((d) => d.items.some((k) => PATTERN_OF[k] === "incline push"));
-  check("NOTE: the rotation carries no incline press, so the rule above is a guard, not a live check",
-    hasIncline === false);
-  check("...and incline DB press is still available in LIB to restore",
-    !!LIB.inclinebench && PATTERN_OF.inclinebench === "incline push");
+  /* The rule above is now a LIVE check, not a dormant guard: the rotation
+     carries an incline press again, on a day deliberately kept clear of the
+     overhead press. It was dormant for one release, and this assertion is what
+     records the difference — a passing rule means nothing if nothing exercises
+     it. */
+  const inclineDays = ROTATION.filter((d) => d.items.some((k) => PATTERN_OF[k] === "incline push"));
+  check(`the rotation carries an incline press (${inclineDays.map((d) => d.name).join(", ") || "NONE"}), so the rule above is live`,
+    inclineDays.length === 1);
+  check("...and that day carries no overhead press",
+    inclineDays.every((d) => !d.items.some((k) => PATTERN_OF[k] === "vertical push")));
 
   /* Guard against the rules going vacuous. If the rotation ever lost its
      multi-slot days these would pass while testing nothing, so assert the

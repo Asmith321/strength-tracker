@@ -805,7 +805,7 @@ RE-CAPTURED WHOLESALE for the hypertrophy rebuild. Every previous
      longer sits next to lat pulldown, and the overhead press moved to leg day),
      so the sessions differ again. Same two invariants re-verified independently
      before accepting the new rows. */
-  const EXPECTED = [[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10}],[{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"nordic","sets":2,"topLoad":-65,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10}],[{"key":"bench","sets":3,"topLoad":220,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"triceppushdown","sets":3,"topLoad":80,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"bench","sets":2,"topLoad":220,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"pullup","sets":2,"topLoad":-45,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":80,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10}],[{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-60,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10}],[{"key":"bench","sets":4,"topLoad":225,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"tbarrow","sets":4,"topLoad":200,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"bench","sets":3,"topLoad":225,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"dblateralraise","sets":4,"topLoad":20,"reps":10},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10}],[{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-55,"reps":10},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10}]];
+  const EXPECTED = [[{"key":"tbarrow","sets":2,"topLoad":190,"reps":6},{"key":"pulldown","sets":2,"topLoad":180,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":2,"topLoad":85,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"triext","sets":2,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"squat","sets":2,"topLoad":295,"reps":6},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"pullup","sets":2,"topLoad":-50,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":2,"topLoad":17.5,"reps":10},{"key":"preachercurl","sets":2,"topLoad":75,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10}],[{"key":"bench","sets":2,"topLoad":210,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":2,"topLoad":77.5,"reps":10},{"key":"reversepecdeck","sets":2,"topLoad":32.5,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":2,"topLoad":285,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":170,"reps":10},{"key":"nordic","sets":2,"topLoad":-65,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"lateralraise","sets":2,"topLoad":20,"reps":10},{"key":"bayesiancurl","sets":2,"topLoad":67.5,"reps":10},{"key":"calfraise","sets":2,"topLoad":310,"reps":10}],[{"key":"tbarrow","sets":3,"topLoad":200,"reps":6},{"key":"pulldown","sets":2,"topLoad":190,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10},{"key":"shrug","sets":3,"topLoad":50,"reps":10}],[{"key":"inclinebench","sets":3,"topLoad":85,"reps":6},{"key":"cablefly","sets":2,"topLoad":60,"reps":10},{"key":"triext","sets":3,"topLoad":85,"reps":10},{"key":"triceppushdown","sets":3,"topLoad":80,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10}],[{"key":"squat","sets":3,"topLoad":305,"reps":6},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"legcurl","sets":2,"topLoad":120,"reps":10},{"key":"pullup","sets":2,"topLoad":-45,"reps":6},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"dblateralraise","sets":3,"topLoad":20,"reps":10},{"key":"preachercurl","sets":3,"topLoad":77.5,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10}],[{"key":"bench","sets":2,"topLoad":220,"reps":6},{"key":"dip","sets":2,"topLoad":160,"reps":6},{"key":"dbshoulderpress","sets":2,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":2,"topLoad":80,"reps":10},{"key":"reversepecdeck","sets":3,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":75,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":2,"topLoad":290,"reps":6},{"key":"bsplit","sets":2,"topLoad":55,"reps":8},{"key":"legext","sets":2,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-60,"reps":10},{"key":"latpullover","sets":2,"topLoad":100,"reps":10},{"key":"lateralraise","sets":3,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":3,"topLoad":70,"reps":10},{"key":"calfraise","sets":3,"topLoad":325,"reps":10}],[{"key":"tbarrow","sets":4,"topLoad":200,"reps":6},{"key":"pulldown","sets":4,"topLoad":190,"reps":6},{"key":"dbshoulderpress","sets":4,"topLoad":65,"reps":6},{"key":"lateralraise","sets":5,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":5,"topLoad":72.5,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10},{"key":"shrug","sets":3,"topLoad":55,"reps":10}],[{"key":"inclinebench","sets":4,"topLoad":90,"reps":6},{"key":"cablefly","sets":4,"topLoad":60,"reps":10},{"key":"triext","sets":4,"topLoad":90,"reps":10},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"reversepecdeck","sets":5,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10}],[{"key":"squat","sets":4,"topLoad":315,"reps":6},{"key":"legext","sets":4,"topLoad":180,"reps":10},{"key":"legcurl","sets":3,"topLoad":130,"reps":10},{"key":"pullup","sets":4,"topLoad":-40,"reps":6},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"dblateralraise","sets":5,"topLoad":20,"reps":10},{"key":"preachercurl","sets":5,"topLoad":82.5,"reps":10},{"key":"calfraise","sets":5,"topLoad":335,"reps":10}],[{"key":"bench","sets":3,"topLoad":225,"reps":6},{"key":"dip","sets":3,"topLoad":170,"reps":6},{"key":"dbshoulderpress","sets":3,"topLoad":65,"reps":6},{"key":"triceppushdown","sets":4,"topLoad":85,"reps":10},{"key":"reversepecdeck","sets":4,"topLoad":35,"reps":10},{"key":"cablecrunch","sets":3,"topLoad":80,"reps":10},{"key":"wristcurl","sets":3,"topLoad":20,"reps":10}],[{"key":"rdl","sets":3,"topLoad":300,"reps":6},{"key":"bsplit","sets":3,"topLoad":60,"reps":8},{"key":"legext","sets":3,"topLoad":180,"reps":10},{"key":"nordic","sets":2,"topLoad":-55,"reps":10},{"key":"latpullover","sets":3,"topLoad":110,"reps":10},{"key":"lateralraise","sets":4,"topLoad":25,"reps":10},{"key":"bayesiancurl","sets":4,"topLoad":72.5,"reps":10},{"key":"calfraise","sets":4,"topLoad":335,"reps":10}]];
   const snapSeeds = { squat: { weight: 315, reps: 5, rpe: 8 }, bench: { weight: 225, reps: 5, rpe: 8 }, rdl: { weight: 275, reps: 8, rpe: 8 }, tbarrow: { weight: 185, reps: 8, rpe: 8 } };
   let idx = 0, allMatch = true;
   for (const cyc of [0, 2, 5]) {
@@ -1078,10 +1078,18 @@ console.log("\n== AUDIT 2.6: honest RPE display flag ==");
   p.lifts.lateralraise.last = { w: 30, reps: 9, rpe: 8 };
   const items = prescribe(p, green).items;
   check("DP-mode isolation item is flagged dpMode:true", items.find((i) => i.key === "lateralraise").dpMode === true);
-  check("isolation item with no DP history (first-ever session) is not flagged", items.find((i) => i.key === "triext").dpMode === false);
-  /* bench rather than pullup: both are compounds, but only bench shares this
-     day with lateral raise now that the rotation is 5 days. */
-  check("compound item is never DP-flagged (double progression is isolation-only)", items.find((i) => i.key === "bench").dpMode === false);
+  /* Found by ROLE, not by name. This fixture has been re-pointed on every
+     rotation change — triext, then bench, then whatever shares the day next —
+     while the property under test never moved: double progression is
+     isolation-only, and an isolation with no history is not yet in DP mode.
+     Deriving the examples from the day's own contents ends that churn. */
+  const otherIso = items.find((i) => LIB[i.key].repTier === "isolation" && i.key !== "lateralraise");
+  const anyCompound = items.find((i) => LIB[i.key].repTier === "compound");
+  check(`sanity: this day really does hold another isolation and a compound (${otherIso?.key}, ${anyCompound?.key})`,
+    !!otherIso && !!anyCompound);
+  check(`isolation item with no DP history (${otherIso.key}, first-ever session) is not flagged`, otherIso.dpMode === false);
+  check(`compound item (${anyCompound.key}) is never DP-flagged — double progression is isolation-only`,
+    anyCompound.dpMode === false);
 }
 
 console.log("\n== AUDIT 2.9: the session's first barbell lift never opens on a single warmup set ==");
@@ -1148,35 +1156,32 @@ console.log("\n== AUDIT 2.9: the session's first barbell lift never opens on a s
 
 console.log("\n== AUDIT 2.10: feeler steps track priming — cold gets 2, primed gets 1 ==");
 {
-  /* The Upper day. This fixture has been re-pointed twice as the rotation
-     changed — first off the 4-day "Push · Quads B", then again when the
-     movement-pattern fix moved the overhead press to leg day and split
-     pull-up from lat pulldown. The MECHANISM under test never changed: an
-     exercise whose volumeGroup was already worked earlier in the session is
-     "primed" and gets a shorter feeler. Only the exercises that happen to
-     demonstrate it move, so they are found by role rather than named blind. */
+  /* THE EXAMPLES ARE FOUND, NOT NAMED. This fixture has been re-pointed on
+     every rotation change — three times now — while the MECHANISM under test
+     never moved: an exercise whose volumeGroup was already worked earlier in
+     the session is "primed" and gets a shorter feeler than one arriving cold.
+     Naming exercises made a mechanism test into a rotation test. It now picks
+     whichever accessories happen to demonstrate the rule on the chosen day, and
+     asserts up front that such a pair exists — so a rotation that no longer
+     contains one fails loudly instead of silently testing nothing. */
   const p = fresh(); p.cycleIndex = dayWith("dip"); p.block = { type: "accumulation", cycle: 0, sessionsInBlock: 0, nextAfter: null };
   const items = prescribe(p, green).items;
-  const dbshoulderpress = items.find((i) => i.key === "dbshoulderpress"); // front_delts, COLD — nothing before it worked them
-  const dip = items.find((i) => i.key === "dip");                   // chest, primed by the bench press earlier the same day
-  const latpullover = items.find((i) => i.key === "latpullover");   // back, primed by pull-up earlier the same day
-  check(`cold accessory (dbshoulderpress) gets a 2-step feeler (${dbshoulderpress.warmup?.sets?.length} steps)`,
-    dbshoulderpress.warmup?.sets?.length === 2 && dbshoulderpress.warmup.sets[0].weight < dbshoulderpress.warmup.sets[1].weight);
-  check(`primed accessory (dip, after the bench press) keeps the 1-step feeler (${dip.warmup?.sets?.length} steps)`,
-    dip.warmup?.sets?.length === 1);
-  check(`a second primed accessory (latpullover, after pull-up) also keeps 1 step (${latpullover.warmup?.sets?.length} steps)`,
-    latpullover.warmup?.sets?.length === 1);
-  /* Guard against the pairing above going vacuous if the rotation moves again:
-     the "primed" pair must really share a muscle, and the cold one must really
-     be that muscle's first appearance. */
-  check("sanity: dip really is primed by an earlier same-muscle exercise",
-    items.findIndex((i) => LIB[i.key].volumeGroup === LIB.dip.volumeGroup) < items.findIndex((i) => i.key === "dip"));
-  check("sanity: dbshoulderpress really is COLD — nothing earlier that day works front delts",
-    items.findIndex((i) => LIB[i.key].volumeGroup === "front_delts") === items.findIndex((i) => i.key === "dbshoulderpress"));
-  check("sanity: latpullover really is primed by an earlier same-muscle exercise",
-    items.findIndex((i) => LIB[i.key].volumeGroup === LIB.latpullover.volumeGroup) < items.findIndex((i) => i.key === "latpullover"));
+  const firstOfGroup = (g) => items.findIndex((i) => LIB[i.key].volumeGroup === g);
+  const feelers = items.filter((i) => i.warmup?.type === "feeler");
+  const cold = feelers.find((i, ) => items.indexOf(i) === firstOfGroup(LIB[i.key].volumeGroup));
+  const primed = feelers.find((i) => items.indexOf(i) > firstOfGroup(LIB[i.key].volumeGroup));
+  check(`sanity: this day holds both a COLD and a PRIMED feeler accessory (${cold?.key}, ${primed?.key})`,
+    !!cold && !!primed);
+  check(`cold accessory (${cold.key}) gets a 2-step feeler (${cold.warmup?.sets?.length} steps)`,
+    cold.warmup?.sets?.length === 2 && cold.warmup.sets[0].weight < cold.warmup.sets[1].weight);
+  check(`primed accessory (${primed.key}, after earlier ${LIB[primed.key].volumeGroup} work) keeps the 1-step feeler (${primed.warmup?.sets?.length} steps)`,
+    primed.warmup?.sets?.length === 1);
+  /* The pairing must be real, not an artifact of ordering. */
+  check(`sanity: ${primed.key} really is preceded by same-muscle work, and ${cold.key} really is its muscle's first appearance`,
+    items.indexOf(primed) > firstOfGroup(LIB[primed.key].volumeGroup)
+    && items.indexOf(cold) === firstOfGroup(LIB[cold.key].volumeGroup));
   // every feeler step must still land strictly below the working load
-  for (const it of [dbshoulderpress, dip, latpullover])
+  for (const it of [cold, primed])
     check(`${it.key}: every feeler step < topLoad (${it.warmup.sets.map((s) => s.weight)} < ${it.topLoad})`,
       it.warmup.sets.every((s) => s.weight < it.topLoad));
 }
@@ -1751,21 +1756,22 @@ console.log("\n== AUDIT 3.13: same-day same-muscle volume is capped, not multipl
 
   /* Groups that don't stack (only ever one ramped slot/day) must be completely
      unaffected by the same-day cap.
-     PHASE 4: this used to assert that on `bsplit`, describing it as "a
-     non-stacked slot" — but quads stacks on day 2 (bsplit + legext), so the
-     test's stated premise was false and it passed only because the old uncapped
-     share happened to coincide. Re-pointed at triceps, which genuinely never
-     stacks: triext appears on days 0, 2 and 3, once each. Asserted against the
-     allocation for THIS slot's ordinal rather than a bare default-ordinal call,
-     since the remainder is now distributed across slots (T1-3). */
-  const triDay = dayWith("triext");
-  const tri = mk(triDay, last).items.find((it) => it.key === "triext");
-  const triOrd = SLOT_ORDINAL[`${triDay}:triext`];
-  const triShare = rampedAllocation("triceps", "accumulation", last, landmarksForExperience("intermediate"), 1)[triOrd];
-  check(`a genuinely non-stacked slot keeps its full uncapped share (triext=${tri.sets}, share=${triShare})`,
-    tri.sets === triShare);
-  const triStacks = (PATTERN_DAY_SLOTS.triceps || []).some(({ n }) => n >= 2);
-  check("...and triceps really is non-stacking, so that assertion means what it says", !triStacks);
+     THE GROUP IS FOUND, NOT NAMED. This assertion has now been re-pointed
+     twice: first off `bsplit` (whose premise was false — quads stacks), then
+     onto triceps, which stopped being non-stacking the moment the two triceps
+     isolations landed on one day. Each time the test kept passing for a while
+     on a false premise. Picking whichever group genuinely does not stack, and
+     asserting up front that one exists, ends that. */
+  const nonStacking = Object.keys(PATTERN_DAY_SLOTS).find((g) =>
+    (PATTERN_DAY_SLOTS[g] || []).every(({ n }) => n < 2) && (PATTERN_DAY_SLOTS[g] || []).length >= 2);
+  check(`sanity: some group genuinely never stacks two slots on a day (${nonStacking})`, !!nonStacking);
+  const nsDay = PATTERN_DAY_SLOTS[nonStacking][0].day;
+  const nsKey = ROTATION[nsDay].items.find((k) => LIB[k].volumeGroup === nonStacking && !LIB[k].fixedSets);
+  const nsItem = mk(nsDay, last).items.find((it) => it.key === nsKey);
+  const nsOrd = SLOT_ORDINAL[`${nsDay}:${nsKey}`];
+  const nsShare = rampedAllocation(nonStacking, "accumulation", last, landmarksForExperience("intermediate"), 1)[nsOrd];
+  check(`a genuinely non-stacked slot keeps its full uncapped share (${nsKey}=${nsItem.sets}, share=${nsShare})`,
+    nsItem.sets === nsShare);
 }
 
 
@@ -1787,13 +1793,13 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
      it, MAV settled above anything prescribe() could deliver. */
   const stackers = Object.keys(PATTERN_DAY_SLOTS).filter((g) =>
     (PATTERN_DAY_SLOTS[g] || []).some(({ n }) => n >= 2));
-  /* Four under the 5-day rotation (back, chest, hamstrings, quads); it was five
-     under the 4-day one. The count is asserted rather than the names so this
-     stays a real check that stacking EXISTS to be tested — if a rotation change
-     ever left nothing stacked, the per-group assertions below would vacuously
-     pass over an empty list. */
-  check(`four groups stack two ramped slots on one day (${stackers.sort().join(", ")})`,
-    stackers.length === 4);
+  /* The COUNT is not the property — that stacking exists to be tested is. A
+     hardcoded number has been wrong after two of the last three rotation
+     changes, each time failing loudly for no reason while the mechanism it
+     guards was fine. What matters is that the per-group assertions below are
+     not iterating an empty list. */
+  check(`some groups stack two ramped slots on one day (${stackers.sort().join(", ")})`,
+    stackers.length > 0);
   stackers.forEach((g) => {
     const slots = (PATTERN_DAY_SLOTS[g] || []).reduce((a, { n }) => a + n, 0);
     const naive = ACC_SET_CAP * slots; // what the old formula returned for the ramped part
@@ -2560,6 +2566,7 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
   {
     const est = (reps) => {
       const p = fresh();
+      p.cycleIndex = dayWith("bench");
       const it = prescribe(p, green).items.find((i) => i.key === "bench");
       return ingest(p, [{ key: "bench", topWeight: it.topLoad, topReps: reps, topRpe: 9,
         targetRpe: it.rpe, targetReps: it.reps, sets: it.sets, repsShort: 0, touched: true,
@@ -2600,7 +2607,7 @@ const fixedWeeklySetsP4 = (g) => ROTATION.reduce((sum, d) => sum + d.items.reduc
     /* And the ramped branch must still ramp in accumulation, so the guard is
        not simply always-false either. */
     const q = fresh();
-    const rpeAt = (c) => { q.block = { type: "accumulation", cycle: c, sessionsInBlock: c * ROT, nextAfter: null }; q.cycleIndex = 0;
+    const rpeAt = (c) => { q.block = { type: "accumulation", cycle: c, sessionsInBlock: c * ROT, nextAfter: null }; q.cycleIndex = dayWith("bench");
       return prescribe(q, green).items.find((i) => i.key === "bench").rpe; };
     check(`accumulation still ramps effort across the block (${rpeAt(0)} -> ${rpeAt(4)})`, rpeAt(4) > rpeAt(0));
   }
