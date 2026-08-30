@@ -11,7 +11,7 @@ import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from 
 import { readDraft, writeDraft, clearDraft, draftMatches } from "./draft.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
-  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, effectiveGapDays, capacityShortfalls, e1rmFrom,
+  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, effectiveGapDays, capacityShortfalls, capacityPinned, TRAINING_WEEKDAYS, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -442,7 +442,11 @@ function Today({ program, sessions, onLog }) {
       <div className="eyebrow">SESSION {program.sessionCount + 1} · {rx.dayName.toUpperCase()}</div>
       <div className="blockrow">
         <span className="phase mono" style={{ borderColor: bandColor }}>{rx.block} · cycle {rx.cycle + 1}</span>
-        <span className="mono dim">top RPE {rx.rpeTop}</span>
+        {/* blockEffortRpe, not rpeTop. rpeTop went with the main lifts at the
+                hypertrophy rebuild and prescribe() has not returned it since, so
+                this line rendered "top RPE" followed by nothing — the one place
+                the block's current effort target is shown, blank ever since. */}
+        <span className="mono dim">top RPE {rx.blockEffortRpe}</span>
       </div>
 
       {/* Say so when work was recovered, rather than silently repopulating the
@@ -481,6 +485,15 @@ function Today({ program, sessions, onLog }) {
               ? ` — your usual ${program.nextSessionPerWeek.toFixed(0)}-day week`
               : " — stretched to let fatigue clear"}
             . Advisory only, log anytime.
+            {/* The advisory and the volume math were never cross-checked, so at
+                elevated fatigue the app could recommend 2.5 sessions/week while
+                the Status screen simultaneously warned that 2.5/week strands
+                every muscle's MAV. Both are correct in isolation — recovery
+                first, then dose — but the athlete should be told the stretch has
+                a cost rather than left to reconcile two screens. */}
+            {program.nextSessionPerWeek < TRAINING_WEEKDAYS.length && (
+              <span className="dim"> Below your usual cadence, so this week's volume targets won't all be met.</span>
+            )}
           </span>
         </div>
       )}
@@ -563,6 +576,49 @@ function CapacityWarning({ shortfalls, gapDays }) {
   );
 }
 
+/* Muscles whose MAV has reached the schedule's ceiling and can no longer be
+   raised by the auto-tune.
+
+   WHY THIS IS ITS OWN PANEL rather than a row in CapacityWarning: they are
+   opposite problems with opposite fixes. A SHORTFALL means the target is out of
+   reach and the athlete is under-training it — add days. PINNED means the
+   target has been fully met and has stopped moving — the athlete is doing
+   everything the rotation can give them, and the limit is now the rotation
+   itself. Colouring the two the same would tell someone doing everything right
+   that something is wrong.
+
+   It renders nothing until a group actually arrives at its ceiling, which for a
+   growing athlete takes months. */
+function CapacityPinned({ pinned }) {
+  const rows = Object.entries(pinned);
+  if (!rows.length) return null;
+  rows.sort((a, b) => b[1].mav - a[1].mav);
+  const needed = Math.max(...rows.map(([, v]) => v.sessionsPerWeekForHeadroom));
+  return (
+    <div className="panel cappin">
+      <div className="cappin-head mono">
+        <Check size={13} />
+        <span>{rows.length === 1 ? "1 MUSCLE" : `${rows.length} MUSCLES`} AT THE SCHEDULE'S CEILING</span>
+      </div>
+      <p className="cappin-lede">
+        These are getting everything the rotation can deliver — target met, nothing missing.
+        But their targets have stopped climbing between blocks, because the next step up is more
+        than the schedule holds.
+      </p>
+      {rows.map(([p, v]) => (
+        <div key={p} className="cappin-row mono">
+          <span>{v.label}</span>
+          <span className="dim">{v.mav} sets · at capacity</span>
+        </div>
+      ))}
+      <p className="cappin-fix">
+        To give them room again: <strong>{needed.toFixed(1)}×/week</strong>, or another exercise slot
+        on a day that isn't already full for that muscle.
+      </p>
+    </div>
+  );
+}
+
 function Status({ program }) {
   const cyc = program.block.cycle;
   /* Same frequency correction prescribe() applies to the ramped-accessory
@@ -584,6 +640,7 @@ function Status({ program }) {
      volume — the one thing that marker exists to make impossible. */
   const freqScale = weeklyFreqScale(effectiveGapDays(program));
   const shortfalls = capacityShortfalls(program, program.block.type);
+  const pinned = capacityPinned(program, program.block.type);
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
     // true-weekly full-muscle sets actually prescribed (mains + fixedSets + ramped); rounded since freqScale != 1 makes this a rate, not a literal per-rotation count
     const wk = Math.round(deliveredWeekly(p, program.block.type, cyc, program.landmarks, freqScale) / freqScale);
@@ -609,6 +666,7 @@ function Status({ program }) {
         <Gauge value={0.5 + program.fatigue.slope * 50} label={`e1RM TREND  ${(program.fatigue.slope * 100).toFixed(2)}%/session`} color="#2F6FB0" />
       </div>
       <CapacityWarning shortfalls={shortfalls} gapDays={effectiveGapDays(program)} />
+      <CapacityPinned pinned={pinned} />
       <div className="eyebrow mt">WEEKLY VOLUME vs LANDMARKS</div>
       {rows.map((r) => (
         <div key={r.p} className="volrow">
@@ -1108,6 +1166,11 @@ const CSS = `
 .capwarn-row{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;border-top:1px solid rgba(232,197,71,.15);}
 .capwarn-gap{color:#E8C547;margin-left:7px;}
 .capwarn-fix{font-size:11.5px;line-height:1.5;margin:9px 0 0;padding-top:9px;border-top:1px solid rgba(232,197,71,.15);}
+.cappin{padding:12px 14px;margin-top:14px;border-color:rgba(63,168,95,.4);background:rgba(63,168,95,.05);}
+.cappin-head{display:flex;align-items:center;gap:6px;color:#3FA85F;font-size:11px;letter-spacing:.1em;margin-bottom:7px;}
+.cappin-lede{font-size:11.5px;line-height:1.5;color:var(--dim);margin:0 0 9px;}
+.cappin-row{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;border-top:1px solid rgba(63,168,95,.15);}
+.cappin-fix{font-size:11.5px;line-height:1.5;margin:9px 0 0;padding-top:9px;border-top:1px solid rgba(63,168,95,.15);}
 .chart{padding:14px;}
 .chart-title{font-size:11px;letter-spacing:.1em;margin-bottom:8px;}
 .hist{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:9px;}

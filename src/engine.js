@@ -35,8 +35,12 @@
      failure. Proximity to failure has a real dose-response for hypertrophy;
      absolute failure on compounds costs more fatigue than it returns.
    • Block periodization without a peak: accumulation → deload → accumulation.
-     Block length auto-detected from growth trend + RPE-creep + readiness
-     suppression rather than a fixed calendar.
+     Block length shortens on a stall or a fatigue spike; a healthy block runs
+     its full maxCycles. Do not read that as "auto-detected rather than a fixed
+     calendar" — it said exactly that for a long time and it was false for a
+     growing athlete, whose every block ends on "max accumulation length
+     reached". The adaptive part is real but it is a SAFETY VALVE, not a
+     planner: stall and fatigue cut a block short, nothing lengthens it.
    • Readiness (Garmin) is a SECONDARY modifier on daily load + deload timing —
      lifting evidence is preliminary, so it never drives the program alone.
    ════════════════════════════════════════════════════════════════════════ */
@@ -1084,20 +1088,45 @@ function rampedAllocation(group, blockType, cycleInBlock, landmarks, freqScale =
     alloc.push(Math.max(floor, Math.min(ACC_SET_CAP, base + (i < rem ? 1 : 0))));
   /* SAME_DAY_GROUP_CAP applied HERE, not only in prescribe(), so that
      deliveredWeekly/maxDeliverable see the same number the athlete is handed
-     (T1-1). Capping is a ceiling, not a budget: the sets removed here are not
-     redistributed to other days, which would just push those days over the same
-     limit. */
+     (T1-1). */
   let i = 0;
+  let freed = 0;
+  const dayRanges = [];
   (PATTERN_DAY_SLOTS[group] || []).forEach(({ n }) => {
     if (n >= 2) {
       const tot = alloc.slice(i, i + n).reduce((s, v) => s + v, 0);
       if (tot > SAME_DAY_GROUP_CAP) {
         const sc = SAME_DAY_GROUP_CAP / tot;
-        for (let j = i; j < i + n; j++) alloc[j] = Math.max(1, Math.round(alloc[j] * sc));
+        for (let j = i; j < i + n; j++) { const was = alloc[j]; alloc[j] = Math.max(1, Math.round(was * sc)); freed += was - alloc[j]; }
       }
     }
+    dayRanges.push({ start: i, n });
     i += n;
   });
+  /* RE-OFFER WHAT THE CAP FREED to a day that still has room. The comment that
+     stood here said redistributing "would just push those days over the same
+     limit" — true of the days that were capped, false of the ones that were
+     not. Back is the shape that exposes it: three exposure days, two of them
+     carrying a pair of slots and one carrying a single. When the target
+     exceeds capacity the even split hands the pair-days 6 each, the cap scales
+     them back to 5, and the single-slot day keeps the 5 it was dealt while
+     having room for 6 — 25 of 26 available sets, and the missing one sits on a
+     day nothing was ever going to overload.
+     Bounded by both ACC_SET_CAP per slot and SAME_DAY_GROUP_CAP per day, so a
+     recipient day can never be pushed past either. Worth ~1 set/week on back
+     and only below the design cadence; at Mon-Fri the target never exceeds
+     capacity and nothing is freed at all. */
+  for (let pass = 0; pass < 2 && freed > 0; pass++) {
+    for (const { start, n } of dayRanges) {
+      if (freed <= 0) break;
+      const dayTot = () => alloc.slice(start, start + n).reduce((s, v) => s + v, 0);
+      for (let j = start; j < start + n && freed > 0; j++) {
+        if (alloc[j] >= ACC_SET_CAP) continue;
+        if (n >= 2 && dayTot() >= SAME_DAY_GROUP_CAP) break;
+        alloc[j] += 1; freed -= 1;
+      }
+    }
+  }
   return alloc;
 }
 
@@ -1339,6 +1368,12 @@ function effectiveGapDays(program) {
    compares against it and would silently disagree with the clamp if either
    moved. */
 const FREQ_SCALE_MIN = 0.6;
+/* The lowest freqScale the RATE estimator can actually produce.
+   sessionsPerWeekObserved counts distinct calendar days, so it cannot exceed 7
+   sessions per week — a gap of exactly one day. Anything below this is only
+   reachable through the avgSessionGapDays fallback, so advice computed against
+   FREQ_SCALE_MIN alone promises cadences that do not exist. */
+const FREQ_SCALE_REACHABLE_MIN = Math.max(FREQ_SCALE_MIN, ROT / 7);
 
 /* ---- schedule-capacity shortfall (MAV the rotation cannot deliver) ----
 
@@ -1382,7 +1417,15 @@ function capacityShortfalls(program, blockType = "accumulation") {
        ramped SLOTS, and only a rotation change (or a lower MAV) fixes it.
        Reporting these two cases identically would send the athlete to add
        training days that provably won't help. */
-    const fixableByCadence = capA / FREQ_SCALE_MIN >= lm.mav;
+    /* Measured against the floor the RATE ESTIMATOR can actually produce, not
+       against the clamp. sessionsPerWeekObserved counts distinct calendar days
+       in its window, so it tops out at 7 sessions/week — a gap of 1.0 day, a
+       freqScale of ROT/7. FREQ_SCALE_MIN (0.6) sits below that and is now only
+       reachable through the avgSessionGapDays fallback, so measuring against
+       it advertised a capacity ceiling ~19% above anything the primary
+       estimator can reach, and could tell the athlete a MAV was reachable by
+       training more when no achievable cadence delivers it. */
+    const fixableByCadence = capA / FREQ_SCALE_REACHABLE_MIN >= lm.mav;
     out[p] = {
       label: lm.label,
       mav: lm.mav,
@@ -1391,6 +1434,52 @@ function capacityShortfalls(program, blockType = "accumulation") {
       slots: PATTERN_FREQ[p] || 0,
       fixableByCadence,
       sessionsPerWeekNeeded: fixableByCadence ? sessionsPerWeekNeeded : null,
+    };
+  });
+  return out;
+}
+
+/* ---- groups whose MAV has nowhere left to grow ----
+
+   WHAT THIS CATCHES THAT capacityShortfalls DOES NOT. That function asks "is
+   this MAV out of reach?" — `mav > capW`. This asks the question one step
+   earlier: "has this MAV arrived AT the schedule's ceiling, so the auto-tune
+   can never raise it again?" — `mav === capW`. At equality nothing is short,
+   so capacityShortfalls is silent, while adjustLandmarks' raise gate
+   (`mav + 1 <= capW`) is permanently false.
+
+   That is not a corner case. Measured over ~6 months of healthy growth at the
+   advanced tier, NINE of the ten tracked groups end pinned at capacity. MAV
+   drift is the only progressive-overload mechanism this program has BETWEEN
+   blocks, so for those groups it stops: the athlete keeps training, the ramp
+   keeps running to the same top, and nothing anywhere says the target has
+   stopped moving. The only landmark still able to climb is MEV, which
+   compresses the ramp from below (side delts went 7->18 to 10->18 in three
+   blocks) until MEV_MAV_MAX_RATIO's clamp stops it.
+
+   The ROTATION comment used to claim the capacity warning would surface this
+   if the auto-tune ever raised one of the pinned groups. It cannot — the
+   auto-tune is exactly what is blocked — so that safety net could never be
+   reached. This is the net. */
+function capacityPinned(program, blockType = "accumulation") {
+  const freqScale = weeklyFreqScale(effectiveGapDays(program));
+  const out = {};
+  Object.entries(program?.landmarks || {}).forEach(([p, lm]) => {
+    const capW = maxDeliverable(p, blockType) / freqScale;
+    /* At or above capacity, but NOT short of it — a group that is genuinely
+       short is capacityShortfalls' to report, and reporting it twice would
+       tell the athlete to add days and change the rotation for one problem. */
+    if (lm.mav > capW + 1e-9) return;
+    if (lm.mav < capW - 1e-9) return;
+    out[p] = {
+      label: lm.label,
+      mav: lm.mav,
+      capacityWeekly: capW,
+      slots: PATTERN_FREQ[p] || 0,
+      /* What it would take to give this group room again. More training days
+         raise capW; so does another ramped slot on a day that is not already
+         at SAME_DAY_GROUP_CAP. */
+      sessionsPerWeekForHeadroom: (ROT * (lm.mav + 1)) / maxDeliverable(p, blockType),
     };
   });
   return out;
@@ -2577,52 +2666,44 @@ function ingest(program, logs, readiness) {
        jobs. maxDeliverable/capA is a schedule-capacity ceiling and stays
        unscaled internally (only its own /freqScale below, unchanged). */
     const freqScale = weeklyFreqScale(effectiveGapDays(next));
-    const ceilingHit = (p) => {
-      /* The ramp tops out at MAV since the hypertrophy rebuild (see
-         weeklyTarget), so MAV — not MRV — is the volume ceiling a block can
-         actually reach, and comparing delivered volume against MRV here would
-         test against a number the ramp deliberately never aims for. */
-      /* T2-5: this now calls effectiveCeiling rather than re-deriving the same
-         expression inline. The exported helper and this gate had drifted — the
-         helper omitted the /freqScale conversion, so anything reading the
-         export (the UI, a test) saw a different ceiling than the engine's own
-         decision used: 18 vs 13.33 for back at 2.2x/week. One definition now,
-         with freqScale threaded through it. */
-      const ceilTrue = effectiveCeiling(p, t, next.landmarks, freqScale);
-      /* AUDIT 3.6: schedule saturation well below the landmark range is a
-         CAPACITY limit, not evidence the athlete accumulated volume
-         tolerance — ending the block on it reports "weekly volume reached its
-         ceiling" for someone still training at MEV. Measured: at ~2.2x/week
-         hamstrings delivers 6.1 sets/week flat from cycle 0 against an MEV of
-         6 and an MRV of 16, and fired this trigger from cycle 2, so every
-         accumulation block terminated at minCycles with that reason. Require
-         the reachable ceiling to be the ramp's full intended top (MAV) before
-         it counts — i.e. the group really did train everything the block
-         planned for it, rather than the schedule running out of slots
-         underneath it; otherwise the block ends on its time/fatigue/stall
-         triggers, which is the honest answer. */
-      if (ceilTrue < next.landmarks[p].mav) return false;
-      if (deliveredWeekly(p, t, justDone, next.landmarks, freqScale) / freqScale < ceilTrue) return false;
-      if (ceilTrue >= next.landmarks[p].mrv) return true;
-      return justDone >= 1 && deliveredWeekly(p, t, justDone - 1, next.landmarks, freqScale) / freqScale >= ceilTrue;
-    };
-    /* The pools whose saturation is treated as "this block has delivered all
-       the volume it can". 'back' joins the original three since the rebuild:
-       it carries 4 ramped slots and the highest MRV of any group, so it is now
-       one of the pools most likely to legitimately saturate first, and leaving
-       it out would let a block run on past its real ceiling. */
-    const atVolCeiling = ["quads", "chest", "hamstrings", "back"].some(ceilingHit);
+    /* THE VOLUME-CEILING TRIGGER IS GONE, and this records why so it is not
+       reinvented. It read: has a major pool delivered everything the block can
+       give it, so deload rather than repeat the top? It could never answer yes.
+
+       It required `delivered >= ceilTrue` where `ceilTrue = min(mrv, capW)`,
+       AND (AUDIT 3.6) `ceilTrue >= mav` so schedule saturation below the
+       landmark range could not masquerade as accumulated tolerance. But the
+       ramp tops out at MAV, so `delivered` never exceeds MAV — which leaves
+       only `capW === mav` exactly, and then, because `ceilTrue < mrv` there, a
+       further requirement that the PREVIOUS cycle also sat at the ceiling. The
+       ramp reaches its top only in its final cycle, so that second cycle never
+       exists. Two guards, each correct on its own, mutually exclusive together.
+
+       Measured before removal: 11 firing combinations out of 234 swept over 3
+       tiers x 13 freqScale values x 6 cycles, and ZERO end-to-end — 120
+       sessions of healthy growth at both intermediate and advanced produced
+       only "max accumulation length reached". Removing it changes no behaviour:
+       `atVolCeiling` was constant false, so the reason string was unreachable
+       and `borderline`'s `&& !atVolCeiling` was a no-op. The suite and the
+       stress harness are identical before and after.
+
+       If a volume-based trigger is wanted later it needs a different premise —
+       something like "this group has now trained a full cycle AT its MAV",
+       which is a statement about the ramp completing rather than about a
+       ceiling being exceeded. That is also, note, exactly what maxCycles
+       already detects, which is why this was only ever a second name for the
+       same event. */
     const highFatigue = fatigueIndex >= 0.7;
     const grayFatigue = fatigueIndex >= 0.55 && fatigueIndex < 0.7;
     const stalled = e1rmSlope <= 0.001;
 
     if (t === "accumulation") {
       const enoughTime = cyc >= cfg.minCycles, maxedTime = cyc >= cfg.maxCycles;
-      if (maxedTime || (enoughTime && (atVolCeiling || highFatigue || (stalled && cyc >= cfg.minCycles + 1)))) {
+      if (maxedTime || (enoughTime && (highFatigue || (stalled && cyc >= cfg.minCycles + 1)))) {
         transition = { to: "deload",
-          reason: maxedTime ? "max accumulation length reached" : atVolCeiling ? "weekly volume reached its ceiling"
+          reason: maxedTime ? "max accumulation length reached"
             : highFatigue ? "fatigue index high" : "e1RM progress stalled",
-          borderline: grayFatigue && !atVolCeiling && !maxedTime };
+          borderline: grayFatigue && !maxedTime };
       }
     } else if (t === "deload") {
       /* Fatigue gate before routing out of deload: if fatigue hasn't cleared
@@ -3096,7 +3177,7 @@ export {
   PATTERNS, EXPERIENCE_TIERS, landmarksForExperience,
   LIB, ROTATION, ROT, PATTERN_FREQ, PATTERN_OF, ACC_SET_CAP, maxDeliverable, VOL_SCALE, ACC_REP_TIERS, BLOCKS,
   weeklyTarget, fixedWeeklySets, rampedSlotSets, rampedAllocation, deliveredWeekly, effectiveCeiling, weeklyFreqScale,
-  capacityShortfalls, FREQ_SCALE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS, abnormalGapDays,
+  capacityShortfalls, capacityPinned, FREQ_SCALE_MIN, FREQ_SCALE_REACHABLE_MIN, effectiveGapDays, sessionsPerWeekObserved, TRAINING_WEEKDAYS, abnormalGapDays,
   SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX, trainingDaysToSkip,
   PATTERN_DAY_SLOTS, SLOT_ORDINAL,
   FATIGUE_SPIKE, FATIGUE_AMBER, FATIGUE_STILL_ELEVATED, GROWTH_POS, E1RM_MIN_RPE, STALL_STREAK_THRESHOLD,

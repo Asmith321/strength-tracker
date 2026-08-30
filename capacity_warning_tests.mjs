@@ -29,8 +29,8 @@ let CLOCK = Date.UTC(2026, 0, 1);
 Date.now = () => CLOCK;
 
 const {
-  capacityShortfalls, freshProgram, prescribe, ingest, landmarksForExperience,
-  maxDeliverable, weeklyFreqScale, LIB, ROT, FREQ_SCALE_MIN, PATTERN_FREQ, TARGET_SESSION_GAP_DAYS,
+  capacityShortfalls, capacityPinned, TRAINING_WEEKDAYS, freshProgram, prescribe, ingest, landmarksForExperience,
+  maxDeliverable, weeklyFreqScale, LIB, ROT, FREQ_SCALE_MIN, FREQ_SCALE_REACHABLE_MIN, PATTERN_FREQ, TARGET_SESSION_GAP_DAYS,
 } = await import("./src/engine.js");
 
 let pass = 0, fail = 0;
@@ -222,15 +222,20 @@ console.log("\n== A slot shortage is reported differently from a cadence shortag
      cannot deliver the MAV and the athlete needs a rotation change instead.
      Telling them to add days would be actively wrong advice. */
   const capBack = maxDeliverable("back");
-  const impossible = Math.ceil(capBack / FREQ_SCALE_MIN) + 5;
+  /* Measured against the floor the RATE ESTIMATOR can reach, not the clamp.
+     FREQ_SCALE_MIN (0.6) sits below anything sessionsPerWeekObserved can
+     produce — it counts distinct calendar days, so it tops out at 7/week, a
+     freqScale of ROT/7 — and computing advice against the clamp promised
+     cadences that do not exist. */
+  const impossible = Math.ceil(capBack / FREQ_SCALE_REACHABLE_MIN) + 5;
   const p = { landmarks: { back: { label: "Back", mev: 8, mav: impossible, mrv: impossible + 4 } }, avgSessionGapDays: 1.75 };
   const s = capacityShortfalls(p);
-  check(`a MAV of ${impossible} (above the ${(capBack / FREQ_SCALE_MIN).toFixed(1)} clamp ceiling) is not blamed on cadence`,
+  check(`a MAV of ${impossible} (above the ${(capBack / FREQ_SCALE_REACHABLE_MIN).toFixed(1)} reachable ceiling) is not blamed on cadence`,
     s.back && s.back.fixableByCadence === false && s.back.sessionsPerWeekNeeded === null,
     JSON.stringify(s.back));
 
   /* The boundary itself: exactly at the clamp ceiling it IS still fixable. */
-  const atCeiling = { landmarks: { back: { label: "Back", mev: 8, mav: capBack / FREQ_SCALE_MIN, mrv: 40 } }, avgSessionGapDays: 1.75 };
+  const atCeiling = { landmarks: { back: { label: "Back", mev: 8, mav: capBack / FREQ_SCALE_REACHABLE_MIN, mrv: 40 } }, avgSessionGapDays: 1.75 };
   check("a MAV sitting exactly at the clamp ceiling is still reported as cadence-fixable",
     capacityShortfalls(atCeiling).back?.fixableByCadence === true);
 
@@ -249,6 +254,67 @@ console.log("\n== Degenerate input degrades quietly ==");
     === JSON.stringify(capacityShortfalls(progAt("advanced", 7 / ROT))));
   check("a brand-new program reports nothing before it has trained",
     Object.keys(capacityShortfalls(freshProgram({ seeds, experience: "intermediate", unit: "lb", goal: "hypertrophy", bodyweight: 200 }))).length === 0);
+}
+
+console.log("\n== Groups pinned AT the ceiling, where the auto-tune can no longer raise them ==");
+{
+  /* capacityShortfalls asks "is this MAV out of reach?" (mav > capW).
+     capacityPinned asks the question one step earlier: "has it arrived AT the
+     ceiling, so it can never be raised again?" (mav === capW). At equality
+     nothing is short, so the shortfall warning is silent — while
+     adjustLandmarks' raise gate (mav + 1 <= capW) is permanently false. That
+     gap is why nine of ten groups could end up frozen with nothing said. */
+  const adv = landmarksForExperience("advanced");
+  const atDesign = { landmarks: adv, sessionsPerWeek: TRAINING_WEEKDAYS.length };
+  const pinned = capacityPinned(atDesign);
+  /* Literals, not values read back from the tier table. */
+  check(`side delts, calves and biceps are pinned at 18 sets (${Object.keys(pinned).sort().join(", ")})`,
+    Object.keys(pinned).sort().join(",") === "biceps,calves,side_delts"
+    && Object.values(pinned).every((v) => v.mav === 18 && Math.abs(v.capacityWeekly - 18) < 1e-9),
+    JSON.stringify(pinned));
+  check("and none of them is reported as a shortfall — they are not short, they are finished",
+    Object.keys(capacityShortfalls(atDesign)).every((g) => !pinned[g]));
+
+  /* THE PROPERTY THAT MAKES THIS WORTH REPORTING: the auto-tune's raise gate
+     really is dead for exactly these groups. Recomputed here from the gate's
+     own arithmetic rather than trusting the flag. */
+  Object.keys(pinned).forEach((g) => {
+    check(`  ${g}: the raise gate (mav + 1 <= capW) is false, so MAV can never climb again`,
+      !(adv[g].mav + 1 <= maxDeliverable(g)));
+  });
+
+  /* The two states must be mutually exclusive, or the Status screen would tell
+     the athlete to add training days AND change the rotation for one muscle. */
+  for (const gap of [TARGET_SESSION_GAP_DAYS, 1.75, 2.33]) {
+    const p = progAt("advanced", gap);
+    const both = Object.keys(capacityPinned(p)).filter((g) => capacityShortfalls(p)[g]);
+    check(`@${gap}d no group is reported as BOTH pinned and short (${both.join(", ") || "none"})`, both.length === 0);
+  }
+
+  check("a group with real headroom is not reported at all",
+    capacityPinned({ landmarks: { back: { label: "Back", mev: 8, mav: 10, mrv: 30 } }, sessionsPerWeek: 5 }).back === undefined);
+  check("a null program is handled", Object.keys(capacityPinned(null)).length === 0);
+}
+
+console.log("\n== Advice is measured against a cadence that actually exists ==");
+{
+  /* FREQ_SCALE_MIN is 0.6, but sessionsPerWeekObserved counts distinct calendar
+     days and so cannot exceed 7 sessions/week — a freqScale of ROT/7. Computing
+     "fixable by training more" against the clamp advertised a capacity ceiling
+     ~19% above anything the estimator can produce. Pinned as literals: the
+     clamp is 0.6, the reachable floor is 5/7. */
+  check(`the clamp floor is 0.6 and the reachable floor is ${(5 / 7).toFixed(4)} — they differ`,
+    FREQ_SCALE_MIN === 0.6 && Math.abs(FREQ_SCALE_REACHABLE_MIN - 5 / 7) < 1e-9,
+    `${FREQ_SCALE_MIN} / ${FREQ_SCALE_REACHABLE_MIN}`);
+  /* A MAV between the two floors: reachable if you believe the clamp, not
+     reachable in fact. It must be reported as a slot problem, not a cadence one. */
+  const capBack = maxDeliverable("back");
+  const between = Math.floor((capBack / FREQ_SCALE_REACHABLE_MIN + capBack / FREQ_SCALE_MIN) / 2);
+  const s = capacityShortfalls({ landmarks: { back: { label: "Back", mev: 8, mav: between, mrv: between + 5 } }, sessionsPerWeek: 5 });
+  check(`a MAV of ${between} sits between the reachable floor (${(capBack / FREQ_SCALE_REACHABLE_MIN).toFixed(1)}) and the clamp (${(capBack / FREQ_SCALE_MIN).toFixed(1)})`,
+    between > capBack / FREQ_SCALE_REACHABLE_MIN && between < capBack / FREQ_SCALE_MIN);
+  check("...and is reported as needing a rotation change, not more training days",
+    s.back && s.back.fixableByCadence === false, JSON.stringify(s.back));
 }
 
 Date.now = REAL_NOW;
