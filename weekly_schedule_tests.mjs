@@ -193,8 +193,16 @@ console.log("\n== The estimator degrades sensibly ==");
   /* Below the minimum the rate is not reported at all — a handful of sessions
      is not a weekly pattern, and reporting one would let a new athlete's first
      week dictate their dosing. */
-  const few = { sessionLog: weekdaySessions(MON, SESSION_RATE_MIN_SESSIONS - 1), avgSessionGapDays: 2 };
-  check(`fewer than ${SESSION_RATE_MIN_SESSIONS} sessions falls back to the tracked mean gap`,
+  /* LITERALS, not SESSION_RATE_MIN_SESSIONS ± n. Built from the constant, these
+     fixtures moved with it: mutating 6 -> 12 and 6 -> 2 both left 580
+     assertions green, while the value decides how long a returning athlete
+     spends on the fallback estimator and whether a two-session week can start
+     dictating dosing. Written as "5 is not enough history, 10 is", so a change
+     to the constant fails here and gets read. */
+  check(`the minimum-history threshold is 6 sessions (${SESSION_RATE_MIN_SESSIONS})`,
+    SESSION_RATE_MIN_SESSIONS === 6);
+  const few = { sessionLog: weekdaySessions(MON, 5), avgSessionGapDays: 2 };
+  check("5 logged sessions is not enough history — dosing falls back to the tracked mean gap",
     sessionsPerWeekObserved(few) === null && effectiveGapDays(few) === 2);
   /* Enough history means BOTH enough sessions and enough calendar coverage —
      the count is divided by the window's nominal width, so a window holding

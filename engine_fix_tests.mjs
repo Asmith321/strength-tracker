@@ -19,6 +19,10 @@ import {
   effectiveGapDays, sessionsPerWeekObserved, SESSION_RATE_WINDOW_WEEKS, SESSION_RATE_MIN_SESSIONS, SESSION_LOG_MAX,
 } from "./src/engine.js";
 
+/* The engine's own source, for the few assertions that are about what the code
+   does NOT contain — a removed branch cannot be probed by calling it. */
+const ENGINE_SRC = await import("node:fs").then((fs) => fs.readFileSync("./src/engine.js", "utf8"));
+
 let pass = 0, fail = 0;
 const check = (name, cond, extra = "") => {
   if (cond) { pass++; console.log(`  PASS  ${name}`); }
@@ -127,14 +131,27 @@ console.log("\n== P0: atVolCeiling transition actually fires ==");
     return { p, transition };
   };
 
-  // fully-ratcheted quads: MEV has climbed to MAV, so the ramp is flat at the ceiling
-  const ratcheted = runToTransition((p) => { p.landmarks.quads = { ...p.landmarks.quads, mev: 14, mav: 14 }; });
-  check("accumulation ends via a transition", !!ratcheted.transition, "none fired in 40 sessions");
-  check(`transition reason is the volume ceiling ("${ratcheted.transition?.reason}")`, /ceiling/.test(ratcheted.transition?.reason || ""));
-  check(`fires before maxCycles (cyc ${ratcheted.p.block.cycle} < ${BLOCKS.accumulation.maxCycles})`,
-    ratcheted.p.block.cycle < BLOCKS.accumulation.maxCycles);
-  check(`fires no earlier than minCycles (cyc ${ratcheted.p.block.cycle} >= ${BLOCKS.accumulation.minCycles})`,
-    ratcheted.p.block.cycle >= BLOCKS.accumulation.minCycles);
+  /* THE VOLUME-CEILING TRIGGER IS GONE, and the tests that stood here were
+     driven from a state the engine repairs on contact. They set quads to
+     mev === mav and justified it as "the state the AUTO-TUNE can drift a
+     program into" — but MEV_MAV_MAX_RATIO exists precisely to prevent that,
+     and both write paths repair it: feeding mev=mav=14 through one auto-tune
+     pass yields {mev:9, mav:15}, and through migrateProgram yields {mev:9,
+     mav:14}. The RAMP SPAN block later in this same file asserts
+     mev <= floor(0.65 * mav) for all ten groups across 30 simulated blocks, so
+     the file simultaneously proved the fixture unreachable and used it as the
+     only route to the trigger.
+     From every REACHABLE state the trigger could not fire at all: it needed
+     delivered >= min(mrv, capW) while also requiring that ceiling to be at
+     least MAV, and the ramp tops out AT MAV — leaving only capW === mav
+     exactly, which then demanded a second consecutive cycle at the top that
+     the ramp never produces. Removing it changed no behaviour.
+     What replaces these assertions is the honest property: a healthy block
+     runs its full length, and the adaptive triggers that DO work are the ones
+     that shorten it. */
+  check("the unreachable volume-ceiling reason is gone from the engine's vocabulary",
+    !/weekly volume reached its ceiling/.test(ENGINE_SRC),
+    "the reason string is still constructible");
 
   // and the control: from the shipped defaults the ramp has room, so the block
   // runs its full length instead and says so honestly
@@ -1038,7 +1055,13 @@ console.log("\n== AUDIT 2.6: stall-break cuts load after repeated non-advancing 
   let p = fresh();
   p.block = { type: "accumulation", cycle: 1, sessionsInBlock: 4, nextAfter: null };
   const log = (reps) => [{ key: "lateralraise", topWeight: 30, topReps: reps, topRpe: 8, targetRpe: 8, missedSets: 0 }];
-  for (let i = 0; i < DP_STALL_THRESHOLD + 1; i++) { const r = ingest(p, log(9), green); p = r.next; }
+  /* The loop bound is a LITERAL 5 rather than DP_STALL_THRESHOLD + 1: driven
+     from the constant, this test moved with it — mutating 4 -> 999 stayed green
+     across the whole suite, because the fixture simply ran 1000 sessions and
+     then asserted the counter equalled 1000. The threshold's VALUE is what the
+     test is about. */
+  check(`the stall threshold is 4 non-advancing sessions (${DP_STALL_THRESHOLD})`, DP_STALL_THRESHOLD === 4);
+  for (let i = 0; i < 5; i++) { const r = ingest(p, log(9), green); p = r.next; }
   check(`dpStalls reaches the threshold after ${DP_STALL_THRESHOLD} non-advancing sessions (got ${p.lifts.lateralraise.dpStalls})`,
     p.lifts.lateralraise.dpStalls === DP_STALL_THRESHOLD);
   const rxAt = prescribe({ ...p, cycleIndex: dayWith("lateralraise") }, green).items.find((i) => i.key === "lateralraise");
