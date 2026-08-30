@@ -532,30 +532,35 @@ const LIB = {
    for stimulus, not for carrying a strength peak.
 
    SHAPE: 5 days, on a fixed weekly cycle:
-     D0 Push   D1 Pull   D2 Legs   D3 Upper   D4 Lower + Pull
+     D0 Pull · Back & Delts     D1 Push · Incline & Arms   D2 Legs · Quads & Pull
+     D3 Push · Flat & Delts     D4 Lower · Hinge & Pull
+
+   NO MUSCLE IS TRAINED ON CONSECUTIVE DAYS. That constraint is what gives this
+   rotation its shape, and it is far stronger than it looks. In a Mon-Fri week
+   there is exactly ONE set of three non-adjacent days — {Mon, Wed, Fri} — so
+   any muscle needing three exposures must be on all three of them, and every
+   other muscle must take a non-adjacent pair. Back needs three (an advanced MAV
+   of 23 cannot fit in two days under SAME_DAY_GROUP_CAP) and so do calves
+   (one approved exercise, so one slot a day). That fixes Mon/Wed/Fri as the
+   high-frequency days, leaves Tue/Thu for pressing, and puts the legs on
+   Wed/Fri where they do not collide with either press day.
 
    WHY FIVE AND NOT FOUR. The rotation was 4 days, and it could not satisfy two
-   requirements the athlete set explicitly: reach the ADVANCED weekly MAV for
-   every muscle, and train every muscle at least 2x per calendar week. Measured
-   against the 4-day rotation:
+   requirements the athlete set: reach the ADVANCED weekly MAV for every muscle,
+   and train every muscle at least 2x per calendar week. Measured against the
+   4-day rotation:
      • at 4x/week — back reached 20 sets against a MAV of 23, biceps 16 against
        18. Neither is fixable by adding sets to an existing day, because
-       SAME_DAY_GROUP_CAP already binds at 10 there; back specifically needed a
-       THIRD exposure day, which a 4-day rotation carrying two pull days has
-       nowhere to put.
+       SAME_DAY_GROUP_CAP already binds at 10 there.
      • at every-other-day — a 4-day rotation takes 8 days to complete, so a
        muscle trained on 2 of its days gets 2 exposures per 8 days = 1.75x per
-       week. That is arithmetic, not dosing: no amount of volume fixes it.
+       week. That is arithmetic, not dosing.
    Five days completes in exactly 7 at the 1.4-day target gap, so exposures per
-   rotation ARE exposures per week, and the extra day gives back, side delts,
-   calves, biceps and triceps the third exposure their advanced MAVs require
-   under the same-day cap.
+   rotation ARE exposures per week.
 
    WHY NOT SIMPLY TRAIN THE 4-DAY ROTATION FIVE TIMES A WEEK. It delivers the
    volume, but the rotation stops aligning with the calendar — 4 days consumed
-   at 5 sessions/week means the week starts on a different day of the rotation
-   each time, so no weekday ever holds the same session twice. A fixed weekly
-   split is the thing that makes a 5-day schedule legible.
+   at 5 sessions/week means no weekday ever holds the same session twice.
 
    BALANCE. The obvious alternative — pure upper/lower — was rejected after
    counting the approved list: 15 of its 23 exercises are upper-body, so an
@@ -673,8 +678,17 @@ const PATTERN_OF = {
   dip: "decline push", cablefly: "chest iso", dbshoulderpress: "vertical push",
   tbarrow: "horiz pull", pullup: "vertical pull", pulldown: "vertical pull", latpullover: "lat iso",
   lateralraise: "delt iso", dblateralraise: "delt iso", reversepecdeck: "rear delt iso",
-  triext: "triceps iso", triceppushdown: "triceps iso",
-  bayesiancurl: "biceps iso", preachercurl: "biceps iso",
+  /* The arm isolations are split by ARM POSITION, not lumped by muscle. An
+     overhead extension loads the triceps long head at long muscle length; a
+     pushdown loads it short. A Bayesian curl has the arm behind the body
+     (lengthened); a preacher curl has it in front (shortened). Those are
+     genuinely different stimuli — the long-muscle-length evidence this
+     program's exercise selection is built on is precisely about that
+     difference — so pairing them in one session is complementary, not
+     redundant, and the same-movement rules below must not treat them as
+     duplicates the way they treat Pull-Up and Lat Pulldown. */
+  triext: "triceps iso (lengthened)", triceppushdown: "triceps iso (shortened)",
+  bayesiancurl: "biceps iso (lengthened)", preachercurl: "biceps iso (shortened)",
   squat: "squat", frontsquat: "squat", bsplit: "lunge", legext: "quad iso",
   rdl: "hinge", deadlift: "hinge", legcurl: "ham iso", nordic: "ham iso",
   calfraise: "calf", shrug: "trap", wristcurl: "forearm", bbwristcurl: "forearm",
@@ -682,46 +696,27 @@ const PATTERN_OF = {
 };
 
 const ROTATION = [
-  { name: "Push · Chest & Delts", items: ["bench", "dbshoulderpress", "cablefly", "lateralraise", "triext", "calfraise", "cablecrunch"] },
-  /* triceppushdown lands on the pull day for the same reason triext used to:
-     with two approved triceps movements and an advanced MAV of 15, two
-     exposures would force 10 and 6 sets into two sessions. A third splits it
-     6/6/6, and triceps are fully recovered here precisely because this day's
-     work is pulling.
-     BACK PAIRING: T-bar row (horizontal) + lat pulldown (vertical). The two
-     back slots this day needs are now deliberately DIFFERENT patterns — one
-     pulls toward the waist, one overhead — so the second is not the first
-     with fatigue on top. */
-  { name: "Pull · Back & Arms", items: ["tbarrow", "pulldown", "reversepecdeck", "bayesiancurl", "triceppushdown", "shrug", "wristcurl"] },
-  /* NO PRESSING ON THIS DAY. An earlier pass parked the overhead press here on
-     the reasoning that leg day is the only session with no other pressing, so
-     front delts would arrive fresh. The athlete rejected it outright: a leg
-     day is for legs. `lowerBody: true` marks it so the rule is machine-checked
-     rather than left to whoever edits this next.
-     Lateral raises do stay — side delts need a third exposure, they cost
-     almost nothing systemically, and they share no fatigue with squatting.
-     They are also not a press. */
-  { name: "Legs · Quads", lowerBody: true, items: ["squat", "legext", "legcurl", "lateralraise", "calfraise", "cablecrunch"] },
-  /* ORDER ALTERNATES PUSH AND PULL: incline press, pull-up, dip, pullover. The
-     two chest compounds and the two back movements are each separated by the
-     other pattern, so nothing same-pattern is adjacent and each muscle gets
-     the other's working time as recovery. Compounds still precede isolation
-     within a muscle (inclinebench before dip, pullup before latpullover), and
-     curls still follow every pull. No overhead press on this day. */
-  /* THE SECOND OVERHEAD-PRESS EXPOSURE LIVES HERE, and the flat bench is what
-     makes that possible. Front delts have exactly one approved exercise and
-     need two training days, so the press has to appear twice. It cannot go on
-     either lower-body day, which leaves only the two chest days and the pull
-     day — and pairing it with an INCLINE press is the overlap the athlete
-     rejected. Running a FLAT press on this day resolves it: flat pressing
-     loads the front delt far less than an incline, so bench and overhead press
-     coexist here the same way they already do on the Push day.
-     THE COST, STATED PLAINLY: the program now carries no incline pressing at
-     all. Incline DB press stays in LIB and on the approved list, so restoring
-     it is a one-line change — but it cannot return to a day that also holds
-     the overhead press. */
-  { name: "Upper · Full", items: ["bench", "dip", "dbshoulderpress", "pullup", "latpullover", "dblateralraise", "triceppushdown", "preachercurl"] },
-  { name: "Lower · Hinge & Pull", lowerBody: true, items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "reversepecdeck", "bayesiancurl", "calfraise"] },
+  /* Mon — PULL + DELTS. The overhead press lives here, not on a press day, and
+     that is what makes the incline press below possible: front delts need two
+     exposures, an incline press cannot share a session with an overhead press,
+     and both remaining press days would otherwise have to carry one. Pulling
+     does not fatigue the front delt, so this exposure lands fresh. */
+  { name: "Pull · Back & Delts", items: ["tbarrow", "pulldown", "dbshoulderpress", "lateralraise", "bayesiancurl", "calfraise", "shrug"] },
+  /* Tue — PUSH, INCLINE. The angle the program had been missing entirely: four
+     chest slots across three exercises, running horizontal, horizontal and
+     decline, with nothing above horizontal. Incline sits alone on this day
+     precisely so no overhead press can join it. */
+  { name: "Push · Incline & Arms", items: ["inclinebench", "cablefly", "triext", "triceppushdown", "reversepecdeck", "cablecrunch"] },
+  /* Wed — LEGS + PULL. Back's second exposure rides along here rather than on a
+     press day: it shares no fatigue with squatting, and the no-consecutive-days
+     rule leaves Mon/Wed/Fri as the only three non-adjacent days in a Mon-Fri
+     week, so anything needing three exposures has to be on all three. */
+  { name: "Legs · Quads & Pull", lowerBody: true, items: ["squat", "legext", "legcurl", "pullup", "latpullover", "dblateralraise", "preachercurl", "calfraise"] },
+  /* Thu — PUSH, FLAT. Bench and dip, plus the second overhead-press exposure.
+     No incline on this day, by the rule above. */
+  { name: "Push · Flat & Delts", items: ["bench", "dip", "dbshoulderpress", "triceppushdown", "reversepecdeck", "cablecrunch", "wristcurl"] },
+  /* Fri — LOWER + PULL. Hinge, the second quad exposure, and back's third. */
+  { name: "Lower · Hinge & Pull", lowerBody: true, items: ["rdl", "bsplit", "legext", "nordic", "latpullover", "lateralraise", "bayesiancurl", "calfraise"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
