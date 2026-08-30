@@ -196,9 +196,19 @@ console.log("\n== The estimator degrades sensibly ==");
   const few = { sessionLog: weekdaySessions(MON, SESSION_RATE_MIN_SESSIONS - 1), avgSessionGapDays: 2 };
   check(`fewer than ${SESSION_RATE_MIN_SESSIONS} sessions falls back to the tracked mean gap`,
     sessionsPerWeekObserved(few) === null && effectiveGapDays(few) === 2);
-  const enough = { sessionLog: weekdaySessions(MON, SESSION_RATE_MIN_SESSIONS + 4), avgSessionGapDays: 2 };
+  /* Enough history means BOTH enough sessions and enough calendar coverage —
+     the count is divided by the window's nominal width, so a window holding
+     only its newest week reports a third of the true rate. 18 weekday sessions
+     span 24 days, comfortably covering the window. */
+  const enough = { sessionLog: weekdaySessions(MON, 18), avgSessionGapDays: 2 };
   check("...and once there is enough history the rate takes over from it",
     sessionsPerWeekObserved(enough) !== null && effectiveGapDays(enough) !== 2);
+  /* The coverage rule itself, which is what a returning athlete hits once their
+     layoff ages past the far edge of the window. Enough sessions, not enough
+     span: this must NOT report a collapse in frequency. */
+  const sparseButRecent = { sessionLog: weekdaySessions(MON, 8), avgSessionGapDays: 2 };
+  check("a window with enough sessions but too little calendar span yields nothing rather than a low rate",
+    sessionsPerWeekObserved(sparseButRecent) === null);
 
   /* Time off must not read as a collapse in training frequency — AUDIT 3.7
      established that layoffs are handled by layoffFactor and the
@@ -222,6 +232,7 @@ console.log("\n== A program saved before this change still works ==");
   const { program } = runSchedule("advanced", weekdaySessions(MON, 30));
   const legacy = { ...program };
   delete legacy.sessionLog;
+  delete legacy.sessionsPerWeek;   // a program saved before this change had neither field
   const m = migrateProgram(legacy);
   check("migration backfills an empty session log rather than leaving it undefined",
     Array.isArray(m.sessionLog) && m.sessionLog.length === 0);
@@ -251,6 +262,72 @@ console.log("\n== The advisory and the advertised rate agree ==");
     new Set(advised).size === TRAINING_WEEKDAYS.length);
   check(`the advertised rate matches the dates handed out (${targetSessionsPerWeek(0.3)}/week)`,
     targetSessionsPerWeek(0.3) === TRAINING_WEEKDAYS.length);
+}
+
+console.log("\n== A break does not change the dose — measured in SETS, not in stored state ==");
+{
+  /* THE TEST THAT SHOULD HAVE EXISTED. The previous AUDIT 3.7 regression
+     asserted that `avgSessionGapDays` was unmoved by a layoff and stopped
+     there. It never called prescribe() afterwards — so when the rate estimator
+     was introduced and reintroduced the exact failure AUDIT 3.7 was about, that
+     test stayed green. Measured on the broken build: a single 10-day break sent
+     freqScale from 1.0 to 1.5 and held it there for 21 days, prescribing 44-set
+     sessions against a normal 35. A 21-day layoff was worse — it fell through
+     to the EWMA and walked freqScale 0.744 -> 1.800 between two consecutive
+     sessions.
+     So this asserts what the ATHLETE receives. Stored state is not the
+     deliverable; prescribed sets are. */
+  const sessionTotals = (rows) => rows.map((r) => Object.values(r.g).reduce((a, b) => a + b, 0));
+
+  for (const breakDays of [3, 10, 21, 45]) {
+    const settled = runSchedule("advanced", weekdaySessions(MON, 40));
+    const baseline = sessionTotals(settled.rows.slice(-10));
+    const peakBefore = Math.max(...baseline);
+
+    /* Resume the SAME program on the same weekday pattern after the break. */
+    let p = settled.program;
+    const resumeFrom = settled.rows.at(-1).at + breakDays * DAY;
+    const after = [];
+    for (const at of weekdaySessions(resumeFrom, 15)) {
+      CLOCK = at;
+      const rx = prescribe(p, { trainingReadiness: 80 });
+      after.push({ fs: weeklyFreqScale(effectiveGapDays(p)), tot: rx.items.reduce((s, i) => s + i.sets, 0) });
+      p = ingest(p, rx.items.map((it) => ({
+        key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe,
+        targetRpe: it.rpe, targetReps: it.reps, sets: it.sets, repsShort: 0, touched: true,
+        backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+        backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+      })), { trainingReadiness: 80 }).next;
+    }
+    const peakAfter = Math.max(...after.map((a) => a.tot));
+    check(`a ${breakDays}-day break never RAISES the prescribed session volume (peak ${peakBefore} -> ${peakAfter})`,
+      peakAfter <= peakBefore, `freqScale reached ${Math.max(...after.map((a) => a.fs)).toFixed(4)}`);
+    /* And the mechanism behind it, so a future change that fixes the symptom by
+       some other route still has to keep this property. */
+    const fsRange = [Math.min(...after.map((a) => a.fs)), Math.max(...after.map((a) => a.fs))];
+    check(`  ...because freqScale never moves off 1.0 across the comeback (${fsRange.map((f) => f.toFixed(3)).join(" .. ")})`,
+      fsRange[0] === 1 && fsRange[1] === 1);
+  }
+
+  /* The contrast that keeps the above from being satisfied by an estimator that
+     simply never updates: a REAL change of cadence must still be picked up. */
+  const settled = runSchedule("advanced", weekdaySessions(MON, 40));
+  let p = settled.program;
+  let t = settled.rows.at(-1).at + DAY;
+  const mwf = [];
+  while (mwf.length < 15) { if ([1, 3, 5].includes(new Date(t).getUTCDay())) mwf.push(t); t += DAY; }
+  for (const at of mwf) {
+    CLOCK = at;
+    const rx = prescribe(p, { trainingReadiness: 80 });
+    p = ingest(p, rx.items.map((it) => ({
+      key: it.key, topWeight: it.topLoad, topReps: it.reps, topRpe: it.rpe,
+      targetRpe: it.rpe, targetReps: it.reps, sets: it.sets, repsShort: 0, touched: true,
+      backoffSetCount: it.backoffSetCount, backoffReps: it.reps,
+      backoffRpe: it.backoffRpeCap ?? it.rpe, backoffRpeCap: it.backoffRpeCap,
+    })), { trainingReadiness: 80 }).next;
+  }
+  check(`moving permanently to Mon/Wed/Fri IS picked up (${sessionsPerWeekObserved(p)}/week)`,
+    sessionsPerWeekObserved(p) === 3);
 }
 
 Date.now = REAL_NOW;

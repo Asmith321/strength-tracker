@@ -11,7 +11,7 @@ import cloudStorage, { getSession, onAuthChange, signIn, signUp, signOut } from 
 import { readDraft, writeDraft, clearDraft, draftMatches } from "./draft.js";
 import {
   LIB, BLOCKS, EXPERIENCE_TIERS, landmarksForExperience, freshProgram, migrateProgram, RETIRED_LABELS, LEGACY_BLOCK_TYPES,
-  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, capacityShortfalls, e1rmFrom,
+  prescribe, ingest, applyTransition, nextSessionTargetAt, targetSessionsPerWeek, deliveredWeekly, maxDeliverable, weeklyFreqScale, effectiveGapDays, capacityShortfalls, e1rmFrom,
   readinessScore, PLATES, platesForSide, plateText,
 } from "./engine.js";
 
@@ -573,7 +573,16 @@ function Status({ program }) {
      MAV/MRV landmarks this row is judged against. Without both steps this
      display would silently drift from what prescribe() actually hands the
      athlete the moment avgSessionGapDays departs from ~4x/week. */
-  const freqScale = weeklyFreqScale(program.avgSessionGapDays);
+  /* effectiveGapDays, NOT avgSessionGapDays. Every consumer inside the engine
+     moved to the rate estimator; this call site did not, so the Status screen
+     computed weekly volume at a different cadence than the one the athlete was
+     actually prescribed at — and it oscillated on exactly the weekday cycle the
+     rate estimator exists to eliminate. Measured on a settled Mon-Fri athlete:
+     this read 0.838 / 1.229 / 1.075 / 0.967 / 0.891 across the week while the
+     engine used 1.0 throughout, swinging the volume bar's ceiling marker
+     between 21 and 31 sets and on Tuesday rendering it BELOW the delivered
+     volume — the one thing that marker exists to make impossible. */
+  const freqScale = weeklyFreqScale(effectiveGapDays(program));
   const shortfalls = capacityShortfalls(program, program.block.type);
   const rows = Object.entries(program.landmarks).map(([p, lm]) => {
     // true-weekly full-muscle sets actually prescribed (mains + fixedSets + ramped); rounded since freqScale != 1 makes this a rate, not a literal per-rotation count
@@ -599,7 +608,7 @@ function Status({ program }) {
         <Gauge value={program.fatigue.index} label={`FATIGUE INDEX  ${program.fatigue.index.toFixed(2)}`} color={program.fatigue.index >= 0.7 ? "#D7443E" : program.fatigue.index >= 0.55 ? "#E8C547" : "#3FA85F"} />
         <Gauge value={0.5 + program.fatigue.slope * 50} label={`e1RM TREND  ${(program.fatigue.slope * 100).toFixed(2)}%/session`} color="#2F6FB0" />
       </div>
-      <CapacityWarning shortfalls={shortfalls} gapDays={program.avgSessionGapDays} />
+      <CapacityWarning shortfalls={shortfalls} gapDays={effectiveGapDays(program)} />
       <div className="eyebrow mt">WEEKLY VOLUME vs LANDMARKS</div>
       {rows.map((r) => (
         <div key={r.p} className="volrow">
