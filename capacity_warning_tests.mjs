@@ -157,19 +157,27 @@ console.log("\n== The cases the athlete asked about ==");
 
   /* The counterpart, and the reason the warning exists: running a FIVE-day
      program four days a week strands most of the advanced landmarks. */
+  /* THE NUMBERS BELOW MOVED WITH THE 3-SET CEILING, and moved in the direction
+     the design predicts. Back's rotation capacity went 26 -> 24 (8 slots x 3
+     rather than 4 slots x 6 with the same-day cap biting), so at 4x/week its
+     weekly capacity is 24 / 1.25 = 19.2 rather than 20.8. And the shortfall now
+     touches ALL TEN groups instead of 8, because sizing every group's slots as
+     ceil(MAV / 3) leaves it exactly enough capacity at the design cadence and
+     therefore no slack at any slower one. That is the honest cost of the tight
+     design, and it is what this warning exists to say out loud. */
   const adv4x = capacityShortfalls(progAt("advanced", 1.75));
-  check("advanced running this 5-day program only 4x/week: back (MAV 23) drops to 20.8 of its 26-set capacity",
-    adv4x.back && adv4x.back.mav === 23 && Math.abs(adv4x.back.capacityWeekly - 20.8) < 1e-9,
+  check("advanced running this 5-day program only 4x/week: back (MAV 23) drops to 19.2 of its 24-set capacity",
+    adv4x.back && adv4x.back.mav === 23 && Math.abs(adv4x.back.capacityWeekly - 19.2) < 1e-9,
     JSON.stringify(adv4x.back));
   check("...and side delts / calves / biceps (MAV 18) drop to 14.4",
     ["side_delts", "calves", "biceps"].every((g) => adv4x[g] && Math.abs(adv4x[g].capacityWeekly - 14.4) < 1e-9),
     JSON.stringify(Object.keys(adv4x)));
-  check("...affecting 8 of the 10 tracked groups, not one or two",
-    Object.keys(adv4x).length === 8, String(Object.keys(adv4x).length));
+  check("...affecting all 10 tracked groups — the 3-set ceiling leaves no cadence slack anywhere",
+    Object.keys(adv4x).length === 10, String(Object.keys(adv4x).length));
 
   const advEod = capacityShortfalls(progAt("advanced", 2.0));
-  check("advanced every-other-day is worse still — every tracked group short but hamstrings",
-    Object.keys(advEod).length === 9, JSON.stringify(Object.keys(advEod)));
+  check("advanced every-other-day is worse still — every tracked group short, hamstrings included",
+    Object.keys(advEod).length === 10, JSON.stringify(Object.keys(advEod)));
   check("advanced every-other-day: side delts short by more than 5 sets/week",
     advEod.side_delts.shortfall > 5, String(advEod.side_delts?.shortfall));
 }
@@ -267,11 +275,23 @@ console.log("\n== Groups pinned AT the ceiling, where the auto-tune can no longe
   const adv = landmarksForExperience("advanced");
   const atDesign = { landmarks: adv, sessionsPerWeek: TRAINING_WEEKDAYS.length };
   const pinned = capacityPinned(atDesign);
-  /* Literals, not values read back from the tier table. */
-  check(`side delts, calves and biceps are pinned at 18 sets (${Object.keys(pinned).sort().join(", ")})`,
-    Object.keys(pinned).sort().join(",") === "biceps,calves,side_delts"
-    && Object.values(pinned).every((v) => v.mav === 18 && Math.abs(v.capacityWeekly - 18) < 1e-9),
+  /* Literals, not values read back from the tier table.
+
+     SEVEN groups are pinned now, not three, and that is the single biggest
+     side effect of the 3-set ceiling. Every group's slot count is sized as
+     ceil(MAV / 3), so at the design cadence capacity lands EXACTLY on MAV for
+     everything that divides evenly — which means the landmark auto-tune can
+     never raise those MAVs again without the rotation growing more slots. The
+     three that escape are back, hamstrings and rear delts, whose MAVs do not
+     divide by 3 and so leave a set of headroom. This is not a regression in the
+     warning; it is the warning correctly reporting a tighter program, and the
+     Status panel is where the athlete sees it. */
+  check(`seven of ten groups are pinned exactly at schedule capacity (${Object.keys(pinned).sort().join(", ")})`,
+    Object.keys(pinned).sort().join(",") === "biceps,calves,chest,front_delts,quads,side_delts,triceps"
+    && Object.values(pinned).every((v) => Math.abs(v.capacityWeekly - v.mav) < 1e-9),
     JSON.stringify(pinned));
+  check("the three that escape are exactly those whose MAV does not divide by the 3-set cap (back 23, hamstrings 10, rear delts 11)",
+    ["back", "hamstrings", "rear_delts"].every((g) => !pinned[g] && adv[g].mav % 3 !== 0));
   check("and none of them is reported as a shortfall — they are not short, they are finished",
     Object.keys(capacityShortfalls(atDesign)).every((g) => !pinned[g]));
 
