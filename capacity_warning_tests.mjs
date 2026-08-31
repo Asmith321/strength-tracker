@@ -152,34 +152,45 @@ console.log("\n== The cases the athlete asked about ==");
   const designInter = capacityShortfalls(progAt("intermediate", TARGET_SESSION_GAP_DAYS));
   check("intermediate at the design cadence: nothing is schedule-limited",
     Object.keys(designInter).length === 0, JSON.stringify(Object.keys(designInter)));
-  check("intermediate at 4x/week is also clear (its MAVs fit even a slower cadence)",
-    Object.keys(capacityShortfalls(progAt("intermediate", 1.75))).length === 0);
+  /* NO LONGER CLEAR — and correctly so. The evidence-based landmark rewrite
+     removed the advanced tier's MAV multiplier entirely (see EXPERIENCE_TIERS):
+     intermediate and advanced now share the SAME seeded MAV, differing only in
+     how wide their MEV-MRV band is for adjustLandmarks to explore. Since the
+     rotation's slot counts were sized against that shared MAV, intermediate is
+     exactly as exposed to a slow cadence as advanced now — there is no longer
+     a tier where the design cadence's whole point (schedule capacity clearing
+     MAV) creates extra slack for a slower one. That is a direct, intended
+     consequence of removing an unsourced multiplier, not a regression. */
+  check("intermediate at 4x/week is now flagged too — it shares advanced's MAV since the multiplier was removed",
+    Object.keys(capacityShortfalls(progAt("intermediate", 1.75))).length === 9);
 
   /* The counterpart, and the reason the warning exists: running a FIVE-day
-     program four days a week strands most of the advanced landmarks. */
-  /* THE NUMBERS BELOW MOVED WITH THE 3-SET CEILING, and moved in the direction
-     the design predicts. Back's rotation capacity went 26 -> 24 (8 slots x 3
-     rather than 4 slots x 6 with the same-day cap biting), so at 4x/week its
-     weekly capacity is 24 / 1.25 = 19.2 rather than 20.8. And the shortfall now
-     touches ALL TEN groups instead of 8, because sizing every group's slots as
-     ceil(MAV / 3) leaves it exactly enough capacity at the design cadence and
-     therefore no slack at any slower one. That is the honest cost of the tight
-     design, and it is what this warning exists to say out loud. */
+     program four days a week strands most of the landmarks.
+     THE NUMBERS BELOW MOVED WITH THE EVIDENCE-BASED LANDMARK REWRITE. Back's
+     MAV dropped 23 -> 18 and its rotation capacity 24 -> 18 (6 slots x 3, no
+     longer 8), so at 4x/week its weekly capacity is 18 / 1.25 = 14.4 rather
+     than 19.2. Front delts, which used to clear the design cadence by a wide
+     margin (mav 9, capacity way above it), now needs exactly what its 2 slots
+     deliver (mav 6 = capacity 6), so it joins the flagged set at any slower
+     cadence — the shortfall list is 9 groups at 4x/week, not all 10: calves is
+     the one group with real headroom left (mav 14 against a 18-set capacity,
+     the GROUP_SET_CAP exemption's slack), so it clears 4x/week and only joins
+     at every-other-day. */
   const adv4x = capacityShortfalls(progAt("advanced", 1.75));
-  check("advanced running this 5-day program only 4x/week: back (MAV 23) drops to 19.2 of its 24-set capacity",
-    adv4x.back && adv4x.back.mav === 23 && Math.abs(adv4x.back.capacityWeekly - 19.2) < 1e-9,
+  check("advanced running this 5-day program only 4x/week: back (MAV 18) drops to 14.4 of its 18-set capacity",
+    adv4x.back && adv4x.back.mav === 18 && Math.abs(adv4x.back.capacityWeekly - 14.4) < 1e-9,
     JSON.stringify(adv4x.back));
-  check("...and side delts / calves / biceps (MAV 18) drop to 14.4",
-    ["side_delts", "calves", "biceps"].every((g) => adv4x[g] && Math.abs(adv4x[g].capacityWeekly - 14.4) < 1e-9),
+  check("...and chest / side delts (MAV 16) drop to 14.4",
+    ["chest", "side_delts"].every((g) => adv4x[g] && Math.abs(adv4x[g].capacityWeekly - 14.4) < 1e-9),
     JSON.stringify(Object.keys(adv4x)));
-  check("...affecting all 10 tracked groups — the 3-set ceiling leaves no cadence slack anywhere",
-    Object.keys(adv4x).length === 10, String(Object.keys(adv4x).length));
+  check("...affecting 9 of the 10 tracked groups — calves is the one with real headroom left (the GROUP_SET_CAP exemption)",
+    Object.keys(adv4x).length === 9 && !adv4x.calves, String(Object.keys(adv4x).length));
 
   const advEod = capacityShortfalls(progAt("advanced", 2.0));
-  check("advanced every-other-day is worse still — every tracked group short, hamstrings included",
+  check("advanced every-other-day is worse still — every tracked group short, calves included",
     Object.keys(advEod).length === 10, JSON.stringify(Object.keys(advEod)));
-  check("advanced every-other-day: side delts short by more than 5 sets/week",
-    advEod.side_delts.shortfall > 5, String(advEod.side_delts?.shortfall));
+  check("advanced every-other-day: back short by more than 5 sets/week",
+    advEod.back.shortfall > 5, String(advEod.back?.shortfall));
 }
 
 console.log("\n== Slowing the cadence can only make a shortfall worse ==");
@@ -277,21 +288,23 @@ console.log("\n== Groups pinned AT the ceiling, where the auto-tune can no longe
   const pinned = capacityPinned(atDesign);
   /* Literals, not values read back from the tier table.
 
-     SEVEN groups are pinned now, not three, and that is the single biggest
-     side effect of the 3-set ceiling. Every group's slot count is sized as
-     ceil(MAV / 3), so at the design cadence capacity lands EXACTLY on MAV for
-     everything that divides evenly — which means the landmark auto-tune can
-     never raise those MAVs again without the rotation growing more slots. The
-     three that escape are back, hamstrings and rear delts, whose MAVs do not
-     divide by 3 and so leave a set of headroom. This is not a regression in the
-     warning; it is the warning correctly reporting a tighter program, and the
-     Status panel is where the athlete sees it. */
-  check(`seven of ten groups are pinned exactly at schedule capacity (${Object.keys(pinned).sort().join(", ")})`,
-    Object.keys(pinned).sort().join(",") === "biceps,calves,chest,front_delts,quads,side_delts,triceps"
+     THREE groups are pinned now, not seven — the evidence-based landmark
+     rewrite gave most groups a MAV that doesn't divide evenly by the 3-set
+     cap, which is exactly what leaves them slack: every group's slot count is
+     still sized as ceil(MAV / 3), so capacity is 3 x that ceiling, which
+     equals MAV only when MAV is itself a multiple of 3. Back (18), front delts
+     (6) and triceps (12) all are; the rest land on a remainder of 1 or 2 and
+     get 2-4 sets of headroom for free. Calves escapes by a much wider margin
+     (its GROUP_SET_CAP exemption gives it 18 sets of capacity against a MAV of
+     14, not the ceil(MAV/3) sizing every other group uses). */
+  check(`three of ten groups are pinned exactly at schedule capacity (${Object.keys(pinned).sort().join(", ")})`,
+    Object.keys(pinned).sort().join(",") === "back,front_delts,triceps"
     && Object.values(pinned).every((v) => Math.abs(v.capacityWeekly - v.mav) < 1e-9),
     JSON.stringify(pinned));
-  check("the three that escape are exactly those whose MAV does not divide by the 3-set cap (back 23, hamstrings 10, rear delts 11)",
-    ["back", "hamstrings", "rear_delts"].every((g) => !pinned[g] && adv[g].mav % 3 !== 0));
+  check("the pinned three are exactly those whose MAV divides evenly by the 3-set cap (back 18, front delts 6, triceps 12)",
+    ["back", "front_delts", "triceps"].every((g) => pinned[g] && adv[g].mav % 3 === 0));
+  check("every other tracked group has at least a set of headroom (not pinned)",
+    Object.keys(adv).filter((g) => !["back", "front_delts", "triceps"].includes(g)).every((g) => !pinned[g]));
   check("and none of them is reported as a shortfall — they are not short, they are finished",
     Object.keys(capacityShortfalls(atDesign)).every((g) => !pinned[g]));
 
