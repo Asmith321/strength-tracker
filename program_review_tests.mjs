@@ -312,6 +312,39 @@ console.log("\n== The ramp: MEV -> MAV, with MRV as the recovery bound ==");
   });
   check("MAV sits strictly between MEV and MRV for every group",
     Object.keys(PATTERNS).every((g) => lm[g].mev < lm[g].mav && lm[g].mav < lm[g].mrv));
+
+  /* MAV MUST SIT IN A SANE FRACTION OF MRV — and this is a REGRESSION GUARD for
+     a defect that shipped and was caught by the athlete looking at the screen,
+     not by this suite.
+     Removing the advanced-tier MAV multiplier while leaving the MRV one at 1.3x
+     inflated MRV relative to everything measured against it. Two consequences,
+     neither of which any of the 883 existing assertions could see, because they
+     all check RELATIONSHIPS (mev < mav < mrv, ramp stays under MRV) and every
+     one of those still held:
+       1. Advanced MRVs went above RP's published ceilings (back 33 vs ~25,
+          chest 29 vs ~22, triceps 23 vs ~18) — the same unsourced-multiplier
+          error that had just been fixed one column over.
+       2. The Status screen scales each volume bar's whole track to MRV, so at
+          the TOP of the ramp — maximum programmed volume — bars filled only
+          46-62% (averaging 53%) and both ticks crowded into the left half.
+          Every muscle read as perpetually half-trained.
+     The band is two-sided on purpose. Too LOW and the bar is unreadable and MRV
+     is probably unsourced; too HIGH (say MRV = MAV + 1) and MRV has stopped
+     being a meaningful recovery ceiling at all, which would also be wrong.
+
+     CHECKED AT EVERY TIER, not just the one this file's `lm` happens to hold.
+     The first version of this guard read the intermediate table and passed
+     happily with the bug re-introduced — the defect only ever existed at the
+     ADVANCED tier, because that is the only tier the MRV multiplier applies
+     to. A regression guard that cannot see the regression it was written for
+     is worse than no guard, so it iterates the tiers instead. */
+  ["beginner", "intermediate", "advanced"].forEach((tier) => {
+    const tl = landmarksForExperience(tier);
+    const ratios = Object.keys(PATTERNS).map((g) => [g, tl[g].mav / tl[g].mrv]);
+    const outOfBand = ratios.filter(([, r]) => r < 0.55 || r > 0.85);
+    check(`${tier}: MAV is 55-85% of MRV for every group (${ratios.map(([g, r]) => `${g} ${Math.round(r * 100)}%`).join(", ")})`,
+      outOfBand.length === 0, outOfBand.map(([g, r]) => `${g}=${Math.round(r * 100)}%`).join(", "));
+  });
 }
 
 console.log("\n== Effort progression: 3 RIR -> 0-1 RIR, compounds never to failure ==");

@@ -331,11 +331,47 @@ const PATTERNS = {
    is broad (if likewise informal) agreement that true novices progress on,
    and should start on, low volumes; running a beginner at the intermediate
    MAV from day one is a different and much more common claim than "advanced
-   needs 25% more," so it's kept, just made explicit rather than derived. */
+   needs 25% more," so it's kept, just made explicit rather than derived.
+
+   ADVANCED MRV ALSO DROPPED TO 1.0, in a follow-up pass, for exactly the same
+   reason as MAV — and this one was missed the first time round. Keeping 1.3x
+   here while zeroing the MAV multiplier reproduced the original defect one
+   field over: it pushed advanced MRVs above RP's own published ceilings (back
+   33 vs ~25, chest 29 vs ~22, triceps 23 vs ~18), on the same unsourced
+   multiplier, just applied to a different column. The base MRVs in PATTERNS
+   already match the published numbers, so scaling them at all was the error.
+   It also had a visible symptom: the Status screen scales each volume bar's
+   whole track to MRV, so an inflated MRV made every bar top out around half
+   full even when the program was delivering exactly its intended MAV — the
+   athlete reported the display looking wrong before the number was traced.
+   MEASURED BEFORE CHANGING IT: lowering MRV costs the landmark auto-tune
+   nothing, because MRV was never the binding constraint on a MAV raise.
+   Schedule capacity binds first for every single group (see the raise gate in
+   adjustLandmarks: a raise must clear BOTH mrv-1 and capW). At the old 1.3x,
+   MRV permitted 6-14 sets of climb per group while capacity permitted 0-4.
+   The "wider MEV-MRV band for adjustLandmarks to explore" this comment used to
+   claim as a benefit was therefore fictional — the band was never what
+   stopped it. Advanced still differs from intermediate at the MEV end (1.2x),
+   which is the one tier claim with broad support: a more trained muscle needs
+   more stimulus before it grows at all. */
+/* BEGINNER MAV MATCHES ITS MRV FACTOR (0.75), rather than sitting above it at
+   0.8 as it did when this field was first made explicit. That version had MAV
+   shrinking LESS than MRV, which squeezed the two together instead of scaling
+   them as a pair: beginner quads landed at MAV 13 against MRV 15, an 87% ratio
+   with barely two sets of headroom, so the recovery ceiling stopped meaning
+   anything and the auto-tune had nowhere to climb. Caught by the MAV/MRV band
+   guard in program_review_tests, which was written for the ADVANCED tier defect
+   and found this one on its first run.
+   The general rule the two fixes share: if a tier scales the table at all, MAV
+   and MRV must scale by the SAME factor. Scaling them differently distorts the
+   ramp's geometry — too far apart (advanced at 1.0/1.3) and the bar reads
+   half-empty; too close (beginner at 0.8/0.75) and the ceiling is vestigial.
+   Only MEV moves independently, because "how much before it grows at all" is a
+   genuinely different question from "how much can it take". */
 const EXPERIENCE_TIERS = {
-  beginner:     { label: "Beginner",     blurb: "< ~1 yr consistent training",  mev: 0.7, mav: 0.8, mrv: 0.75 },
+  beginner:     { label: "Beginner",     blurb: "< ~1 yr consistent training",  mev: 0.7, mav: 0.75, mrv: 0.75 },
   intermediate: { label: "Intermediate", blurb: "~1–3 yrs, steady progression", mev: 1.0, mav: 1.0, mrv: 1.0 },
-  advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mav: 1.0, mrv: 1.3 },
+  advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mav: 1.0, mrv: 1.0 },
 };
 /* INVESTIGATED (post-3.11), NOT A BUG: schedule capacity (ACC_SET_CAP,
    PATTERN_FREQ, fixedSets) doesn't scale by tier the way MEV/MRV above do,
