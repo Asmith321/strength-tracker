@@ -228,100 +228,114 @@ function liftNormSlope(lift) { return liftSlopeInfo(lift).g; }
      squat → quads,  hinge → hamstrings,  horiz_press → chest,  vert_press → front_delts.
    migrateProgram() renames these keys in any already-saved program.
 
-   AUDIT 3.11: quads/hamstrings/chest/back/calves MEV were re-derived against
-   RP's actually-published per-muscle landmark table (cross-checked against
-   RP's own per-muscle articles, not carried over from an earlier, unsourced
-   pass) and found set ~1.3-2x too high — several were sitting at or above
-   RP's own MAV floor rather than at MEV. front_delts and rear_delts already
-   matched RP's published range closely and are unchanged. side_delts is
-   intentionally left below RP's published MRV ceiling (18 here vs RP's
-   24-30) — under-programmed relative to RP's stated maximum, but not a
-   defect: raising it doesn't fix anything broken, it's a volume preference,
-   and this program's schedule capacity (see ACC_SET_CAP) can't deliver
-   RP's higher ceiling for side delts anyway without a much larger session-
-   length cost than the rest of this correction took on. */
+   RE-DERIVED FROM PRIMARY LITERATURE, NOT RP's CHART (post-3-set-cap audit).
+   The athlete asked, correctly, why they should trust numbers whose only
+   citation was "RP's published table" — a single secondary source presenting
+   a teaching heuristic as if it were a finding. What follows is what a search
+   pass over the actual dose-response literature turned up, muscle by muscle.
+   Two direct, muscle-matched RCTs did the most work:
+     - Heaselgrave et al., IJSPP 2019: trained men at 9 vs 18 vs 27 weekly
+       BICEPS sets, 6 weeks. NO significant difference in biceps thickness
+       between any group — 9 sets/week produced the same growth as 27. This is
+       the strongest single piece of evidence here, because it is specific to
+       the muscle in question, in trained subjects, not a "most muscles"
+       generalization. It is why biceps below is the largest cut.
+     - Ostrowski et al. 1997: trained subjects at 7 vs 14 vs 28 weekly TRICEPS
+       sets, 10 weeks. Gains nearly doubled 7->14, flattened 14->28 (didn't
+       reach significance, but effect sizes favored 14 and 28 equally over 7).
+       Roughly confirms the number already shipped.
+   Beyond those two, no other muscle here has a dedicated dose-response trial
+   that turned up in the search — what follows for the rest is convergent
+   secondary synthesis of Baz-Valle et al. 2022 (systematic review) and
+   Pelland/Remmert/Zourdos 2024 (Sports Medicine meta-regression, 67 studies,
+   2058 subjects, already cited on ACC_SET_CAP below): most muscles' productive
+   range sits at 10-20 weekly sets, first 10 doing most of the work, flattening
+   past 20. RP's chart is folded in only where it doesn't conflict with that.
+   THE HONEST CAVEAT, true of every number below: Pelland's own meta-regression
+   models volume as a continuous diminishing-returns curve with no clean step,
+   and stresses individual variation over any formula. These are a defensible
+   starting point for adjustLandmarks to correct from real data — not a
+   verdict. */
 const PATTERNS = {
-  quads:       { label: "Quads",               mev: 5,  mav: 14, mrv: 18 },
-  /* HYPERTROPHY REBUILD: raised from 3/6/12. The old numbers were sized around
-     a program where conventional Deadlift was a main lift contributing 4 fixed
-     hamstring sets per rotation; with the strength skeleton removed (see
-     ROTATION) every hamstring set is now ramped accessory work, and RDL +
-     2x seated leg curl is a genuine hypertrophy allocation rather than
-     "whatever is left after the deadlift". Stays inside RP's published
-     hamstring range (MEV 2-4, MAV 2-8, MRV 8-14). */
-  hamstrings:  { label: "Hamstrings / Post. chain", mev: 4, mav: 8, mrv: 14 },
-  chest:       { label: "Chest",               mev: 5,  mav: 14, mrv: 22 },
-  /* Front delts get indirect stimulus from chest/triceps pressing already
-     covered elsewhere in the program — RP's published landmark table gives
-     them MEV 0-2, MAV 4-8, MRV 8-12 for exactly that reason (RP's system
-     accounts for indirect stimulus by setting the DIRECT-set target low for
-     muscles that reliably get heavy secondary work, not via a separate
-     fractional-credit layer — verified against RP's own stated methodology,
-     not just its numbers). mev:2 sits at the top of that published range
-     rather than at 0, since this program tracks front-delt pressing as a
-     whole routine rather than crediting indirect volume anywhere else. */
-  front_delts: { label: "Front Delts",         mev: 2,  mav: 7,  mrv: 12 },
-  /* Horizontal + vertical pulling are consolidated into ONE 'back' volume pool:
-     RP's landmark research treats back as a single muscle group, not two. Every
-     pulling exercise carries volumeGroup:'back' so all their volume math
-     (PATTERN_FREQ / weeklyTarget / landmark auto-tune) shares this pool. */
-  back:        { label: "Back",                mev: 7,  mav: 18, mrv: 25 },
-  /* Rear and side delts are SEPARATE pools (split from the old combined
-     'rear_delts' pool — different muscles with different jobs: side delts =
-     abduction, trained only by lateral raises here; rear delts = horizontal
-     extension, trained by the pec deck AND heavily as a secondary in all four
-     pulling slots). Pooling them let the fixed 2:1 pec-deck:lateral slot ratio
-     silently decide the mix. Rear delts carry a lower direct-set MEV precisely
-     because of that pulling overlap; side delts get no such indirect help
-     (especially with barbell OHP dropped from the rotation), so their direct
-     numbers sit higher. migrateProgram() resets an old combined pool to these
-     canonical values — old tuned numbers described a different quantity. */
-  /* MAV trimmed 10 -> 9 so that schedule capacity covers it at EVERY experience
-     tier, not just at intermediate: rear delts have 2 ramped slots (capacity 12
-     sets/rotation), and an advanced athlete's 1.25x MAV scaling turned 10 into
-     13 — a target the rotation could never deliver, which is precisely the
-     capacity-vs-landmark mismatch AUDIT 3.6/3.8 spent two passes containing.
-     9 is comfortably inside RP's published rear-delt MAV range (4-12) and the
-     direct number is deliberately modest anyway, because rear delts also take
-     heavy secondary work from all four ramped back slots (T-bar row, pull-up,
-     2x lat pullover) — the same indirect-stimulus reasoning as front_delts. */
-  rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 9,  mrv: 16 },
-  /* HYPERTROPHY REBUILD: MAV/MRV raised from 12/18. RP's published side-delt
-     range is by far the highest of any group (MEV 6-8, MAV 8-24, MRV 24-30) —
-     side delts get essentially no indirect stimulus and tolerate very high
-     direct volume. The old ceiling sat deliberately low because the rotation
-     only had 2 lateral-raise slots to deliver it; this rebuild carries 3, so
-     the landmark no longer has to pretend the capacity isn't there. Still
-     below RP's top end, which the schedule genuinely cannot reach. */
-  side_delts:  { label: "Side Delts",          mev: 6,  mav: 14, mrv: 22 },
-  calves:      { label: "Calves",              mev: 5,  mav: 14, mrv: 20 },
-  /* HYPERTROPHY REBUILD: arms are promoted from untracked fixedSets pools to
-     full landmark-tracked pools. In the strength-skeleton program a curl was a
-     3-set afterthought bolted onto a day built around a barbell main; in a
-     program whose entire purpose is hypertrophy, biceps and triceps are
-     primary targets with dedicated slots that should ramp MEV->MRV like every
-     other muscle. Numbers are RP's published arm landmarks (biceps MEV 8,
-     MAV 14-20, MRV 26; triceps MEV 6, MAV 10-14, MRV 18) pulled down at the
-     MEV end: RP sets those direct-set targets for programs where arms are
-     trained largely in isolation, whereas here biceps sit behind 4 ramped
-     back slots and triceps behind 4 ramped pressing slots (bench, incline,
-     dip, overhead press) — the same indirect-stimulus reasoning the
-     front_delts comment above spells out. */
-  biceps:      { label: "Biceps",              mev: 6,  mav: 14, mrv: 20 },
+  /* Quads/hamstrings/chest/side delts nudged toward the middle of the 10-20
+     "most muscles" band (MEV had drifted toward the low end of what a dozen
+     independent syntheses converge on for a major, well-studied muscle). */
+  quads:       { label: "Quads",               mev: 6,  mav: 16, mrv: 20 },
+  hamstrings:  { label: "Hamstrings / Post. chain", mev: 4, mav: 10, mrv: 14 },
+  chest:       { label: "Chest",               mev: 8,  mav: 16, mrv: 22 },
+  /* Front delts: every source agrees the direct target should be low — chest/
+     triceps pressing already provides heavy indirect load, and no search
+     result challenged that. Trimmed slightly further than before (MRV 12->10)
+     since nothing supports front delts needing more headroom than side or
+     rear delts, which sit lower than this. */
+  front_delts: { label: "Front Delts",         mev: 2,  mav: 6,  mrv: 10 },
+  /* Back: pooled per the note below. "12-30 sets/week" was the range that
+     turned up for this muscle across sources — wide, but comfortably contains
+     the shipped number, so left unchanged. */
+  back:        { label: "Back",                mev: 8,  mav: 18, mrv: 25 },
+  /* Rear/side delts: split for the reasons in the comment below (unchanged).
+     Rear delts nudged up slightly — the search converged on "8-12 sets" as a
+     commonly under-dosed range for this muscle specifically. Side delts nudged
+     up toward the "9-18 sets/week" range that turned up, still comfortably
+     under RP's own stated ceiling (24-30) and under what the schedule could
+     ever deliver anyway. */
+  rear_delts:  { label: "Rear Delts",          mev: 4,  mav: 10, mrv: 16 },
+  side_delts:  { label: "Side Delts",          mev: 6,  mav: 16, mrv: 22 },
+  /* Calves: a 2024 RCT (Nunes et al., 61 subjects, 6 vs 9 vs 12 weekly sets)
+     found the 12-set group grew more than the 6-set group — untrained
+     subjects, so it under-informs an advanced target, but it's real, direct
+     evidence that double-digit calf volume is productive, not just tolerated.
+     MEV nudged up a point; calves are commonly cited as a stubborn responder
+     that needs more than the generic minimum to move at all. */
+  calves:      { label: "Calves",              mev: 6,  mav: 14, mrv: 20 },
+  /* Biceps: THE CORRECTION. Heaselgrave (above) found zero added hypertrophy
+     from 9 to 27 weekly sets in trained men. The previous MAV of 14 (18 at the
+     old advanced multiplier) sat inside a range that trial found made no
+     difference over roughly half of it. Cut to sit just above the low end of
+     that null zone, which is also where the indirect-stimulus case is
+     strongest here: biceps sit behind every back slot in this rotation
+     (T-bar row, pull-up, pulldown, pullover), so the direct target should be
+     conservative on both grounds at once, not just one. */
+  biceps:      { label: "Biceps",              mev: 4,  mav: 10, mrv: 16 },
+  /* Triceps: left close to shipped — Ostrowski (above) roughly confirms 12-14
+     as the point where returns flatten. */
   triceps:     { label: "Triceps",             mev: 5,  mav: 12, mrv: 18 },
 };
 
 /* ---- experience-based landmark seeding ----
    Replaces manual per-pattern number entry: the athlete picks a tier and we
-   scale the Intermediate baseline table above. Only MEV/MRV scale factors are
-   research-anchored (less-trained lifters need less volume and recover from
-   less; advanced lifters tolerate more); MAV has no separate spec, so it's
-   scaled by the average of the two factors and clamped to stay strictly inside
-   the [MEV, MRV] range. */
+   scale the Intermediate baseline table above.
+
+   MAV NO LONGER GETS A TIER MULTIPLIER FOR INTERMEDIATE/ADVANCED. It used to
+   be scaled by the average of the MEV/MRV factors below (an advanced athlete's
+   MAV was 1.25x intermediate's) — the athlete asked where that came from, and
+   the honest answer, after actually searching for it, is: nowhere. No dose-
+   response-by-training-age trial turned up anywhere in that search. RP's own
+   framework asserts advanced lifters need more volume as a general principle;
+   the most current meta-regression on this (Pelland/Remmert/Zourdos 2024)
+   models volume as continuous and doesn't stratify by training age at all.
+   A static, invented multiplier compounding on top of already-uncertain MAV
+   estimates is exactly the kind of error the athlete caught.
+   What the tier now controls is MEV and MRV — recovery-capacity claims (less-
+   trained lifters need less and recover from less; more-trained tolerate and
+   recover from more), which, while still a heuristic rather than an RCT
+   finding at this granularity, is a narrower and less controversial claim
+   than "optimal growth volume rises with training age." An advanced athlete
+   therefore starts at the SAME seeded MAV as intermediate but with a wider
+   MEV-MRV band around it — room for adjustLandmarks to discover, from this
+   specific athlete's actual growth and fatigue signals, whether their real
+   MAV sits above that seed, rather than the engine asserting it does on day
+   one. This is the literature-correct way to answer "how much more can an
+   advanced lifter handle": from their own data, not from a chart.
+   Beginner MAV still gets a modest reduction — unlike the advanced case, there
+   is broad (if likewise informal) agreement that true novices progress on,
+   and should start on, low volumes; running a beginner at the intermediate
+   MAV from day one is a different and much more common claim than "advanced
+   needs 25% more," so it's kept, just made explicit rather than derived. */
 const EXPERIENCE_TIERS = {
-  beginner:     { label: "Beginner",     blurb: "< ~1 yr consistent training",  mev: 0.7, mrv: 0.75 },
-  intermediate: { label: "Intermediate", blurb: "~1–3 yrs, steady progression", mev: 1.0, mrv: 1.0 },
-  advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mrv: 1.3 },
+  beginner:     { label: "Beginner",     blurb: "< ~1 yr consistent training",  mev: 0.7, mav: 0.8, mrv: 0.75 },
+  intermediate: { label: "Intermediate", blurb: "~1–3 yrs, steady progression", mev: 1.0, mav: 1.0, mrv: 1.0 },
+  advanced:     { label: "Advanced",     blurb: "3+ yrs, near-maximal recovery", mev: 1.2, mav: 1.0, mrv: 1.3 },
 };
 /* INVESTIGATED (post-3.11), NOT A BUG: schedule capacity (ACC_SET_CAP,
    PATTERN_FREQ, fixedSets) doesn't scale by tier the way MEV/MRV above do,
@@ -352,12 +366,11 @@ const EXPERIENCE_TIERS = {
    of problem as under-delivering back's or chest's. */
 function landmarksForExperience(tier) {
   const s = EXPERIENCE_TIERS[tier] || EXPERIENCE_TIERS.intermediate;
-  const mavFactor = (s.mev + s.mrv) / 2;
   const out = {};
   Object.entries(PATTERNS).forEach(([p, base]) => {
     const mev = Math.max(2, Math.round(base.mev * s.mev)); // floor MEV at 2
     const mrv = Math.max(4, Math.round(base.mrv * s.mrv));
-    const mav = Math.min(mrv - 1, Math.max(mev + 1, Math.round(base.mav * mavFactor)));
+    const mav = Math.min(mrv - 1, Math.max(mev + 1, Math.round(base.mav * s.mav)));
     out[p] = { label: base.label, mev, mav, mrv };
   });
   return out;
@@ -719,59 +732,55 @@ const PATTERN_OF = {
   cablecrunch: "abs",
 };
 
-/* UPPER on Mon/Wed/Fri, LOWER on Tue/Thu. Both day-sets are FORCED, not
-   stylistic. In a Mon-Fri week {Mon, Wed, Fri} is the only set of three
-   non-adjacent days and {Tue, Thu} is the only non-adjacent pair left over, so
-   splitting the muscles across exactly these two sets is what makes "no muscle
-   on back-to-back days" a property of the STRUCTURE rather than something each
-   slotting decision has to be checked against. Under the previous 5-day split
-   that rule held only because every exercise placement was hand-checked; here
-   it cannot be violated by any arrangement of the items below.
+/* UPPER on Mon/Wed/Fri, LOWER on Tue/Thu. Both day-sets are still FORCED, not
+   stylistic, for the same structural reason as before: {Mon, Wed, Fri} is the
+   only set of three non-adjacent days in a Mon-Fri week and {Tue, Thu} the
+   only non-adjacent pair left over, so no-back-to-back is a property of the
+   STRUCTURE rather than something each placement has to be checked against.
 
-   WHY UPPER GETS THREE DAYS AND LOWER TWO: the approved list carries 112 weekly
-   upper sets against 46 lower. Three upper days at ~36 sets and two lower days
-   at ~33 is the balance that falls out; the reverse assignment gives 55-set
-   upper days against 15-set lower ones.
+   RE-SIZED FOR THE EVIDENCE-BASED LANDMARK REWRITE. Every group's MAV moved
+   (see PATTERNS), most of them down — biceps hardest (14->10 at the old
+   scaling, effectively 18->10 once the invented advanced multiplier was also
+   removed). Slot counts below are ceil(MAV / ACC_SET_CAP) again, but the
+   smaller MAVs change which groups need 3 exposures versus 2:
+     - Back, chest, side delts still take all three upper days (18/16/16
+       sets -> 6 slots each, 2 per day).
+     - Front delts now needs only 2 exposures (6 sets -> 2 slots), not 3 — the
+       old design's forced-onto-every-upper-day placement is GONE along with
+       the volume that forced it. It no longer has to dodge the incline press;
+       that pairing rule is moot here regardless, since the athlete withdrew it
+       ("scrap ... no incline press with overhead press ... rule").
+     - Biceps and triceps now fit on 2 of the 3 upper days each (10 and 12
+       sets -> 4 slots each) instead of spanning all three thin.
+   The result is a flatter week: every upper day carries exactly 10 exercises,
+   every lower day exactly 9 — versus the previous 12/9/12/9/12. That is a
+   direct consequence of the volume correction, not a separate design choice:
+   the same total weekly sets (128 ramped, down from 170) spread over the same
+   48 exercise-slots that ceil(MAV/3) now asks for, instead of 58.
 
-   WHY EACH MUSCLE HAS THE SLOT COUNT IT HAS: ceil(MAV / 3) at the new
-   ACC_SET_CAP, spread so no day holds more than 3 slots of one muscle (3 x 3 =
-   9, just under SAME_DAY_GROUP_CAP). Back is the tightest: 23 weekly sets needs
-   8 slots, which at 3 per day needs all three upper days, and only 3 of the 4
-   approved back exercises can appear in one session because Pull-Up and Lat
-   Pulldown may not share one. Calves are the loosest: the athlete exempted
-   Standing Calf Raise from the cap (GROUP_SET_CAP) rather than approve new calf
-   exercises, so 18 weekly sets ride on 2 slots of 9 instead of 6 slots of 3.
-
-   KNOWN CONSEQUENCE, FLAGGED TO THE ATHLETE: front delts have one approved
-   exercise and need 3 exposures, so the DB Overhead Press lands on all three
-   upper days — which means the incline press unavoidably shares a session with
-   it, breaking the old "no incline press with an overhead press" rule. There is
-   no arrangement that avoids this while front delts have a single exercise; the
-   fixes are a second front-delt exercise or a cap exemption like the calves'.
-   The overlap is also smaller than when that rule was written: 3 sets of each
-   rather than 5.
+   Quads/hamstrings/rear delts/calves are unchanged in placement (still the
+   two lower days) — their MAVs moved only slightly, so their slot counts
+   didn't change (quads 6, hamstrings 4, rear delts 4, calves stays on its
+   GROUP_SET_CAP exemption rather than gaining a second exercise).
 
    ORDER WITHIN A DAY is unchanged in principle: compounds before isolation for
    the same muscle, and no isolation that pre-fatigues a later compound's weak
    link (curls never precede a row, wrist work never precedes a pull). */
 const ROTATION = [
-  /* Mon — UPPER. Back's heaviest exposure (3 slots), the flat press, and the
-     first of three overhead-press exposures. */
-  { name: "Upper · Row & Flat Press", items: ["tbarrow", "pulldown", "latpullover", "bench", "dbshoulderpress", "cablefly", "lateralraise", "dblateralraise", "triext", "triceppushdown", "bayesiancurl", "preachercurl"] },
-  /* Tue — LOWER. Squat, hinge, and the 9-set calf exposure. Rear delts live on
-     the lower days: they are the one upper group small enough to fit here, and
-     moving them off Mon/Wed/Fri is what keeps the two day-sets balanced. */
-  { name: "Lower · Squat & Hinge", items: ["squat", "rdl", "bsplit", "legext", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
-  /* Wed — UPPER. The vertical pull that Monday could not carry (Pull-Up and Lat
-     Pulldown never share a session), and the incline press. */
-  { name: "Upper · Pull-Up & Incline", items: ["pullup", "tbarrow", "latpullover", "inclinebench", "dbshoulderpress", "dip", "lateralraise", "dblateralraise", "triext", "triceppushdown", "bayesiancurl", "preachercurl"] },
-  /* Thu — LOWER. The second quad and hamstring exposures on different exercises
-     than Tuesday's, so the two lower days are not the same session twice. */
-  { name: "Lower · Front Squat & Nordic", items: ["frontsquat", "bsplit", "nordic", "legext", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
-  /* Fri — UPPER. The lighter upper day: back drops to 2 slots and triceps to 1,
-     which is where the ramp's remainder lands, and the two fixedSets accessories
-     (shrug, wrist curl) sit here to even the week out. */
-  { name: "Upper · Pulldown & DB Press", items: ["pulldown", "latpullover", "shrug", "inclinebb", "dbbench", "dbshoulderpress", "lateralraise", "dblateralraise", "triceppushdown", "bayesiancurl", "preachercurl", "wristcurl"] },
+  /* Mon — UPPER. Back, chest and side delts' first exposure; biceps and front
+     delts take this as one of their two days. */
+  { name: "Upper · Row & Flat Press", items: ["tbarrow", "pulldown", "bench", "dip", "dbshoulderpress", "lateralraise", "dblateralraise", "bayesiancurl", "preachercurl", "shrug"] },
+  /* Tue — LOWER. Squat, hinge, and the calf exposure at its exempted set count. */
+  { name: "Lower · Squat & Hinge", items: ["squat", "legext", "bsplit", "rdl", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
+  /* Wed — UPPER. The vertical pull Monday couldn't carry (Pull-Up and Lat
+     Pulldown never share a session), and both arms' second day. */
+  { name: "Upper · Pull-Up & Incline", items: ["pullup", "latpullover", "inclinebench", "cablefly", "triext", "triceppushdown", "bayesiancurl", "preachercurl", "lateralraise", "dblateralraise"] },
+  /* Thu — LOWER. The second quad/hamstring exposures on different exercises
+     than Tuesday's. */
+  { name: "Lower · Front Squat & Nordic", items: ["frontsquat", "legext", "bsplit", "nordic", "legcurl", "calfraise", "reversepecdeck", "dbreversefly", "cablecrunch"] },
+  /* Fri — UPPER. Back and chest's third exposure, triceps' second day, front
+     delts' second day. */
+  { name: "Upper · Pulldown & DB Press", items: ["tbarrow", "latpullover", "dbbench", "inclinebb", "dbshoulderpress", "triext", "triceppushdown", "lateralraise", "dblateralraise", "wristcurl"] },
 ];
 const ROT = ROTATION.length;
 /* PATTERN_FREQ counts RAMPED ACCESSORY SLOTS per group across the rotation —
@@ -3173,6 +3182,29 @@ function migrateProgram(program) {
   // 2. add any missing group, drop any stale group.
   for (const key of Object.keys(canonical)) if (!lm[key]) { lm[key] = canonical[key]; changed = true; }
   for (const key of Object.keys(lm)) if (!canonical[key]) { delete lm[key]; changed = true; }
+  /* 2.4 (EVIDENCE-BASED-LANDMARKS). Re-seed any group the athlete's own
+     training has never touched.
+     This corrects a mistake, not a preference — the advanced-tier MAV
+     multiplier this table used to carry (1.25x, applied uniformly) had no
+     source, and biceps specifically sat at a MAV a muscle-matched RCT found
+     produced zero additional hypertrophy over roughly half of it (see the
+     PATTERNS comment). A save made before this fix is carrying numbers that
+     were simply wrong, the same way a save made before a units bug is
+     carrying a wrong number — not a personalized value earned by that
+     athlete's actual results, which migration must never overwrite.
+     landmarkAdjustments is the record of which groups adjustLandmarks has
+     actually touched. A group with NO entry there still holds exactly its
+     original seed, whatever that seed was — safe, and correct, to replace
+     with the corrected canonical value. A group WITH an entry has moved on
+     real growth/fatigue signal from this specific athlete, which is more
+     trustworthy than a global correction and must be left alone. */
+  for (const key of Object.keys(lm)) {
+    if (adj[key] || !canonical[key]) continue;
+    if (lm[key].mev !== canonical[key].mev || lm[key].mav !== canonical[key].mav || lm[key].mrv !== canonical[key].mrv) {
+      lm[key] = { ...canonical[key] };
+      changed = true;
+    }
+  }
   /* 2.5 (T2-4). Bring any landmark set that violates MEV_MAV_MAX_RATIO back
      inside the bound, as a migration step.
      A program saved before the ramp-collapse fix could carry a legacy one-way
